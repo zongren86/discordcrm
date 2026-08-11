@@ -1,0 +1,1259 @@
+<template>
+  <div class="guilds-page">
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">服务器列表</h2>
+        <p class="page-desc">管理 Discord 服务器配置，抓取服务器成员数据</p>
+      </div>
+      <div class="header-actions">
+        <el-select
+          v-model="filters.discordAccountId"
+          placeholder="选择 Discord 账号"
+          clearable
+          style="width: 240px"
+          @change="loadServers"
+        >
+          <el-option
+            v-for="a in accountOptions"
+            :key="a.id"
+            :label="a.name || a.discordBotName || a.discordBotId || ('账号' + a.id)"
+            :value="a.id"
+          />
+        </el-select>
+        <el-button type="primary" @click="openEditDialog()">
+          <el-icon><Plus /></el-icon> 新增服务器
+        </el-button>
+      </div>
+    </div>
+
+    <div class="page-body">
+      <el-table
+        :data="guildServers.servers"
+        v-loading="guildServers.loading"
+        stripe
+        style="width: 100%"
+        :header-cell-style="{ background: 'var(--color-bg-2)', color: 'var(--color-text)' }"
+      >
+        <el-table-column label="服务器" min-width="220">
+          <template #default="{ row }">
+            <div class="server-cell">
+              <img v-if="row.iconUrl" :src="row.iconUrl" class="server-icon" />
+              <div v-else class="server-icon placeholder">
+                {{ (row.name || '?').charAt(0).toUpperCase() }}
+              </div>
+              <div class="server-info">
+                <div class="server-name">{{ row.name || '未命名服务器' }}</div>
+                <div class="server-sub" v-if="row.guildId">Guild ID: {{ row.guildId }}</div>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="所属账号" width="180">
+          <template #default="{ row }">
+            <el-tag size="small" type="info" effect="plain">{{ row.accountName || row.accountDiscordBotName || '-' }}</el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="channelId" label="Channel ID" width="180">
+          <template #default="{ row }">
+            <span v-if="row.channelId" class="mono">{{ row.channelId }}</span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="成员数" width="100" align="center">
+          <template #default="{ row }">
+            <span class="member-count">{{ row.memberCount || 0 }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="最后抓取" width="160">
+          <template #default="{ row }">
+            <span v-if="row.lastFetchAt" class="text-muted">{{ formatTime(row.lastFetchAt) }}</span>
+            <span v-else class="text-muted">从未</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="310" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" link type="primary" @click="openMemberDialog(row)">
+              <el-icon><User /></el-icon> 成员明细
+            </el-button>
+            <el-button size="small" link type="primary" @click="openEditDialog(row)">
+              <el-icon><Edit /></el-icon> 编辑
+            </el-button>
+            <el-button 
+              size="small" 
+              link 
+              :type="isServerSyncing(row.id) ? 'warning' : 'success'" 
+              :loading="isServerSyncing(row.id)"
+              @click="isServerSyncing(row.id) ? openProgressDialog(row, getServerTaskId(row.id)) : openSyncDialog(row)"
+            >
+              <el-icon v-if="!isServerSyncing(row.id)"><Download /></el-icon>
+              {{ isServerSyncing(row.id) ? '同步中' : '同步' }}
+            </el-button>
+            <el-button size="small" link @click="openProgressDialog(row)">
+              <el-icon><DataLine /></el-icon> 进度
+            </el-button>
+            <el-button size="small" link type="danger" @click="confirmDelete(row)">
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </template>
+        </el-table-column>
+
+        <template #empty>
+          <el-empty v-if="!loading" description="暂无服务器，点击右上角新增" />
+        </template>
+      </el-table>
+    </div>
+
+    <!-- 编辑/新增服务器 Dialog -->
+    <el-dialog v-model="editDialog.visible" :title="editDialog.isEdit ? '编辑服务器' : '新增服务器'" width="560px" :close-on-click-modal="false">
+      <el-form :model="editDialog.form" label-width="120px" label-position="left">
+        <el-form-item label="所属账号" required>
+          <el-select v-model="editDialog.form.discordAccountId" placeholder="选择 Discord 账号" style="width: 100%">
+            <el-option
+              v-for="a in accountOptions"
+              :key="a.id"
+              :label="a.name || a.discordBotName || a.discordBotId || ('账号' + a.id)"
+              :value="a.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="服务器 URL">
+          <el-input 
+            v-model="editDialog.form.guildUrl" 
+            type="textarea" 
+            :rows="2"
+            placeholder="https://discord.com/channels/guildId/channelId" 
+          />
+          <el-button type="primary" plain @click="parseUrl" style="width: 100%; margin-top: 8px;">
+            <el-icon><MagicStick /></el-icon> 解析
+          </el-button>
+        </el-form-item>
+        <el-form-item label="Guild ID">
+          <el-input v-model="editDialog.form.guildId" placeholder="服务器 ID" />
+        </el-form-item>
+        <el-form-item label="Channel ID">
+          <el-input v-model="editDialog.form.channelId" placeholder="频道 ID" />
+        </el-form-item>
+        <el-form-item label="服务器名称">
+          <el-input v-model="editDialog.form.name" placeholder="服务器名称（可选）" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="saveServer">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 同步 Dialog -->
+    <el-dialog v-model="syncDialog.visible" title="同步服务器成员" width="620px" :close-on-click-modal="false">
+      <div v-if="syncDialog.server" class="sync-info">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="所属账号">
+            {{ syncDialog.server.accountName || syncDialog.server.accountDiscordBotName }}
+          </el-descriptions-item>
+          <el-descriptions-item label="Bot Token">
+            <el-input v-model="syncDialog.token" placeholder="请输入完整的 Discord Token（将用于抓取）" size="small" clearable />
+          </el-descriptions-item>
+          <el-descriptions-item label="Guild ID">
+            <span class="mono">{{ syncDialog.server.guildId }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="Channel ID">
+            <span class="mono">{{ syncDialog.server.channelId || '-' }}</span>
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <el-divider content-position="left">抓取配置（商户配置）</el-divider>
+
+        <el-form :model="syncDialog.config" label-width="140px">
+          <el-form-item label="获取数量上限">
+            <el-input-number v-model="syncDialog.config.fetchLimit" :min="100" :max="2000000" :step="1000" />
+          </el-form-item>
+          <el-form-item label="请求间隔(秒)">
+            <el-input-number v-model="syncDialog.config.requestInterval" :min="1" :max="60" :step="1" />
+          </el-form-item>
+          <el-form-item label="每次请求数">
+            <el-input-number v-model="syncDialog.config.requestCount" :min="10" :max="1000" :step="50" />
+          </el-form-item>
+          <el-form-item label="最大下钻深度">
+            <el-input-number v-model="syncDialog.config.maxDepth" :min="1" :max="20" />
+          </el-form-item>
+          <el-form-item label="最大请求数">
+            <el-input-number v-model="syncDialog.config.maxRequests" :min="1" :max="10000" :step="100" />
+          </el-form-item>
+        </el-form>
+      </div>
+      <template #footer>
+        <el-button @click="syncDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="syncDialog.fetching" @click="startFetch">
+          {{ syncDialog.fetching ? '启动中...' : '开始同步' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 进度 Dialog -->
+    <el-dialog v-model="progressDialog.visible" title="数据采集进度" width="600px" @close="stopProgressPolling">
+      <div v-if="progressDialog.server" class="progress-content">
+        <!-- 状态头部 -->
+        <div class="progress-header">
+          <el-icon class="progress-icon" :class="progressStatusClass"><component :is="progressStatusIcon" /></el-icon>
+          <div class="progress-header-info">
+            <div class="progress-title">{{ progressStatusText }}</div>
+            <div class="progress-desc">
+              <el-icon><Monitor /></el-icon> 
+              服务器: <strong>{{ progressDialog.server.name || '未命名' }}</strong>
+              <span class="mono-text">(Guild ID: {{ progressDialog.server.guildId }})</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="progress-bar-section" v-if="currentProgressTask">
+          <div class="progress-bar-label">采集进度</div>
+          <el-progress 
+            :percentage="progressPercentage" 
+            :stroke-width="12"
+            :color="progressStatusClass === 'failed' ? '#f56c6c' : progressStatusClass === 'completed' ? '#67c23a' : '#409eff'"
+            :status="progressStatusClass === 'failed' ? 'exception' : (progressStatusClass === 'completed' ? 'success' : '')"
+          />
+        </div>
+
+        <!-- 核心数据统计 -->
+        <div class="progress-stats-enhanced" v-if="currentProgressTask">
+          <div class="stat-card">
+            <div class="stat-icon request-icon">
+              <el-icon><Connection /></el-icon>
+            </div>
+            <div class="stat-info">
+              <div class="stat-values">
+                <span class="stat-current">{{ currentProgressTask.requestsSent || 0 }}</span>
+                <span class="stat-sep">/</span>
+                <span class="stat-total">{{ currentProgressTask.maxRequests || '-' }}</span>
+              </div>
+              <div class="stat-label">已请求 / 总请求数</div>
+            </div>
+          </div>
+          
+          <div class="stat-card">
+            <div class="stat-icon fetch-icon">
+              <el-icon><User /></el-icon>
+            </div>
+            <div class="stat-info">
+              <div class="stat-values">
+                <span class="stat-current">{{ currentProgressTask.membersUnique || 0 }}</span>
+                <span class="stat-sep">/</span>
+                <span class="stat-total">{{ currentProgressTask.maxMembers || 0 }}</span>
+              </div>
+              <div class="stat-label">已采集 / 总采集数</div>
+            </div>
+          </div>
+        </div>
+        <div class="progress-stats-enhanced" v-else>
+          <div class="stat-card">
+            <div class="stat-info" style="text-align:center;width:100%">
+              <div class="stat-label" style="font-size:14px;padding:20px 0">暂无进度数据，请点击"开始同步"启动采集</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 详细信息 -->
+        <div class="progress-detail-grid" v-if="currentProgressTask">
+          <div class="detail-item">
+            <span class="detail-label">采集状态</span>
+            <el-tag :type="progressStatusClass === 'failed' ? 'danger' : progressStatusClass === 'completed' ? 'success' : 'warning'" size="small">
+              {{ progressStatusText }}
+            </el-tag>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">当前分页</span>
+            <span class="detail-value mono-text">{{ currentProgressTask.currentPrefix || '-' }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">分页进度</span>
+            <span class="detail-value">{{ currentProgressTask.prefixesDone || 0 }} / {{ currentProgressTask.prefixesTotal || '-' }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="detail-label">重连次数</span>
+            <span class="detail-value">{{ currentProgressTask.reconnects || 0 }}</span>
+          </div>
+        </div>
+
+        <!-- 进度消息 -->
+        <div class="progress-message" v-if="currentProgressTask && (currentProgressTask.progressMessage || currentProgressTask.progress)">
+          <el-alert
+            :title="currentProgressTask.progressMessage || currentProgressTask.progress"
+            :type="currentProgressTask.status === 'FAILED' ? 'error' : 'info'"
+            show-icon
+            :closable="false"
+          />
+        </div>
+
+        <!-- 实时更新提示 -->
+        <div v-if="progressDialog.taskId && currentProgressTask && !isTerminalStatus" class="progress-tip">
+          <el-icon class="is-loading"><Loading /></el-icon> 数据采集中，进度每 2 秒自动刷新...
+        </div>
+        <div v-else-if="currentProgressTask && (currentProgressTask.status === 'COMPLETED' || currentProgressTask.status === 'DONE')" class="progress-tip completed">
+          <el-icon><CircleCheck /></el-icon> 数据采集已完成
+        </div>
+        <div v-else-if="currentProgressTask && (currentProgressTask.status === 'FAILED' || currentProgressTask.status === 'ERROR')" class="progress-tip failed">
+          <el-icon><Warning /></el-icon> 数据采集失败：{{ currentProgressTask.progressMessage || currentProgressTask.error || '未知错误' }}
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 成员明细 Dialog -->
+    <el-dialog v-model="memberDialog.visible" :title="memberDialogTitle" width="720px" :close-on-click-modal="false" @close="stopMemberAutoRefresh">
+      <div class="member-dialog-toolbar">
+        <el-input
+          v-model="memberDialog.search"
+          size="small"
+          placeholder="搜索成员昵称 / ID"
+          :prefix-icon="Search"
+          clearable
+          style="width: 260px"
+          @keyup.enter="searchMembers"
+          @clear="searchMembers"
+        />
+        <el-tag size="small" type="info" effect="plain">共 {{ memberDialog.total }} 名成员</el-tag>
+      </div>
+      <el-table
+        :data="memberDialog.members"
+        v-loading="memberDialog.loading"
+        stripe
+        size="small"
+        height="380"
+        style="width: 100%"
+      >
+        <el-table-column label="成员" min-width="180">
+          <template #default="{ row }">
+            <div class="member-cell-simple">
+              <span class="member-name-text">{{ row.displayName || row.globalName || row.username || '未知成员' }}</span>
+              <el-tag v-if="row.isBot" size="small" type="warning" effect="plain" style="margin-left:6px">BOT</el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="用户名" width="140">
+          <template #default="{ row }">
+            <span class="mono">{{ row.username || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="昵称" width="140">
+          <template #default="{ row }">
+            <span>{{ row.nick || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="ID" width="180">
+          <template #default="{ row }">
+            <div class="id-cell">
+              <span class="mono">{{ row.userId || '-' }}</span>
+              <el-button
+                size="small"
+                link
+                type="primary"
+                :icon="CopyDocument"
+                @click="copyText(row.userId)"
+                title="复制 ID"
+              />
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="加入时间" width="120">
+          <template #default="{ row }">
+            <span class="text-muted">{{ formatDate(row.joinedAt) }}</span>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="暂无成员数据，请先同步" :image-size="80" />
+        </template>
+      </el-table>
+      <div class="member-dialog-pagination">
+        <el-pagination
+          v-model:current-page="memberDialog.page"
+          v-model:page-size="memberDialog.size"
+          :total="memberDialog.total"
+          :page-sizes="[20, 50, 100, 200]"
+          layout="total, sizes, prev, pager, next, jumper"
+          background
+          @size-change="onMemberPageSizeChange"
+          @current-change="onMemberPageChange"
+        />
+      </div>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  Plus, Edit, Delete, Download, DataLine, MagicStick,
+  Loading, CircleCheck, Warning, Close, Monitor, Connection, User, Search,
+  CopyDocument
+} from '@element-plus/icons-vue'
+import { useAccountsStore } from '@/stores/accounts'
+import { useGuildServersStore } from '@/stores/guildServers'
+
+const accounts = useAccountsStore()
+const guildServers = useGuildServersStore()
+
+const filters = reactive({
+  discordAccountId: null
+})
+
+// 服务器列表和加载状态直接从 store 获取，不再使用本地 ref
+
+const accountOptions = computed(() => accounts.accounts || [])
+
+// 全局变量（用于onMounted中恢复状态）
+const fetchingServerId = ref(null)
+const fetchingTaskId = ref(null)
+
+// 编辑 Dialog
+const editDialog = reactive({
+  visible: false,
+  isEdit: false,
+  form: {
+    id: null,
+    discordAccountId: null,
+    guildUrl: '',
+    guildId: '',
+    channelId: '',
+    name: ''
+  }
+})
+
+// 同步 Dialog
+const syncDialog = reactive({
+  visible: false,
+  fetching: false,
+  server: null,
+  token: '', 
+  config: {
+    fetchLimit: 2000000,
+    requestInterval: 3,
+    requestCount: 100,
+    maxDepth: 5,
+    maxRequests: 1000
+  }
+})
+
+// 进度 Dialog
+const progressDialog = reactive({
+  visible: false,
+  server: null,
+  taskId: null
+})
+
+// 成员明细 Dialog
+const memberDialog = reactive({
+  visible: false,
+  server: null,
+  members: [],
+  total: 0,
+  loading: false,
+  search: '',
+  page: 0,
+  size: 50,
+  totalPages: 0
+})
+
+const memberDialogTitle = computed(() => {
+  const name = memberDialog.server?.name || memberDialog.server?.guildId || '服务器'
+  return `成员明细 - ${name}`
+})
+
+// 多任务同步状态管理
+// serverId -> taskId 的映射
+const syncTasksMap = reactive(new Map())
+// taskId -> timer 的映射
+const syncTimersMap = reactive(new Map())
+// taskId -> progressTask 的映射（用于对话框显示）
+const progressTasksMap = reactive(new Map())
+
+// 计算某个服务器是否正在同步
+const isServerSyncing = (serverId) => syncTasksMap.has(serverId)
+
+// 获取某个服务器的任务ID
+const getServerTaskId = (serverId) => syncTasksMap.get(serverId)
+
+// 计算进度百分比 - 基于请求数/总请求数
+const progressPercentage = computed(() => {
+  if (!progressDialog.taskId) return 0
+  const task = progressTasksMap.get(progressDialog.taskId)
+  if (!task) return 0
+  const maxRequests = task.maxRequests || 1
+  const requestsSent = task.requestsSent || 0
+  return Math.min(100, Math.round((requestsSent / maxRequests) * 100))
+})
+
+const statusMap = {
+  PENDING: { icon: Loading, text: '等待开始', class: 'pending' },
+  RUNNING: { icon: Loading, text: '抓取进行中', class: 'running' },
+  COMPLETED: { icon: CircleCheck, text: '采集完成', class: 'completed' },
+  FAILED: { icon: Warning, text: '抓取失败', class: 'failed' },
+  DONE: { icon: CircleCheck, text: '采集完成', class: 'completed' },
+  ERROR: { icon: Warning, text: '抓取失败', class: 'failed' }
+}
+
+const progressStatus = computed(() => {
+  if (!progressDialog.taskId) return statusMap.PENDING
+  const task = progressTasksMap.get(progressDialog.taskId)
+  const status = task?.status || 'PENDING'
+  return statusMap[status] || statusMap.PENDING
+})
+const progressStatusIcon = computed(() => progressStatus.value.icon)
+const progressStatusText = computed(() => progressStatus.value.text)
+const progressStatusClass = computed(() => progressStatus.value.class)
+
+// 当前进度对话框显示的任务
+const currentProgressTask = computed(() => {
+  if (!progressDialog.taskId) return null
+  return progressTasksMap.get(progressDialog.taskId)
+})
+
+// 是否为终态（完成/失败/错误）
+const isTerminalStatus = computed(() => {
+  if (!currentProgressTask.value) return false
+  const status = currentProgressTask.value.status
+  return status === 'COMPLETED' || status === 'DONE' || status === 'FAILED' || status === 'ERROR'
+})
+
+// 方法
+async function loadServers() {
+  try {
+    await guildServers.fetchServers(filters.discordAccountId)
+  } catch (e) {
+    ElMessage.error('加载服务器列表失败')
+  }
+}
+
+function openEditDialog(server = null) {
+  editDialog.isEdit = !!server
+  if (server) {
+    editDialog.form = {
+      id: server.id,
+      discordAccountId: server.discordAccountId,
+      guildUrl: server.guildUrl || '',
+      guildId: server.guildId || '',
+      channelId: server.channelId || '',
+      name: server.name || ''
+    }
+  } else {
+    editDialog.form = {
+      id: null,
+      discordAccountId: filters.discordAccountId || (accountOptions.value[0]?.id) || null,
+      guildUrl: '',
+      guildId: '',
+      channelId: '',
+      name: ''
+    }
+  }
+  editDialog.visible = true
+}
+
+async function parseUrl() {
+  const url = editDialog.form.guildUrl
+  if (!url) {
+    ElMessage.warning('请输入服务器 URL')
+    return
+  }
+  try {
+    const result = await guildServers.resolveLink(url, editDialog.form.discordAccountId)
+    if (result.success) {
+      editDialog.form.guildId = result.guildId || editDialog.form.guildId
+      editDialog.form.channelId = result.channelId || editDialog.form.channelId
+      if (result.serverName) {
+        editDialog.form.name = result.serverName
+        ElMessage.success(`解析成功: ${result.serverName}`)
+      } else {
+        ElMessage.success('URL 解析成功')
+      }
+    } else {
+      ElMessage.error(result.message || '解析失败')
+    }
+  } catch (e) {
+    ElMessage.error('解析失败')
+  }
+}
+
+async function saveServer() {
+  if (!editDialog.form.discordAccountId) {
+    ElMessage.warning('请选择所属账号')
+    return
+  }
+  try {
+    const savedServer = await guildServers.saveServer(editDialog.form)
+    ElMessage.success('保存成功')
+    editDialog.visible = false
+    // 如果当前过滤条件与保存的服务器账号不同，清除过滤以显示所有服务器
+    if (filters.discordAccountId && savedServer && savedServer.discordAccountId !== filters.discordAccountId) {
+      filters.discordAccountId = null
+    }
+    await loadServers()
+  } catch (e) {
+    ElMessage.error('保存失败')
+  }
+}
+
+async function confirmDelete(server) {
+  try {
+    await ElMessageBox.confirm(`确定删除服务器「${server.name || server.guildId}」及其所有成员数据？`, '删除确认', {
+      type: 'warning'
+    })
+    await guildServers.deleteServer(server.id)
+    ElMessage.success('删除成功')
+    await loadServers()
+  } catch (e) {}
+}
+
+function openSyncDialog(server) {
+  syncDialog.server = server
+  // 回填完整 token（非脱敏），供展示与编辑
+  syncDialog.token = server.accountBotToken || server.botToken || ""
+  // 加载商户配置作为默认值
+  guildServers.loadMerchantConfig().then(config => {
+    if (config) {
+      syncDialog.config = {
+        fetchLimit: config.fetchLimit || 10000,
+        requestInterval: config.requestInterval || 3,
+        requestCount: config.requestCount || 100,
+        maxDepth: config.maxDepth || 5,
+        maxRequests: config.maxRequests || 1000
+      }
+    }
+  }).catch(() => {})
+  syncDialog.visible = true
+}
+
+function maskToken(token) {
+  if (!token) return '-'
+  if (token.length <= 10) return token.substring(0, 4) + '****'
+  return token.substring(0, 6) + '****' + token.substring(token.length - 4)
+}
+
+async function startFetch() {
+  if (!syncDialog.server) return
+  syncDialog.fetching = true
+  try {
+    const botToken = (syncDialog.token || '').trim()
+    if (!botToken) {
+      ElMessage.error('请输入完整的 Bot Token，无法同步')
+      syncDialog.fetching = false
+      return
+    }
+
+    const result = await guildServers.startFetch({
+      token: botToken,
+      link: syncDialog.server.guildId,
+      guildServerId: syncDialog.server.id,
+      discordAccountId: syncDialog.server.discordAccountId,
+      channelId: syncDialog.server.channelId,
+      maxMembers: syncDialog.config.fetchLimit,
+      pageDelay: syncDialog.config.requestInterval,
+      maxDepth: syncDialog.config.maxDepth,
+      maxRequests: syncDialog.config.maxRequests
+    })
+
+    if (result.success) {
+      // 关闭同步弹窗
+      syncDialog.visible = false
+      await nextTick()
+      // 设置该服务器为同步中状态 - 保存到 Map
+      syncTasksMap.set(syncDialog.server.id, result.taskId)
+      // 初始化任务状态为 PENDING，显示进度对话框而不是空数据
+      progressTasksMap.set(result.taskId, {
+        status: 'PENDING',
+        progressMessage: '正在初始化采集任务...',
+        currentPrefix: '',
+        requestsSent: 0,
+        membersUnique: 0,
+        maxRequests: syncDialog.config.maxRequests,
+        maxMembers: syncDialog.config.fetchLimit,
+        prefixesDone: 0,
+        prefixesTotal: 0,
+        reconnects: 0,
+        completedPrefixCount: 0
+      })
+      // 自动打开进度对话框
+      progressDialog.server = syncDialog.server
+      progressDialog.taskId = result.taskId
+      progressDialog.visible = true
+      // 启动该任务的进度轮询
+      startTaskPolling(result.taskId, syncDialog.server.id)
+    } else {
+      ElMessage.error(result.message || '启动同步失败')
+    }
+  } catch (e) {
+    console.error('启动同步失败:', e)
+    ElMessage.error('启动同步失败')
+  } finally {
+    syncDialog.fetching = false
+  }
+}
+
+function openProgressDialog(server, taskId = null) {
+  progressDialog.server = server
+  progressDialog.visible = true
+
+  // 如果没传 taskId，尝试从 Map 或后端获取
+  if (!taskId) {
+    // 检查是否有该服务器正在进行的同步
+    if (syncTasksMap.has(server.id)) {
+      taskId = syncTasksMap.get(server.id)
+    }
+  }
+
+  progressDialog.taskId = taskId
+
+  if (taskId) {
+    // 如果该任务的轮询未启动，启动它
+    if (!syncTimersMap.has(taskId)) {
+      startTaskPolling(taskId, server.id)
+    }
+  }
+}
+
+// 为单个任务启动进度轮询
+function startTaskPolling(taskId, serverId) {
+  // 清除已有的定时器
+  if (syncTimersMap.has(taskId)) {
+    clearInterval(syncTimersMap.get(taskId))
+  }
+
+  let consecutiveErrors = 0
+
+  const timer = setInterval(async () => {
+    try {
+      let task = await guildServers.pollTask(taskId)
+      // 检查后端返回是否为错误响应（如任务不存在）
+      if (task && task.success === false) {
+        consecutiveErrors++
+        // 如果连续3次获取不到任务，停止轮询并提示
+        if (consecutiveErrors >= 3) {
+          console.warn('连续获取任务失败，可能任务已丢失')
+          stopTaskPolling(taskId, serverId)
+          const existingTask = progressTasksMap.get(taskId)
+          if (existingTask && existingTask.status !== 'COMPLETED' && existingTask.status !== 'FAILED' && existingTask.status !== 'DONE') {
+            progressTasksMap.set(taskId, {
+              ...existingTask,
+              status: 'FAILED',
+              progressMessage: '任务获取失败：' + (task.message || '未知错误')
+            })
+          }
+          ElMessage.error('获取采集任务状态失败：' + (task.message || '任务不存在'))
+          return
+        }
+        // 等待下一次轮询
+        return
+      }
+      
+      if (!task) {
+        // 尝试从数据库获取最近的任务
+        const dbTask = await guildServers.getLatestTask(serverId)
+        if (dbTask && dbTask.status) {
+          task = { ...dbTask, taskId }
+        }
+      }
+      
+      if (task) {
+        consecutiveErrors = 0
+        progressTasksMap.set(taskId, task)
+        if (task.status === 'COMPLETED' || task.status === 'FAILED' || task.status === 'DONE' || task.status === 'ERROR') {
+          stopTaskPolling(taskId, serverId)
+          await loadServers()
+          // 如果成员明细对话框正在显示该服务器，刷新成员列表
+          if (memberDialog.visible && memberDialog.server?.id === serverId) {
+            stopMemberAutoRefresh()
+            await loadMemberPage()
+          }
+          if (task.status === 'COMPLETED' || task.status === 'DONE') {
+            ElMessage.success('数据采集已完成')
+          } else if (task.status === 'FAILED' || task.status === 'ERROR') {
+            ElMessage.error('数据采集失败：' + (task.progressMessage || task.error || '未知错误'))
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('获取进度失败', e)
+      consecutiveErrors++
+      if (consecutiveErrors >= 5) {
+        console.warn('连续获取进度失败过多，停止轮询')
+        stopTaskPolling(taskId, serverId)
+      }
+    }
+  }, 2000)
+
+  syncTimersMap.set(taskId, timer)
+}
+
+// 停止单个任务的进度轮询
+function stopTaskPolling(taskId, serverId) {
+  const timer = syncTimersMap.get(taskId)
+  if (timer) {
+    clearInterval(timer)
+    syncTimersMap.delete(taskId)
+  }
+  syncTasksMap.delete(serverId)
+  progressTasksMap.delete(taskId)
+}
+
+async function loadLatestTaskStatus(serverId) {
+  try {
+    const tasks = await guildServers.getActiveTasks()
+    let runningTask = null
+    let completedTask = null
+    for (const [taskId, task] of Object.entries(tasks || {})) {
+      if (task.guildServerId === serverId) {
+        const isTerminal = task.status === 'COMPLETED' || task.status === 'DONE' || task.status === 'FAILED' || task.status === 'ERROR'
+        if (!isTerminal && !runningTask) {
+          runningTask = { ...task, taskId }
+        }
+        if (!completedTask) {
+          completedTask = { ...task, taskId }
+        }
+      }
+    }
+    let taskToShow = runningTask || completedTask
+
+    if (!taskToShow) {
+      const dbTask = await guildServers.getLatestTask(serverId)
+      if (dbTask && dbTask.status) {
+        taskToShow = { ...dbTask, taskId: 'db_' + serverId }
+      }
+    }
+
+    if (taskToShow) {
+      progressTasksMap.set(taskToShow.taskId, taskToShow)
+      const isTerminal = taskToShow.status === 'COMPLETED' || taskToShow.status === 'DONE' || taskToShow.status === 'FAILED' || taskToShow.status === 'ERROR'
+      if (!isTerminal) {
+        syncTasksMap.set(serverId, taskToShow.taskId)
+        startTaskPolling(taskToShow.taskId, serverId)
+      }
+    }
+  } catch (e) {
+    console.warn('获取最近任务失败', e)
+  }
+}
+
+async function openMemberDialog(server) {
+  memberDialog.server = server
+  memberDialog.visible = true
+  memberDialog.search = ''
+  memberDialog.members = []
+  memberDialog.total = 0
+  memberDialog.page = 0
+  memberDialog.size = 50
+  memberDialog.totalPages = 0
+  memberDialog.loading = true
+  try {
+    await loadMemberPage()
+  } catch (e) {
+    ElMessage.error('加载成员列表失败')
+  } finally {
+    memberDialog.loading = false
+  }
+  
+  // 如果该服务器正在同步，定时刷新成员列表
+  if (server && isServerSyncing(server.id)) {
+    startMemberAutoRefresh(server.id)
+  }
+}
+
+// 成员列表自动刷新（同步进行中时每5秒刷新一次）
+let memberRefreshTimer = null
+function startMemberAutoRefresh(serverId) {
+  stopMemberAutoRefresh()
+  memberRefreshTimer = setInterval(async () => {
+    if (!isServerSyncing(serverId) || !memberDialog.visible || memberDialog.server?.id !== serverId) {
+      stopMemberAutoRefresh()
+      return
+    }
+    try {
+      await loadMemberPage()
+    } catch (e) {
+      // 静默失败
+    }
+  }, 5000)
+}
+function stopMemberAutoRefresh() {
+  if (memberRefreshTimer) {
+    clearInterval(memberRefreshTimer)
+    memberRefreshTimer = null
+  }
+}
+
+async function loadMemberPage() {
+  if (!memberDialog.server) return
+  memberDialog.loading = true
+  try {
+    const result = await guildServers.fetchMembersList(memberDialog.server.id, {
+      page: memberDialog.page,
+      size: memberDialog.size,
+      keyword: memberDialog.search || undefined
+    })
+    memberDialog.members = result.list || []
+    memberDialog.total = result.total || 0
+    memberDialog.totalPages = result.totalPages || 0
+  } catch (e) {
+    console.warn('加载成员列表失败', e)
+  } finally {
+    memberDialog.loading = false
+  }
+}
+
+function onMemberPageChange(page) {
+  memberDialog.page = page - 1
+  loadMemberPage()
+}
+
+function onMemberPageSizeChange(size) {
+  memberDialog.size = size
+  memberDialog.page = 0
+  loadMemberPage()
+}
+
+function searchMembers() {
+  memberDialog.page = 0
+  loadMemberPage()
+}
+
+function stopProgressPolling() {
+  // 进度对话框关闭时，任务继续在后台轮询
+  // 因为我们使用了每个任务独立的定时器，所以这里不需要停止轮询
+  // startTaskPolling 会继续在后台运行
+}
+
+function formatTime(t) {
+  if (!t) return '-'
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return t
+  const pad = n => n.toString().padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function formatDate(t) {
+  if (!t) return '-'
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return String(t)
+  const pad = n => n.toString().padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+}
+
+async function copyText(text) {
+  if (!text) {
+    ElMessage.warning('没有可复制的内容')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制到剪贴板')
+  } catch (e) {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    ElMessage.success('已复制到剪贴板')
+  }
+}
+
+onMounted(async () => {
+  if (accounts.accounts.length === 0) {
+    try { await accounts.fetchAccounts() } catch (e) {}
+  }
+  await loadServers()
+  
+  // 恢复所有正在进行的采集任务
+  try {
+    const tasks = await guildServers.getActiveTasks()
+    if (tasks && typeof tasks === 'object') {
+      for (const [taskId, taskState] of Object.entries(tasks)) {
+        if (taskState && taskState.guildServerId) {
+          const isTerminal = taskState.status === 'COMPLETED' || taskState.status === 'DONE' || taskState.status === 'FAILED' || taskState.status === 'ERROR'
+          if (!isTerminal) {
+            const serverId = Number(taskState.guildServerId)
+            syncTasksMap.set(serverId, taskId)
+            progressTasksMap.set(taskId, taskState)
+            startTaskPolling(taskId, serverId)
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('获取活跃任务失败', e)
+  }
+})
+
+onUnmounted(() => {
+  stopProgressPolling()
+})
+</script>
+
+<style scoped>
+.guilds-page {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  overflow: hidden;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.page-title { margin: 0; font-size: 18px; font-weight: 700; color: var(--color-text); }
+.page-desc { margin: 4px 0 0; font-size: 12px; color: var(--color-text-2); }
+.header-actions { display: flex; align-items: center; gap: 12px; }
+
+.page-body {
+  flex: 1;
+  min-height: 0;
+  padding: 20px 24px;
+  overflow: auto;
+}
+
+.server-cell { display: flex; align-items: center; gap: 10px; }
+.server-icon {
+  width: 40px; height: 40px; border-radius: 10px; object-fit: cover;
+  background: var(--color-bg-3);
+}
+.server-icon.placeholder {
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-pink));
+}
+.server-info { flex: 1; min-width: 0; }
+.server-name { font-size: 14px; font-weight: 600; color: var(--color-text); }
+.server-sub { font-size: 11px; color: var(--color-text-3); font-family: monospace; }
+
+.member-count { font-weight: 600; color: var(--color-primary); }
+
+.mono { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+.text-muted { color: var(--color-text-3); font-size: 12px; }
+
+.sync-info { padding: 8px 0; }
+.form-tip { font-size: 11px; color: var(--color-text-3); margin-top: 2px; }
+
+.progress-content { padding: 8px 0; }
+.progress-header { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+.progress-icon {
+  font-size: 48px;
+  padding: 12px;
+  border-radius: 50%;
+}
+.progress-icon.pending { color: var(--color-text-3); }
+.progress-icon.running { color: var(--color-primary); animation: spin 2s linear infinite; }
+.progress-icon.completed { color: #67c23a; }
+.progress-icon.failed { color: #f56c6c; }
+
+.progress-title { font-size: 16px; font-weight: 600; color: var(--color-text); }
+.progress-desc { font-size: 12px; color: var(--color-text-3); margin-top: 4px; }
+.progress-task { font-size: 11px; color: var(--color-text-4); margin-top: 2px; font-family: monospace; }
+
+.progress-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.stat-box {
+  background: var(--color-bg-2);
+  border-radius: 10px;
+  padding: 14px;
+  text-align: center;
+}
+.stat-box.highlight {
+  background: linear-gradient(135deg, rgba(88,101,242,0.15), rgba(255,100,150,0.1));
+}
+.stat-value { font-size: 18px; font-weight: 700; color: var(--color-text); word-break: break-all; }
+.stat-label { font-size: 11px; color: var(--color-text-3); margin-top: 4px; }
+
+.progress-message { margin-bottom: 12px; }
+.progress-tip {
+  margin-top: 12px;
+  padding: 10px;
+  background: var(--color-bg-2);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--color-text-2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ========== Enhanced Progress Dialog Styles ========== */
+.progress-header-info { flex: 1; }
+.progress-desc strong { color: var(--color-text); font-weight: 600; }
+.progress-desc .mono-text { color: var(--color-text-3); margin-left: 8px; }
+
+.progress-bar-section {
+  margin-bottom: 20px;
+}
+.progress-bar-label {
+  font-size: 12px;
+  color: var(--color-text-2);
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.progress-stats-enhanced {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.stat-card {
+  background: var(--color-bg-2);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--color-border);
+}
+.stat-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+.stat-icon.request-icon {
+  background: linear-gradient(135deg, rgba(64,158,255,0.15), rgba(64,158,255,0.05));
+  color: #409eff;
+}
+.stat-icon.fetch-icon {
+  background: linear-gradient(135deg, rgba(103,194,58,0.15), rgba(103,194,58,0.05));
+  color: #67c23a;
+}
+.stat-info { flex: 1; min-width: 0; }
+.stat-values {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.stat-current {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.stat-sep {
+  font-size: 18px;
+  color: var(--color-text-3);
+}
+.stat-total {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-3);
+}
+.stat-label {
+  font-size: 12px;
+  color: var(--color-text-2);
+  margin-top: 4px;
+}
+
+.progress-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 20px;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: var(--color-bg-2);
+  border-radius: 10px;
+}
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--color-border);
+}
+.detail-item:nth-last-child(-n+2) {
+  border-bottom: none;
+}
+.detail-label {
+  font-size: 12px;
+  color: var(--color-text-2);
+}
+.detail-value {
+  font-size: 13px;
+  color: var(--color-text);
+  font-weight: 500;
+}
+.mono-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.progress-tip.completed {
+  background: linear-gradient(135deg, rgba(103,194,58,0.15), rgba(103,194,58,0.05));
+  color: #67c23a;
+  border: 1px solid rgba(103,194,58,0.2);
+}
+
+.progress-tip.failed {
+  background: linear-gradient(135deg, rgba(245,108,108,0.15), rgba(245,108,108,0.05));
+  color: #f56c6c;
+  border: 1px solid rgba(245,108,108,0.2);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ========== 成员明细 Dialog ========== */
+.member-dialog-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.member-dialog-pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+.member-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.member-avatar {
+  flex-shrink: 0;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-pink));
+  color: #fff;
+  font-weight: 600;
+}
+.member-cell-simple {
+  display: flex;
+  align-items: center;
+}
+.member-name-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.id-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+</style>

@@ -1,0 +1,613 @@
+<template>
+  <div class="users-page">
+    <div class="page-header">
+      <div class="page-title-wrap">
+        <h2 class="page-title">用户管理</h2>
+        <p class="page-desc">管理平台用户账号与权限</p>
+      </div>
+      <div class="header-actions">
+        <el-button type="primary" @click="openCreate">
+          <el-icon><Plus /></el-icon>
+          <span>新增用户</span>
+        </el-button>
+        <el-button :icon="Refresh" :loading="loading" @click="fetchList">刷新</el-button>
+      </div>
+    </div>
+
+    <div class="page-body">
+      <el-table v-loading="loading" :data="list" stripe style="width:100%">
+        <el-table-column label="#" width="60" align="center">
+          <template #default="{ $index }">{{ $index + 1 }}</template>
+        </el-table-column>
+        <el-table-column prop="username" label="用户名" min-width="140">
+          <template #default="{ row }">
+            <span class="cell-strong">{{ row.username || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="displayName" label="显示名" min-width="120">
+          <template #default="{ row }">{{ row.displayName || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="身份" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.role === 'PLATFORM_ADMIN'" type="warning" size="small" effect="light">平台</el-tag>
+            <el-tag v-else type="primary" size="small" effect="light">商户</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="merchantName" label="所属商户" min-width="140">
+          <template #default="{ row }">{{ row.merchantName || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="分配角色" min-width="320">
+          <template #default="{ row }">
+            <div v-if="row.roleIds && row.roleIds.length > 0" class="role-tags">
+              <el-tag v-for="id in row.roleIds" :key="id" type="success" size="small" effect="plain" class="role-tag-item">
+                {{ getRoleName(id) }}
+              </el-tag>
+            </div>
+            <span v-else class="cell-hint">未分配</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="enabled" label="启用状态" width="110" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="light">
+              {{ row.enabled ? '启用' : '禁用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="320" fixed="right">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link @click="openEdit(row)">
+              <el-icon><Edit /></el-icon> 编辑
+            </el-button>
+            <el-button size="small" type="success" link @click="openAssignRoles(row)">
+              <el-icon><User /></el-icon> 分配角色
+            </el-button>
+            <el-button size="small" type="warning" link @click="openResetPwd(row)">
+              <el-icon><Key /></el-icon> 重置密码
+            </el-button>
+            <el-button size="small" type="danger" link :disabled="row.username === 'admin'" @click="remove(row)">
+              <el-icon><Delete /></el-icon> 删除
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <!-- 新增用户 -->
+    <el-dialog v-model="createDialog.visible" title="新增用户" width="580px" @close="resetCreateDialog">
+      <el-form :model="createDialog.form" label-width="100px">
+        <el-form-item label="用户名" required>
+          <el-input v-model="createDialog.form.username" placeholder="请输入用户名" />
+        </el-form-item>
+        <el-form-item label="密码" required>
+          <el-input v-model="createDialog.form.password" type="password" show-password placeholder="请输入密码" />
+        </el-form-item>
+        <el-form-item label="显示名">
+          <el-input v-model="createDialog.form.displayName" placeholder="请输入显示名" />
+        </el-form-item>
+        <el-form-item label="身份" required>
+          <el-radio-group v-model="createDialog.form.identity" @change="onCreateIdentityChange">
+            <el-radio value="PLATFORM">平台</el-radio>
+            <el-radio value="MERCHANT">商户</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="createDialog.form.identity === 'MERCHANT'" label="商户" required>
+          <el-select v-model="createDialog.form.merchantId" placeholder="请选择商户" style="width:100%" :loading="merchantsLoading">
+            <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="createDialog.saving" @click="saveCreate">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑用户 -->
+    <el-dialog v-model="editDialog.visible" title="编辑用户" width="580px" @close="resetEditDialog">
+      <el-form :model="editDialog.form" label-width="100px">
+        <el-form-item label="用户名">
+          <el-input :model-value="editDialog.form.username" disabled />
+        </el-form-item>
+        <el-form-item label="显示名">
+          <el-input v-model="editDialog.form.displayName" placeholder="请输入显示名" />
+        </el-form-item>
+        <el-form-item label="身份" required>
+          <el-radio-group v-model="editDialog.form.identity" @change="onEditIdentityChange">
+            <el-radio value="PLATFORM">平台</el-radio>
+            <el-radio value="MERCHANT">商户</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="editDialog.form.identity === 'MERCHANT'" label="商户" required>
+          <el-select v-model="editDialog.form.merchantId" placeholder="请选择商户" style="width:100%" :loading="merchantsLoading">
+            <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="启用状态">
+          <el-switch v-model="editDialog.form.enabled" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="editDialog.saving" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 重置密码 -->
+    <el-dialog v-model="pwdDialog.visible" title="重置密码" width="440px" @close="resetPwdDialog">
+      <el-form :model="pwdDialog.form" label-width="80px">
+        <el-form-item label="用户名">
+          <el-input :model-value="pwdDialog.username" disabled />
+        </el-form-item>
+        <el-form-item label="新密码" required>
+          <el-input v-model="pwdDialog.form.password" type="password" show-password placeholder="请输入新密码" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="pwdDialog.saving" @click="saveResetPwd">确认重置</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 分配角色 -->
+    <el-dialog v-model="assignRolesDialog.visible" title="分配角色" width="600px" @close="resetAssignRolesDialog">
+      <div class="assign-roles-container">
+        <div class="user-info-row">
+          <span class="label">用户：</span>
+          <span class="value">{{ assignRolesDialog.username }}</span>
+        </div>
+        
+        <div class="section-title">已分配角色</div>
+        <div class="assigned-roles" v-if="assignRolesDialog.selectedRoleIds.length > 0">
+          <el-tag 
+            v-for="roleId in assignRolesDialog.selectedRoleIds" 
+            :key="roleId" 
+            class="role-tag"
+            closable
+            @close="removeRole(roleId)"
+          >
+            {{ getRoleName(roleId) }}
+          </el-tag>
+        </div>
+        <el-empty v-else description="暂无分配角色" :image-size="60" />
+
+        <div class="section-title" style="margin-top: 20px;">添加角色</div>
+        <div class="role-list" v-if="availableRoles.length > 0">
+          <div 
+            v-for="role in availableRoles" 
+            :key="role.id" 
+            class="role-list-item"
+          >
+            <span class="role-name">{{ role.name }}</span>
+            <el-button type="primary" size="small" link @click="addRole(role.id)">
+              <el-icon><Plus /></el-icon> 添加
+            </el-button>
+          </div>
+        </div>
+        <el-empty v-else description="所有角色均已分配" :image-size="60" />
+      </div>
+      <template #footer>
+        <el-button @click="assignRolesDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="assignRolesDialog.saving" @click="saveAssignRoles">保存</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, reactive, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus, Edit, Delete, Refresh, Key, User } from '@element-plus/icons-vue'
+import { api } from '@/api'
+
+const list = ref([])
+const loading = ref(false)
+const merchants = ref([])
+const merchantsLoading = ref(false)
+const customRoles = ref([])
+
+const platformRoles = [
+  { value: 'PLATFORM_ADMIN', label: '平台管理员' }
+]
+
+const merchantRoles = [
+  { value: 'MERCHANT_ADMIN', label: '商户管理员' },
+  { value: 'MANAGER', label: '主管' },
+  { value: 'SALES', label: '销售' },
+  { value: 'SERVICE', label: '客服' }
+]
+
+function roleLabel(role) {
+  const all = [...platformRoles, ...merchantRoles]
+  const item = all.find(r => r.value === role)
+  return item ? item.label : (role || '-')
+}
+
+function roleTagType(role) {
+  const map = {
+    PLATFORM_ADMIN: 'danger',
+    MERCHANT_ADMIN: 'warning',
+    MANAGER: 'primary',
+    SALES: 'success',
+    SERVICE: 'info'
+  }
+  return map[role] || 'info'
+}
+
+function getRoleName(id) {
+  if (!id) return ''
+  const r = customRoles.value.find(x => x.id === id)
+  return r ? r.name : `角色#${id}`
+}
+
+async function fetchCustomRoles() {
+  try {
+    const res = await api.get('/roles')
+    customRoles.value = Array.isArray(res) ? res : []
+  } catch (e) {
+    customRoles.value = []
+  }
+}
+
+async function fetchList() {
+  loading.value = true
+  try {
+    const res = await api.get('/users')
+    list.value = Array.isArray(res) ? res : []
+  } catch (e) {
+    ElMessage.warning('加载用户列表失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function fetchMerchants() {
+  merchantsLoading.value = true
+  try {
+    const res = await api.get('/roles/merchants')
+    merchants.value = Array.isArray(res) ? res : []
+  } catch (e) {} finally {
+    merchantsLoading.value = false
+  }
+}
+
+const createDialog = reactive({
+  visible: false,
+  saving: false,
+  form: {
+    username: '',
+    password: '',
+    displayName: '',
+    identity: 'MERCHANT',
+    merchantId: null
+  }
+})
+
+function onCreateIdentityChange(val) {
+  if (val === 'PLATFORM') {
+    createDialog.form.merchantId = null
+  }
+}
+
+function openCreate() {
+  createDialog.visible = true
+  createDialog.form = {
+    username: '',
+    password: '',
+    displayName: '',
+    identity: 'MERCHANT',
+    merchantId: null
+  }
+}
+
+function resetCreateDialog() {
+  createDialog.form = {
+    username: '',
+    password: '',
+    displayName: '',
+    identity: 'MERCHANT',
+    merchantId: null
+  }
+  createDialog.saving = false
+}
+
+async function saveCreate() {
+  if (!createDialog.form.username) { ElMessage.warning('请输入用户名'); return }
+  if (!createDialog.form.password) { ElMessage.warning('请输入密码'); return }
+  if (createDialog.form.identity === 'MERCHANT' && !createDialog.form.merchantId) {
+    ElMessage.warning('请选择商户'); return
+  }
+  createDialog.saving = true
+  try {
+    const payload = {
+      username: createDialog.form.username,
+      password: createDialog.form.password,
+      displayName: createDialog.form.displayName,
+      role: createDialog.form.identity === 'PLATFORM' ? 'PLATFORM_ADMIN' : 'MERCHANT_ADMIN',
+      roleIds: []
+    }
+    if (createDialog.form.identity === 'MERCHANT') {
+      payload.merchantId = createDialog.form.merchantId
+    }
+    await api.post('/users', payload)
+    ElMessage.success('已创建')
+    createDialog.visible = false
+    await fetchList()
+  } catch (e) {} finally { createDialog.saving = false }
+}
+
+const editDialog = reactive({
+  visible: false,
+  editId: null,
+  saving: false,
+  form: {
+    username: '',
+    displayName: '',
+    identity: 'MERCHANT',
+    merchantId: null,
+    enabled: true
+  }
+})
+
+function onEditIdentityChange(val) {
+  if (val === 'PLATFORM') {
+    editDialog.form.merchantId = null
+  }
+}
+
+function openEdit(row) {
+  editDialog.visible = true
+  editDialog.editId = row.id
+  const isPlatform = row.role === 'PLATFORM_ADMIN'
+  editDialog.form = {
+    username: row.username || '',
+    displayName: row.displayName || '',
+    identity: isPlatform ? 'PLATFORM' : 'MERCHANT',
+    merchantId: row.merchantId || null,
+    enabled: row.enabled !== false
+  }
+}
+
+function resetEditDialog() {
+  editDialog.editId = null
+  editDialog.form = { username: '', displayName: '', identity: 'MERCHANT', merchantId: null, enabled: true }
+  editDialog.saving = false
+}
+
+async function saveEdit() {
+  if (editDialog.form.identity === 'MERCHANT' && !editDialog.form.merchantId) {
+    ElMessage.warning('请选择商户'); return
+  }
+  editDialog.saving = true
+  try {
+    const payload = {
+      displayName: editDialog.form.displayName,
+      enabled: editDialog.form.enabled
+    }
+    if (editDialog.form.identity === 'MERCHANT') {
+      payload.merchantId = editDialog.form.merchantId
+    }
+    await api.put(`/users/${editDialog.editId}`, payload)
+    ElMessage.success('已更新')
+    editDialog.visible = false
+    await fetchList()
+  } catch (e) {} finally { editDialog.saving = false }
+}
+
+const pwdDialog = reactive({
+  visible: false,
+  editId: null,
+  username: '',
+  saving: false,
+  form: { password: '' }
+})
+
+function openResetPwd(row) {
+  pwdDialog.visible = true
+  pwdDialog.editId = row.id
+  pwdDialog.username = row.username || ''
+  pwdDialog.form.password = ''
+}
+
+function resetPwdDialog() {
+  pwdDialog.editId = null
+  pwdDialog.username = ''
+  pwdDialog.form.password = ''
+  pwdDialog.saving = false
+}
+
+async function saveResetPwd() {
+  if (!pwdDialog.form.password) { ElMessage.warning('请输入新密码'); return }
+  pwdDialog.saving = true
+  try {
+    await api.put(`/users/${pwdDialog.editId}`, { password: pwdDialog.form.password })
+    ElMessage.success('密码已重置')
+    pwdDialog.visible = false
+  } catch (e) {} finally { pwdDialog.saving = false }
+}
+
+async function remove(row) {
+  try {
+    await ElMessageBox.confirm(`确定要删除用户「${row.username || row.displayName}」吗？此操作不可恢复。`, '提示', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+    await api.delete(`/users/${row.id}`)
+    ElMessage.success('已删除')
+    await fetchList()
+  } catch (e) {}
+}
+
+// 分配角色相关
+const assignRolesDialog = reactive({
+  visible: false,
+  userId: null,
+  username: '',
+  selectedRoleIds: [],
+  saving: false
+})
+
+const availableRoles = computed(() => {
+  return customRoles.value.filter(role => !assignRolesDialog.selectedRoleIds.includes(role.id))
+})
+
+function openAssignRoles(row) {
+  assignRolesDialog.visible = true
+  assignRolesDialog.userId = row.id
+  assignRolesDialog.username = row.username || row.displayName || ''
+  assignRolesDialog.selectedRoleIds = [...(row.roleIds || [])]
+}
+
+function resetAssignRolesDialog() {
+  assignRolesDialog.userId = null
+  assignRolesDialog.username = ''
+  assignRolesDialog.selectedRoleIds = []
+  assignRolesDialog.saving = false
+}
+
+function addRole(roleId) {
+  if (!assignRolesDialog.selectedRoleIds.includes(roleId)) {
+    assignRolesDialog.selectedRoleIds.push(roleId)
+  }
+}
+
+function removeRole(roleId) {
+  const index = assignRolesDialog.selectedRoleIds.indexOf(roleId)
+  if (index > -1) {
+    assignRolesDialog.selectedRoleIds.splice(index, 1)
+  }
+}
+
+async function saveAssignRoles() {
+  assignRolesDialog.saving = true
+  try {
+    await api.put(`/users/${assignRolesDialog.userId}/roles`, assignRolesDialog.selectedRoleIds)
+    ElMessage.success('角色已分配')
+    assignRolesDialog.visible = false
+    await fetchList()
+  } catch (e) {
+    ElMessage.error('分配角色失败')
+  } finally {
+    assignRolesDialog.saving = false
+  }
+}
+
+onMounted(() => {
+  fetchList()
+  fetchMerchants()
+  fetchCustomRoles()
+})
+</script>
+
+<style scoped>
+.users-page {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-2);
+}
+
+.page-title-wrap { min-width: 0; }
+.page-title { margin: 0; font-size: 18px; font-weight: 700; color: var(--color-text); }
+.page-desc { margin: 4px 0 0; font-size: 12px; color: var(--color-text-2); }
+.header-actions { display: flex; gap: 10px; }
+
+.page-body {
+  flex: 1;
+  overflow: auto;
+  padding: 20px 24px;
+}
+
+.cell-strong {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cell-hint { font-size: 12px; color: var(--color-text-3); }
+.form-tip { font-size: 12px; color: var(--color-text-3); margin-top: 4px; }
+.role-tags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.role-tag-item { white-space: nowrap; height: 24px; }
+
+/* 分配角色弹窗样式 */
+.assign-roles-container {
+  padding: 10px 0;
+}
+
+.user-info-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 16px;
+}
+
+.user-info-row .label {
+  color: var(--color-text-2);
+  font-size: 14px;
+  margin-right: 8px;
+}
+
+.user-info-row .value {
+  color: var(--color-text);
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-2);
+  margin-bottom: 12px;
+}
+
+.assigned-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px;
+  background: var(--color-bg);
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+}
+
+.role-tag {
+  margin: 0;
+}
+
+.role-list {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+}
+
+.role-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+  transition: background 0.15s;
+}
+
+.role-list-item:last-child {
+  border-bottom: none;
+}
+
+.role-list-item:hover {
+  background: var(--color-bg);
+}
+
+.role-name {
+  font-size: 14px;
+  color: var(--color-text);
+  font-weight: 500;
+}
+</style>

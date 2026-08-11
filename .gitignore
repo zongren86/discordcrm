@@ -1,0 +1,41 @@
+# Node.js
+node_modules/
+dist/
+*.log
+
+# Java
+target/
+*.class
+*.jar
+*.war
+.idea/
+*.iml
+.vscode/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Maven
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+*.swp
+*.swo
+*~
+
+# Temp files in root
+/*.py
+/*.tmp
+/*.bak
+**/*.py
+
+# Startup scripts (contain sensitive data)
+start-all.py
+start-all.sh
+start_discord.py

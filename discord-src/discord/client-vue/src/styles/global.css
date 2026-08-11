@@ -1,0 +1,191 @@
+/* Discord CRM 浅色主题 - 遵循 Discord 品牌主色系 */
+
+:root {
+  /* 背景色系 - 浅色 */
+  --color-bg: #F2F3F5;           /* 主背景 - 浅灰 */
+  --color-bg-2: #FFFFFF;         /* 卡片/侧栏背景 - 纯白 */
+  --color-bg-3: #E3E5E8;         /* 输入/列表背景 - 浅灰 */
+  --color-bg-4: #F2F3F5;         /* 头部背景 - 浅灰 */
+  
+  /* 边框色系 */
+  --color-border: #D4D7DC;
+  
+  /* 文字色系 - 深色（保证可读性） */
+  --color-text: #2C2F33;          /* 主文字 - 深灰黑 */
+  --color-text-2: #4E5058;        /* 次级文字 - 深灰 */
+  --color-text-3: #80848E;        /* 占位符 - 中灰 */
+  
+  /* Discord 品牌主色系 - 保持不变 */
+  --color-primary: #5865F2;       /* Discord Blurple - 紫蓝 */
+  --color-primary-hover: #4752C4; /* 悬停态 - 深紫蓝 */
+  --color-pink: #EB459E;          /* Discord 粉 */
+  --color-green: #23A559;         /* 成功/在线 - Discord 绿 */
+  --color-red: #F23F43;           /* 错误 - Discord 红 */
+  --color-yellow: #F0B232;        /* 警告 - Discord 黄 */
+  
+  /* 消息气泡色系 */
+  --color-bubble-in: #FFFFFF;     /* 入站消息气泡 - 白色 */
+  --color-bubble-out: #5865F2;    /* 出站消息气泡 - Blurple */
+  
+  /* 额外语义色 */
+  --color-bg-hover: #D4D7DC;      /* 悬停背景 */
+  --color-surface: #FFFFFF;       /* 表面色 */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+a { color: var(--color-primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* 滚动条 - 浅色主题 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #C4C7CD; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #80848E; }
+
+/* Element Plus 浅色主题覆盖 */
+.el-button--primary {
+  --el-button-bg-color: var(--color-primary) !important;
+  --el-button-border-color: var(--color-primary) !important;
+  --el-button-hover-bg-color: var(--color-primary-hover) !important;
+  --el-button-hover-border-color: var(--color-primary-hover) !important;
+}
+
+.el-button--success {
+  --el-button-bg-color: var(--color-green) !important;
+  --el-button-border-color: var(--color-green) !important;
+}
+
+.el-button--danger {
+  --el-button-bg-color: var(--color-red) !important;
+  --el-button-border-color: var(--color-red) !important;
+}
+
+.el-card {
+  background: var(--color-bg-2) !important;
+  border-color: var(--color-border) !important;
+  color: var(--color-text) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.el-input__wrapper {
+  background: var(--color-bg-3) !important;
+  box-shadow: 0 0 0 1px transparent inset !important;
+}
+
+.el-input__wrapper:hover,
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--color-primary) inset !important;
+}
+
+.el-input__inner {
+  color: var(--color-text) !important;
+}
+
+.el-textarea__inner {
+  background: var(--color-bg-3) !important;
+  color: var(--color-text) !important;
+  border: 1px solid transparent !important;
+}
+
+.el-textarea__inner:focus {
+  border-color: var(--color-primary) !important;
+}
+
+.el-dialog {
+  background: var(--color-bg-2) !important;
+  border: 1px solid var(--color-border) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.el-dialog__title, .el-form-item__label {
+  color: var(--color-text) !important;
+}
+
+.el-message-box {
+  background: var(--color-bg-2) !important;
+  border: 1px solid var(--color-border) !important;
+}
+
+.el-message-box__title, .el-message-box__message p {
+  color: var(--color-text) !important;
+}
+
+.el-menu {
+  background: var(--color-bg-2) !important;
+  border-right: none !important;
+}
+
+.el-menu-item, .el-sub-menu__title {
+  color: var(--color-text-2) !important;
+}
+
+.el-menu-item.is-active {
+  background: var(--color-bg-3) !important;
+  color: var(--color-text) !important;
+}
+
+.el-menu-item:hover, .el-sub-menu__title:hover {
+  background: var(--color-bg-hover) !important;
+  color: var(--color-text) !important;
+}
+
+.el-table {
+  --el-table-bg-color: var(--color-bg-2) !important;
+  --el-table-tr-bg-color: var(--color-bg-2) !important;
+  --el-table-header-bg-color: var(--color-bg-3) !important;
+  --el-table-border-color: var(--color-border) !important;
+  --el-table-text-color: var(--color-text) !important;
+  --el-table-header-text-color: var(--color-text) !important;
+  --el-table-row-hover-bg-color: var(--color-bg-hover) !important;
+}
+
+.el-select-dropdown {
+  background: var(--color-bg-2) !important;
+  border: 1px solid var(--color-border) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.el-select-dropdown__item {
+  color: var(--color-text) !important;
+}
+
+.el-select-dropdown__item.is-selected,
+.el-select-dropdown__item.hover,
+.el-select-dropdown__item:hover {
+  background: var(--color-bg-3) !important;
+  color: var(--color-text) !important;
+}
+
+.el-empty__description p {
+  color: var(--color-text-3) !important;
+}
+
+.el-tag {
+  border: none !important;
+}
+
+.el-scrollbar__thumb {
+  background: #C4C7CD !important;
+}
+
+.el-avatar {
+  background: var(--color-bg-3) !important;
+}

@@ -1,0 +1,1103 @@
+package com.discordadmin.discord.member;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.neovisionaries.ws.client.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.*;
+import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.zip.Inflater;
+import javax.net.ssl.SSLContext;
+
+/**
+ * 经 Discord Gateway(WebSocket) 拉取服务器成员
+ *
+ * <p>使用 nv-websocket-client 库（JDA 依赖）实现 WebSocket 连接，
+ * 支持大消息处理和 zlib 压缩。
+ */
+public class GatewayMemberFetcher {
+
+    private static final Logger log = LoggerFactory.getLogger(GatewayMemberFetcher.class);
+    private static final String GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json";
+    private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789_.";
+    private static final String UA =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+          + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+    private static final double MIN_REQUEST_INTERVAL = 2.5;
+    private static final int MAX_RECONNECT = 10;
+    private int maxPrefixDepth = 5;
+
+    private static final Semaphore CONNECT_SEMAPHORE = new Semaphore(10);
+    private static final AtomicInteger connectingCount = new AtomicInteger(0);
+
+    private final String token;
+    private final String guildId;
+    private final String proxyHost;
+    private final int proxyPort;
+    private final HttpClient restClient;
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    private final Map<String, JsonNode> members = new ConcurrentHashMap<>();
+    private final Set<String> existingMemberIds = ConcurrentHashMap.newKeySet();
+    private final AtomicReference<String> guildName = new AtomicReference<>();
+    private final AtomicInteger seq = new AtomicInteger(-1);
+    private volatile WebSocket webSocket;
+    private volatile boolean stop = false;
+    private volatile long hbIntervalMs = 41250;
+    private volatile String closeReason = null;
+    private final AtomicBoolean reconnecting = new AtomicBoolean(false);
+    private final AtomicInteger reconnects = new AtomicInteger(0);
+    private final AtomicBoolean hbStarted = new AtomicBoolean(false);
+    private final AtomicBoolean disconnected = new AtomicBoolean(false);
+    private final AtomicReference<GatewayException> lastError = new AtomicReference<>();
+
+    private volatile CountDownLatch openLatch = new CountDownLatch(1);
+    private volatile CountDownLatch readyLatch = new CountDownLatch(1);
+
+    // 压缩消息处理
+    private final Map<String, byte[]> pendingChunks = new ConcurrentHashMap<>();
+
+    private final ProgressListener progress;
+    private final MemberBatchListener memberBatchListener;
+    private final int maxRequestsRef;
+    private final int maxMembersRef;
+    private final int pageDelayMs;
+
+    // 用于分批保存的缓冲区
+    private final List<JsonNode> pendingMembers = Collections.synchronizedList(new ArrayList<>());
+    private static final int BATCH_SAVE_SIZE = 100;  // 每 100 条保存一次
+
+    private final AtomicInteger requestsSent = new AtomicInteger(0);
+    private String currentPrefix = "";
+    private int prefixesDone = 0;
+    private int prefixesTotal = 0;
+    private final Queue<String> prefixQueue = new LinkedList<>();
+    private final Set<String> visitedPrefixes = ConcurrentHashMap.newKeySet();
+
+    // 进度节流压缩：减少上报频率
+    private static final long EMIT_INTERVAL_MS = 2000;  // 至少间隔 2 秒
+    private static final int EMIT_PREFIX_BATCH = 5;     // 每 5 个前缀批量上报
+    private long lastEmitTime = 0;
+    private int pendingPrefixes = 0;
+
+    private Set<String> completedPrefixesFromPrev = new HashSet<>();
+
+    public GatewayMemberFetcher(String token, String guildId,
+                                String proxyHost, int proxyPort,
+                                ProgressListener progress,
+                                int maxRequests, int maxMembers,
+                                int pageDelayMs) {
+        this(token, guildId, proxyHost, proxyPort, progress, null, maxRequests, maxMembers, pageDelayMs);
+    }
+
+    public GatewayMemberFetcher(String token, String guildId,
+                                String proxyHost, int proxyPort,
+                                ProgressListener progress,
+                                MemberBatchListener memberBatchListener,
+                                int maxRequests, int maxMembers,
+                                int pageDelayMs) {
+        this.token = token;
+        this.guildId = guildId;
+        this.proxyHost = proxyHost;
+        this.proxyPort = proxyPort;
+        this.progress = progress;
+        this.memberBatchListener = memberBatchListener;
+        this.maxRequestsRef = maxRequests;
+        this.maxMembersRef = maxMembers;
+        this.pageDelayMs = Math.max((int)(MIN_REQUEST_INTERVAL * 1000), pageDelayMs);
+
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(15));
+        try {
+            SSLContext ctx = SSLContext.getInstance("TLS");
+            ctx.init(null, null, null);
+            builder.sslContext(ctx);
+        } catch (Exception e) {
+            log.warn("自定义 SSLContext 初始化失败: {}", e.getMessage());
+        }
+        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+            builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));
+        }
+        this.restClient = builder.build();
+    }
+
+    /** 断点续传：设置之前已完成的前缀 */
+    public void setCompletedPrefixes(Set<String> completed) {
+        this.completedPrefixesFromPrev = completed != null ? new HashSet<>(completed) : new HashSet<>();
+    }
+
+    /** 断点续传：设置剩余待处理的前缀队列（优先级高于 completedPrefixes） */
+    public void setResumeFrontier(List<String> frontier) {
+        if (frontier != null && !frontier.isEmpty()) {
+            this.resumeFrontierOverride = new ArrayList<>(frontier);
+            log.info("设置断点续传前缀队列: {} 个前缀", frontier.size());
+        }
+    }
+
+    private List<String> resumeFrontierOverride = null;
+
+    /** 断点续传：设置之前已采集的成员 ID 集合（用于去重，不存入 members map 以避免 null 元素） */
+    public void setExistingMemberIds(Set<String> memberIds) {
+        if (memberIds != null) {
+            this.existingMemberIds.addAll(memberIds);
+            log.info("加载已存在成员 ID {} 个用于去重", memberIds.size());
+        }
+    }
+
+    /** 设置前缀树 BFS 最大下钻深度（默认5） */
+    public void setMaxPrefixDepth(int depth) {
+        this.maxPrefixDepth = Math.max(1, Math.min(depth, 10));
+        log.info("设置前缀树最大下钻深度: {}", this.maxPrefixDepth);
+    }
+
+    // ------------------------------------------------------------------ //
+    // 抓取入口
+    // ------------------------------------------------------------------ //
+    public FetchResult fetch() throws GatewayException {
+        stop = false;
+        closeReason = null;
+        lastError.set(null);
+        members.clear();
+        pendingChunks.clear();
+        pendingMembers.clear();
+        currentRequestComplete.set(true);
+        chunksReceived.set(0);
+        reconnects.set(0);
+        disconnected.set(false);
+        seq.set(-1);
+        hbStarted.set(false);
+        requestsSent.set(0);
+        prefixesDone = 0;
+        prefixesTotal = 0;
+
+        // 计算总页数（预估：假设每1000成员一页）
+        // 使用 maxMembersRef / 1000 作为预估页数，最少1页
+        prefixesTotal = Math.max(1, maxMembersRef / 1000);
+
+        connect();
+
+        try {
+            emit("ready", "已连接 Discord Gateway，开始抓取成员...");
+            
+            if (!readyLatch.await(30, TimeUnit.SECONDS)) {
+                throw new GatewayException("等待 Gateway READY 超时(30秒)，可能 Token 无效或网络不稳定", 408);
+            }
+
+            emit("fetching", "开始抓取成员...");
+            fetchAll();
+
+            emit("done", String.format("抓取完成：%d 名成员", members.size()));
+        } catch (GatewayException e) {
+            throw e;
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (msg == null || msg.isEmpty()) {
+                msg = e.getClass().getSimpleName();
+            }
+            throw new GatewayException("抓取成员时出错: " + msg, 500);
+        } finally {
+            flushAllRemainingMembers();
+            disconnect();
+        }
+
+        List<JsonNode> result = new ArrayList<>();
+        for (JsonNode node : members.values()) {
+            if (node != null) {
+                result.add(node);
+            }
+        }
+        return new FetchResult(guildName.get(), result);
+    }
+
+    /**
+     * 使用前缀树 BFS 遍历抓取所有成员
+     * 策略：每个前缀只发送一次请求（因为 query 模式下 after 参数无效）
+     * 如果响应返回100条成员，说明还有更多数据，自动扩展38个子前缀继续抓取
+     */
+    private void fetchAll() throws GatewayException {
+        log.info("开始前缀树 BFS 抓取，最大请求数={}, 最大成员数={}, 最大深度={}", maxRequestsRef, maxMembersRef, maxPrefixDepth);
+        log.info("抓取参数: guildId={}, token长度={}, pageDelayMs={}", guildId, token != null ? token.length() : 0, pageDelayMs);
+        lastEmitTime = 0;
+
+        // 初始化前缀队列
+        initPrefixes();
+
+        int timeoutCount = 0;
+
+        while (!prefixQueue.isEmpty() && !stop) {
+            if (disconnected.get()) {
+                log.warn("检测到连接断开，尝试重连...");
+                try {
+                    reconnect();
+                    currentRequestComplete.set(true);
+                    log.info("重连成功，继续抓取...");
+                } catch (GatewayException e) {
+                    log.error("重连失败: {}", e.getMessage());
+                    throw e;
+                }
+            }
+
+            if (requestsSent.get() >= maxRequestsRef) {
+                log.info("达到最大请求数限制: {}", maxRequestsRef);
+                emit("done", "达到最大请求数限制");
+                break;
+            }
+            if (members.size() >= maxMembersRef) {
+                log.info("达到最大成员数限制: {}", maxMembersRef);
+                emit("done", "达到最大成员数限制");
+                break;
+            }
+
+            String prefix = prefixQueue.poll();
+            currentPrefix = prefix;
+            int beforeSize = members.size();
+
+            log.info("开始处理前缀 '{}' (深度={})", prefix, prefix.length());
+
+            try {
+                // 每个前缀只请求一次（query模式下after参数无效）
+                long requestStart = System.currentTimeMillis();
+                int respondedCount = sendRequestGuildMembers(null);
+                long requestTime = System.currentTimeMillis() - requestStart;
+                requestsSent.incrementAndGet();
+
+                // 累计统计
+                totalRespondedAll.addAndGet(respondedCount);
+                totalResponseTimeMs.addAndGet(requestTime);
+
+                if (respondedCount == 0) {
+                    // 超时或无数据
+                    timeoutCount++;
+                    log.info("前缀 '{}' 响应为空或超时, 耗时={}ms, 超时计数={}", prefix, requestTime, timeoutCount);
+                    if (timeoutCount >= 5) {
+                        log.error("连续失败过多（{}次），停止抓取", timeoutCount);
+                        break;
+                    }
+                } else {
+                    timeoutCount = 0;
+                }
+
+                visitedPrefixes.add(prefix);
+                prefixesDone++;
+                int newMemberCount = members.size() - beforeSize;
+                log.info("前缀 '{}' 完成: 响应{}条, 去重后新增{}条, 耗时={}ms, 总计{} ({}/{})", 
+                        prefix, respondedCount, newMemberCount, requestTime, members.size(), prefixesDone, prefixesTotal);
+
+                // 剪枝: 前缀返回 0 成员 → 该分支已无数据，停止下钻
+                if (respondedCount == 0) {
+                    log.info("前缀 '{}' 返回 0 条，剪枝（不再下钻）", prefix);
+                } else if (respondedCount >= 100 && prefix.length() < maxPrefixDepth) {
+                    // 前缀树 BFS: 命中平台上限(100)且未到最大深度 → 继续下钻更具体的后缀
+                    List<String> subPrefixes = generateSubPrefixes(prefix);
+                    int added = 0;
+                    for (String sub : subPrefixes) {
+                        if (!visitedPrefixes.contains(sub) && !prefixQueue.contains(sub)) {
+                            prefixQueue.offer(sub);
+                            added++;
+                        }
+                    }
+                    if (added > 0) {
+                        log.info("前缀 '{}' 命中下钻: 扩展 {} 个子前缀 (深度={})", prefix, added, prefix.length() + 1);
+                    }
+                }
+
+                sleepQuietly(pageDelayMs);
+            } catch (GatewayException e) {
+                int status = e.getCode();
+                log.warn("Gateway 错误: status={}, msg={}", status, e.getMessage());
+                
+                if (status == 503) {
+                    timeoutCount++;
+                    log.warn("Gateway 连接错误, 第 {} 次, 尝试重连", timeoutCount);
+                    if (timeoutCount >= 5) {
+                        log.error("连续失败过多（{}次），停止抓取", timeoutCount);
+                        throw e;
+                    }
+                    try {
+                        reconnect();
+                        currentRequestComplete.set(true);
+                        continue;
+                    } catch (GatewayException re) {
+                        log.error("重连失败: {}", re.getMessage());
+                        throw re;
+                    }
+                } else {
+                    throw e;
+                }
+            }
+
+            long now = System.currentTimeMillis();
+            if ((now - lastEmitTime) >= EMIT_INTERVAL_MS) {
+                emitProgress("fetching", prefix);
+                lastEmitTime = now;
+            }
+        }
+
+        emitProgress("fetching", "completed");
+        log.info("全量抓取完成，共抓取 {} 名成员，发送 {} 个请求，完成 {} 个前缀", 
+                members.size(), requestsSent.get(), prefixesDone);
+    }
+
+    /**
+     * 前缀树 BFS: 生成子前缀列表
+     * 当前缀命中100条时，扩展为38个子前缀
+     */
+    private List<String> generateSubPrefixes(String prefix) {
+        List<String> subPrefixes = new ArrayList<>(ALPHABET.length());
+        for (char c : ALPHABET.toCharArray()) {
+            subPrefixes.add(prefix + c);
+        }
+        return subPrefixes;
+    }
+
+    /**
+     * 初始化前缀队列（支持断点续传）
+     */
+    private void initPrefixes() {
+        prefixQueue.clear();
+        visitedPrefixes.clear();
+        requestsSent.set(0);
+        prefixesDone = 0;
+
+        // 如果有断点续传的前缀队列，直接使用
+        if (resumeFrontierOverride != null && !resumeFrontierOverride.isEmpty()) {
+            for (String prefix : resumeFrontierOverride) {
+                if (prefix != null && !prefix.isEmpty()) {
+                    prefixQueue.offer(prefix);
+                }
+            }
+            for (String prefix : completedPrefixesFromPrev) {
+                visitedPrefixes.add(prefix);
+            }
+            prefixesTotal = ALPHABET.length();
+            log.info("断点续传: 使用保存的前缀队列 {} 个，已完成 {} 个", 
+                    prefixQueue.size(), completedPrefixesFromPrev.size());
+            return;
+        }
+
+        // 38个前缀: a-z, 0-9, _, .
+        for (char c : ALPHABET.toCharArray()) {
+            String prefix = String.valueOf(c);
+            if (!completedPrefixesFromPrev.contains(prefix)) {
+                prefixQueue.offer(prefix);
+            } else {
+                visitedPrefixes.add(prefix);
+            }
+        }
+        prefixesTotal = ALPHABET.length();
+        
+        if (!completedPrefixesFromPrev.isEmpty()) {
+            log.info("断点续传: 已完成 {} 个前缀，剩余 {} 个", 
+                    completedPrefixesFromPrev.size(), prefixQueue.size());
+        }
+    }
+
+    private final AtomicInteger totalRespondedAll = new AtomicInteger(0);  // 累计响应成员数
+    private final AtomicLong totalResponseTimeMs = new AtomicLong(0);     // 累计响应时间(ms)
+
+    private void emitProgress(String stage, String prefix) {
+        if (progress == null) return;
+        try {
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("stage", stage);
+            info.put("p", prefix);                      // current page label
+            info.put("r", requestsSent.get());         // requestsSent
+            info.put("m", members.size());             // membersUnique (去重后)
+            info.put("d", prefixesDone);               // pagesDone
+            info.put("t", prefixesTotal);              // estimatedTotalPages
+            info.put("x", reconnects.get());           // reconnects
+            info.put("rm", totalRespondedAll.get());   // respondedMembers (响应总数)
+            info.put("rt", totalResponseTimeMs.get()); // responseTimeMs (累计响应时间)
+            progress.onProgress(info);
+        } catch (Exception ignore) {
+        }
+    }
+
+    private final AtomicReference<String> lastMemberUserId = new AtomicReference<>();
+
+    private int sendRequestGuildMembers(String afterUserId) throws GatewayException {
+        if (disconnected.get()) {
+            log.error("发送请求失败: WebSocket 已断开");
+            throw new GatewayException("WebSocket 连接已断开", 503);
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("op", 8); // Request Guild Members
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("guild_id", guildId);
+        
+        // 使用当前前缀作为 query 参数
+        // Discord Gateway 规则: 使用 query 时每次最多返回 100 条
+        // 要获取更多，需要多次分页
+        String query = currentPrefix != null ? currentPrefix : "";
+        data.put("limit", 100);
+        data.put("query", query);
+        
+        if (afterUserId != null && !afterUserId.isEmpty()) {
+            data.put("after", afterUserId);
+        }
+        payload.put("d", data);
+
+        JsonNode root = mapper.valueToTree(payload);
+        String json = root.toString();
+
+        WebSocket ws = webSocket;
+        if (ws == null || !ws.isOpen()) {
+            log.error("发送请求失败: WebSocket 未连接 (null={}, isOpen={})", ws == null, ws != null && ws.isOpen());
+            disconnected.set(true);
+            throw new GatewayException("WebSocket 连接未建立或已关闭", 503);
+        }
+
+        int beforeSize = members.size();
+        
+        currentRequestComplete.set(false);
+        chunksReceived.set(0);
+        totalRespondedMembers.set(0);
+        currentChunkIndex.set(-1);
+        currentChunkCount.set(0);
+        
+        ws.sendText(json);
+        log.info("→ 发送 Request Guild Members: guildId={}, query='{}', limit=100", 
+                guildId, query);
+        log.debug("→ Payload: {}", json);
+
+        // 等待所有分块接收完成 (最多等待 10 秒，超时直接跳过)
+        long timeoutMs = 10000;
+        long timeoutAt = System.currentTimeMillis() + timeoutMs;
+        long waitStart = System.currentTimeMillis();
+        
+        synchronized (currentRequestComplete) {
+            while (!currentRequestComplete.get() && System.currentTimeMillis() < timeoutAt) {
+                try {
+                    currentRequestComplete.wait(300);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+
+        long waitedMs = System.currentTimeMillis() - waitStart;
+        boolean completed = currentRequestComplete.get();
+        int afterSize = members.size();
+        int newMemberCount = afterSize - beforeSize;
+        int totalChunks = chunksReceived.get();
+        int respondedCount = totalRespondedMembers.get();
+
+        if (completed) {
+            log.info("✓ Request Guild Members 完成: 耗时={}ms, chunks={}, 响应成员={}, 去重后新增={}, 总计={}",
+                    waitedMs, totalChunks, respondedCount, newMemberCount, members.size());
+        } else {
+            log.warn("⏰ Request Guild Members 超时 ({}ms): chunks={}, 响应成员={}, 去重后新增={}, 跳过当前请求",
+                    waitedMs, totalChunks, respondedCount, newMemberCount);
+            // 超时直接跳过，返回0
+            return 0;
+        }
+
+        return respondedCount;
+    }
+
+    private final AtomicReference<String> nextAfterUserId = new AtomicReference<>();
+
+    // ------------------------------------------------------------------ //
+    // 连接管理
+    // ------------------------------------------------------------------ //
+    private void connect() throws GatewayException {
+        // 仅在初始连接时创建新的 latch，重连时复用
+        if (!reconnecting.get()) {
+            openLatch = new CountDownLatch(1);
+            readyLatch = new CountDownLatch(1);
+        }
+        disconnected.set(false);
+        pendingChunks.clear();
+        lastError.set(null);
+
+        boolean connectionAcquired = false;
+        try {
+            if (connectingCount.get() > 0) {
+                log.info("GatewayMemberFetcher 等待连接信号量（当前 {} 个实例正在连接）...", connectingCount.get());
+            }
+
+            boolean acquired = CONNECT_SEMAPHORE.tryAcquire(30, TimeUnit.SECONDS);
+            if (!acquired) {
+                throw new GatewayException("获取连接信号量超时，可能有其他实例正在连接，请稍后重试", 503);
+            }
+            connectingCount.incrementAndGet();
+            connectionAcquired = true;
+            log.info("GatewayMemberFetcher 已获取连接信号量，开始建立连接（当前连接数: {}）", connectingCount.get());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new GatewayException("获取连接信号量被中断", 500);
+        }
+
+        try {
+            WebSocketFactory factory = new WebSocketFactory();
+            factory.setConnectionTimeout(30000);
+            factory.setSocketTimeout(60000);
+
+            if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+                ProxySettings proxySettings = factory.getProxySettings();
+                proxySettings.setHost(proxyHost);
+                proxySettings.setPort(proxyPort);
+                log.info("WebSocketFactory 使用代理: {}:{}", proxyHost, proxyPort);
+            }
+
+            webSocket = factory.createSocket(GATEWAY_URL);
+            webSocket.setMaxPayloadSize(64 * 1024 * 1024);
+            webSocket.addHeader("User-Agent", UA);
+
+            webSocket.addListener(new WebSocketAdapter() {
+                @Override
+                public void onConnected(WebSocket ws, Map<String, List<String>> headers) {
+                    log.info("WebSocket 已连接, maxPayloadSize={}", ws.getMaxPayloadSize());
+                    openLatch.countDown();
+                    sendIdentify();
+                    startHeartbeat();
+                }
+
+                @Override
+                public void onTextMessage(WebSocket ws, String text) {
+                    if (text == null) return;
+                    int msgSize = text.getBytes(StandardCharsets.UTF_8).length;
+                    if (msgSize > 50 * 1024) {
+                        log.warn("收到大文本消息: 大小={} bytes", msgSize);
+                    }
+                    handle(text);
+                }
+
+                @Override
+                public void onBinaryMessage(WebSocket ws, byte[] binary) {
+                    if (binary == null) return;
+                    int msgSize = binary.length;
+                    if (msgSize > 50 * 1024) {
+                        log.warn("收到大二进制消息: 大小={} bytes", msgSize);
+                    }
+                    handleBinary(binary);
+                }
+
+                @Override
+                public void onDisconnected(WebSocket ws, WebSocketFrame serverCloseFrame, WebSocketFrame clientCloseFrame, boolean closedByServer) {
+                    int code = serverCloseFrame != null ? serverCloseFrame.getCloseCode() : -1;
+                    String reason = (serverCloseFrame != null && serverCloseFrame.getCloseReason() != null) 
+                            ? serverCloseFrame.getCloseReason() : "无";
+                    log.warn("WebSocket 断开: code={}, reason={}, closedByServer={}", code, reason, closedByServer);
+                    closeReason = reason;
+                    
+                    if (stop) return;
+                    
+                    // 仅在非重连状态下才标记为断开
+                    // 重连期间 onDisconnected 可能因旧连接关闭而触发，不应覆盖新连接的状态
+                    if (!reconnecting.get()) {
+                        disconnected.set(true);
+                        
+                        // 唤醒可能在等待旧 latch 的线程
+                        openLatch.countDown();
+                        readyLatch.countDown();
+                    }
+                    
+                    GatewayException err = lastError.get();
+                    if (err == null) {
+                        lastError.set(new GatewayException(
+                            "连接未建立或已关闭（code: " + code + "）", code));
+                    }
+                    
+                    // 如果不在重连中，启动异步重连
+                    if (!reconnecting.get() && reconnects.get() < MAX_RECONNECT) {
+                        reconnecting.set(true);
+                        // 在独立线程中执行重连，不阻塞回调线程
+                        Thread reconnectThread = new Thread(() -> {
+                            try {
+                                reconnectInternal();
+                            } catch (Exception e) {
+                                log.error("异步重连失败: {}", e.getMessage());
+                                lastError.set(new GatewayException(
+                                    "重连失败: " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()), 500));
+                            } finally {
+                                reconnecting.set(false);
+                            }
+                        }, "gateway-reconnect-" + reconnects.incrementAndGet());
+                        reconnectThread.setDaemon(true);
+                        reconnectThread.start();
+                    } else if (reconnects.get() >= MAX_RECONNECT) {
+                        lastError.set(new GatewayException(
+                            "重连次数已达上限（" + MAX_RECONNECT + " 次），连接无法恢复", code));
+                    }
+                }
+
+                @Override
+                public void onError(WebSocket ws, WebSocketException cause) {
+                    log.error("WebSocket 错误: {}", cause != null ? cause.getMessage() : "unknown");
+                    String errMsg = (cause != null && cause.getMessage() != null) 
+                            ? cause.getMessage() : "未知错误";
+                    lastError.set(new GatewayException("WebSocket 错误: " + errMsg, 500));
+                }
+            });
+
+            log.info("正在连接 Discord Gateway...");
+            webSocket.connect();
+
+            if (!openLatch.await(30, TimeUnit.SECONDS)) {
+                throw new GatewayException("WebSocket 连接超时(30秒)", 504);
+            }
+
+            if (!readyLatch.await(30, TimeUnit.SECONDS)) {
+                throw new GatewayException("等待 Gateway READY 超时(30秒)，可能 Token 无效或网络不稳定", 408);
+            }
+
+            if (lastError.get() != null) {
+                throw lastError.get();
+            }
+
+            log.info("✓ 成功连接 Discord Gateway");
+        } catch (GatewayException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("WebSocket 连接失败", e);
+            String msg = e.getMessage();
+            if (msg == null || msg.isEmpty()) {
+                msg = e.getClass().getSimpleName();
+            }
+            throw new GatewayException("无法连接 Discord Gateway: " + msg, 502);
+        } finally {
+            if (connectionAcquired) {
+                connectingCount.decrementAndGet();
+                CONNECT_SEMAPHORE.release();
+            }
+        }
+    }
+
+    private void disconnect() {
+        stop = true;
+        if (webSocket != null && webSocket.isOpen()) {
+            try {
+                webSocket.disconnect();
+            } catch (Exception e) {
+                log.debug("断开 WebSocket 时出错: {}", e.getMessage());
+            }
+        }
+    }
+
+    private void reconnectInternal() throws GatewayException {
+        int attempt = reconnects.incrementAndGet();
+        long backoff = Math.min(30, 1L << (attempt - 1));
+        log.info("连接断开，{} 秒后进行第 {} 次重连", backoff, attempt);
+
+        seq.set(-1);
+        hbStarted.set(false);
+        
+        // 创建新的 latch 以便新一轮连接使用
+        openLatch = new CountDownLatch(1);
+        readyLatch = new CountDownLatch(1);
+        
+        sleepQuietly(backoff * 1000);
+
+        try {
+            disconnected.set(false);
+            lastError.set(null);
+            connect();
+        } catch (GatewayException e) {
+            log.error("重连失败: {}", e.getMessage());
+            throw e;
+        }
+    }
+
+    /** 供外部调用的重连方法（由 fetch 主线程检测到断开时调用） */
+    private void reconnect() throws GatewayException {
+        if (reconnecting.get()) {
+            log.info("已在重连中，等待完成...");
+            // 等待重连完成
+            int waitCount = 0;
+            while (reconnecting.get() && waitCount < 60) {
+                sleepQuietly(500);
+                waitCount++;
+            }
+            if (disconnected.get()) {
+                throw new GatewayException("重连等待超时，连接未恢复", 503);
+            }
+            return;
+        }
+        
+        reconnecting.set(true);
+        try {
+            reconnectInternal();
+        } finally {
+            reconnecting.set(false);
+        }
+    }
+
+    // ------------------------------------------------------------------ //
+    // Discord Gateway 协议处理
+    // ------------------------------------------------------------------ //
+    private void sendIdentify() {
+        try {
+            Map<String, Object> identify = new LinkedHashMap<>();
+            identify.put("op", 2);
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("token", token);
+            // GUILD_MEMBERS = 1 << 1 = 2, 这是获取服务器成员所必需的意图
+            int GUILD_MEMBERS_INTENT = 1 << 1;
+            d.put("intents", GUILD_MEMBERS_INTENT);
+            d.put("properties", Map.of(
+                    "os", "MacOS",
+                    "browser", "Chrome",
+                    "device", "Mac"
+            ));
+            d.put("compress", true);
+            d.put("large_threshold", 250);
+            d.put("shard", new int[]{0, 1});
+            identify.put("d", d);
+
+            JsonNode root = mapper.valueToTree(identify);
+            String json = root.toString();
+            webSocket.sendText(json);
+            log.info("发送 IDENTIFY: intents={}, tokenLength={}", GUILD_MEMBERS_INTENT, token != null ? token.length() : 0);
+            log.debug("IDENTIFY payload: {}", json);
+        } catch (Exception e) {
+            log.error("发送 IDENTIFY 失败", e);
+        }
+    }
+
+    private void startHeartbeat() {
+        if (hbStarted.getAndSet(true)) return;
+
+        Thread hbThread = new Thread(() -> {
+            while (!stop && webSocket != null && webSocket.isOpen()) {
+                try {
+                    Map<String, Object> heartbeat = new LinkedHashMap<>();
+                    heartbeat.put("op", 1);
+                    heartbeat.put("d", System.currentTimeMillis());
+                    JsonNode root = mapper.valueToTree(heartbeat);
+                    webSocket.sendText(root.toString());
+                    log.debug("发送心跳");
+                } catch (Exception e) {
+                    log.warn("发送心跳失败: {}", e.getMessage());
+                    break;
+                }
+                sleepQuietly(hbIntervalMs);
+            }
+        }, "gateway-heartbeat");
+        hbThread.setDaemon(true);
+        hbThread.start();
+    }
+
+    private void handle(String text) {
+        try {
+            JsonNode root = mapper.readTree(text);
+            int op = root.path("op").asInt(-1);
+            JsonNode d = root.path("d");
+            int s = root.path("s").asInt(-1);
+            String t = root.path("t").asText(null);
+
+            log.info("收到 Gateway 消息: op={}, s={}, t={}", op, s, t);
+
+            switch (op) {
+                case 0 -> { // DISPATCH
+                    if (s >= 0) seq.set(s);
+                    handleDispatch(t, d);
+                }
+                case 7 -> { // RECONNECT
+                    log.info("收到 RECONNECT 指令");
+                    if (!stop && !reconnecting.get()) {
+                        reconnecting.set(true);
+                        Thread reconnectThread = new Thread(() -> {
+                            try {
+                                reconnectInternal();
+                            } catch (Exception e) {
+                                log.error("RECONNECT 重连失败: {}", e.getMessage());
+                            } finally {
+                                reconnecting.set(false);
+                            }
+                        }, "gateway-reconnect-op7");
+                        reconnectThread.setDaemon(true);
+                        reconnectThread.start();
+                    }
+                }
+                case 9 -> { // INVALID_SESSION
+                    log.warn("收到 INVALID_SESSION，尝试重新连接");
+                    if (!stop && !reconnecting.get()) {
+                        reconnecting.set(true);
+                        Thread reconnectThread = new Thread(() -> {
+                            try {
+                                sleepQuietly(1000);
+                                reconnectInternal();
+                            } catch (Exception e) {
+                                log.error("INVALID_SESSION 重连失败: {}", e.getMessage());
+                            } finally {
+                                reconnecting.set(false);
+                            }
+                        }, "gateway-reconnect-op9");
+                        reconnectThread.setDaemon(true);
+                        reconnectThread.start();
+                    }
+                }
+                case 10 -> { // HELLO
+                    hbIntervalMs = d.path("heartbeat_interval").asLong(41250);
+                    log.info("收到 HELLO，心跳间隔: {}ms", hbIntervalMs);
+                }
+                case 11 -> { // HEARTBEAT_ACK
+                    log.debug("收到心跳 ACK");
+                }
+                default -> log.debug("未知 op={}", op);
+            }
+        } catch (Exception e) {
+            log.error("处理 Gateway 消息失败", e);
+        }
+    }
+
+    private void handleBinary(byte[] binary) {
+        try {
+            log.info("收到压缩二进制消息: 大小={} bytes", binary.length);
+            byte[] decompressed = decompressZlib(binary);
+            log.info("解压后大小={} bytes", decompressed.length);
+            String text = new String(decompressed, StandardCharsets.UTF_8);
+            handle(text);
+        } catch (Exception e) {
+            log.error("处理压缩消息失败", e);
+        }
+    }
+
+    private byte[] decompressZlib(byte[] compressed) throws Exception {
+        Inflater inflater = new Inflater();
+        try {
+            inflater.setInput(compressed);
+            ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+            byte[] temp = new byte[4096];
+            while (!inflater.finished()) {
+                int count = inflater.inflate(temp);
+                buffer.write(temp, 0, count);
+            }
+            return buffer.toByteArray();
+        } finally {
+            inflater.end();
+        }
+    }
+
+    private void handleDispatch(String type, JsonNode data) {
+        if (type == null) return;
+
+        switch (type) {
+            case "READY" -> {
+                guildName.set(data.path("guilds").path(0).path("name").asText(null));
+                log.info("收到 READY，服务器: {}", guildName.get());
+                readyLatch.countDown();
+            }
+            case "GUILD_CREATE" -> {
+                String gId = data.path("id").asText(null);
+                int memberCount = data.path("members").isArray() ? data.path("members").size() : 0;
+                log.info("收到 GUILD_CREATE: guildId={}, 成员数={}", gId, memberCount);
+                if (guildId.equals(gId) && memberCount > 0) {
+                    JsonNode membersArray = data.path("members");
+                    List<JsonNode> newMembers = new ArrayList<>();
+                    for (JsonNode member : membersArray) {
+                        String memberId = member.path("user").path("id").asText();
+                        if (memberId.isEmpty()) continue;
+                        if (!members.containsKey(memberId) && !existingMemberIds.contains(memberId)) {
+                            members.put(memberId, member);
+                            newMembers.add(member);
+                        }
+                    }
+                    log.info("GUILD_CREATE 提取到 {} 名成员，总计 {} 名", newMembers.size(), members.size());
+                    if (!newMembers.isEmpty() && memberBatchListener != null) {
+                        pendingMembers.addAll(newMembers);
+                        if (pendingMembers.size() >= BATCH_SAVE_SIZE) {
+                            flushPendingMembers();
+                        }
+                    }
+                }
+            }
+            case "GUILD_MEMBERS_CHUNK" -> {
+                log.info("收到 GUILD_MEMBERS_CHUNK: chunk {}/{}, complete={}", 
+                        data.path("chunk_index").asInt(-1),
+                        data.path("chunk_count").asInt(0),
+                        data.path("complete").asBoolean(false));
+                handleGuildMembersChunk(data);
+            }
+            default -> log.info("未处理的 Gateway 事件: type={}", type);
+        }
+    }
+
+    // 用于跟踪当前请求的所有分块是否都已接收
+    private final AtomicInteger currentChunkIndex = new AtomicInteger(-1);
+    private final AtomicInteger currentChunkCount = new AtomicInteger(0);
+    private final AtomicBoolean currentRequestComplete = new AtomicBoolean(true);
+    private final AtomicInteger chunksReceived = new AtomicInteger(0);  // 本次请求收到的分块数
+    private final AtomicInteger totalRespondedMembers = new AtomicInteger(0);  // 本次请求实际响应的成员总数（不去重）
+
+    private void handleGuildMembersChunk(JsonNode data) {
+        chunksReceived.incrementAndGet();
+        int chunkIndex = data.path("chunk_index").asInt(-1);
+        int chunkCount = data.path("chunk_count").asInt(0);
+        boolean complete = data.path("complete").asBoolean(false);
+        JsonNode membersArray = data.path("members");
+        int memberCount = membersArray.isArray() ? membersArray.size() : 0;
+        
+        // 累加实际响应的成员数（不去重）
+        totalRespondedMembers.addAndGet(memberCount);
+        
+        log.info("⬅ 收到 GUILD_MEMBERS_CHUNK: chunk {}/{}, complete={}, members={}, totalResponded={}", 
+                chunkIndex, chunkCount, complete, memberCount, totalRespondedMembers.get());
+        
+        if (membersArray.isArray()) {
+            List<JsonNode> newMembers = new ArrayList<>();
+            String lastUserId = null;
+            
+            for (JsonNode member : membersArray) {
+                JsonNode userNode = member.path("user");
+                if (userNode.isMissingNode()) continue;
+                String memberId = userNode.path("id").asText();
+                if (memberId.isEmpty()) continue;
+                
+                if (!members.containsKey(memberId) && !existingMemberIds.contains(memberId)) {
+                    members.put(memberId, member);
+                    newMembers.add(member);
+                }
+                lastUserId = memberId;
+            }
+            
+            if (lastUserId != null) {
+                lastMemberUserId.set(lastUserId);
+            }
+            
+            if (newMembers.size() > 0 || memberCount > 0) {
+                log.info("   分块处理: 总成员={}, 去重后新增={}, 已存在={}", 
+                        memberCount, newMembers.size(), memberCount - newMembers.size());
+            }
+
+            if (!newMembers.isEmpty() && memberBatchListener != null) {
+                pendingMembers.addAll(newMembers);
+                if (pendingMembers.size() >= BATCH_SAVE_SIZE) {
+                    flushPendingMembers();
+                }
+            }
+        }
+
+        currentChunkIndex.set(chunkIndex);
+        currentChunkCount.set(chunkCount);
+        
+        log.info("   当前进度: 总计 {} 名成员, chunksReceived={}", members.size(), chunksReceived.get());
+        
+        if (complete) {
+            log.info("✓ 成员数据加载完成: chunks={}, 总成员={}", chunkCount, members.size());
+            currentRequestComplete.set(true);
+            synchronized (currentRequestComplete) {
+                currentRequestComplete.notifyAll();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ //
+    // 工具方法
+    // ------------------------------------------------------------------ //
+    
+    /**
+     * 获取剩余待处理的前缀队列（用于断点续传）
+     */
+    public List<String> getRemainingFrontier() {
+        synchronized (prefixQueue) {
+            return new ArrayList<>(prefixQueue);
+        }
+    }
+    
+    /**
+     * 获取已完成的前缀集合（用于断点续传）
+     */
+    public Set<String> getCompletedPrefixes() {
+        return new HashSet<>(visitedPrefixes);
+    }
+    
+    private void sleepQuietly(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void emit(String stage, String message) {
+        if (progress == null) return;
+        try {
+            // 计算当前进度百分比
+            int pagesDone = requestsSent.get();
+            int totalPages = Math.max(1, maxRequestsRef);
+            String progressLabel = "page_" + pagesDone;
+            
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("stage", stage);
+            info.put("s", guildName.get());   // serverName
+            info.put("p", progressLabel);     // current page label
+            info.put("r", requestsSent.get());// requestsSent
+            info.put("m", members.size());  // membersUnique
+            info.put("d", pagesDone);        // pagesDone
+            info.put("t", totalPages);       // totalPages (maxRequestsRef)
+            info.put("x", reconnects.get());  // reconnects
+            info.put("msg", message);        // message
+            // maxMembers 和 maxRequests 只在 ready 阶段传递
+            if ("ready".equals(stage)) {
+                info.put("M", maxMembersRef);   // maxMembers
+                info.put("R", maxRequestsRef);  // maxRequests
+            }
+            progress.onProgress(info);
+        } catch (Exception ignore) {
+        }
+    }
+
+    // ------------------------------------------------------------------ //
+    // 分批保存
+    // ------------------------------------------------------------------ //
+    private void flushPendingMembers() {
+        if (pendingMembers.isEmpty() || memberBatchListener == null) return;
+        try {
+            List<JsonNode> batch = new ArrayList<>(pendingMembers);
+            pendingMembers.clear();
+            memberBatchListener.onBatchMembers(batch);
+        } catch (Exception e) {
+            log.warn("分批保存成员失败: {}", e.getMessage());
+        }
+    }
+
+    /** 在 fetch() 结束时调用，确保所有剩余数据被保存 */
+    public void flushAllRemainingMembers() {
+        flushPendingMembers();
+    }
+
+    // ------------------------------------------------------------------ //
+    // 结果 & 异常
+    // ------------------------------------------------------------------ //
+    public record FetchResult(String serverName, List<JsonNode> members) {}
+
+    public interface ProgressListener {
+        void onProgress(Map<String, Object> info);
+    }
+
+    public interface MemberBatchListener {
+        void onBatchMembers(List<JsonNode> members);
+    }
+
+    public static class GatewayException extends Exception {
+        private final int code;
+        public GatewayException(String message, int code) {
+            super(message);
+            this.code = code;
+        }
+        public int getCode() {
+            return code;
+        }
+    }
+}

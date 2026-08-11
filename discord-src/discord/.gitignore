@@ -1,0 +1,26 @@
+# Java / Maven
+server/target/
+*.class
+server/run-local.sh
+*.env
+.env*
+
+# Flutter
+client/.dart_tool/
+client/.flutter-plugins
+client/.flutter-plugins-dependencies
+client/.packages
+client/build/
+client/ios/Pods/
+client/ios/.symlinks/
+client/android/.gradle/
+client/pubspec.lock
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+build/

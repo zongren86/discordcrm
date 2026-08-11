@@ -1,0 +1,335 @@
+package com.discordadmin.service;
+
+import com.discordadmin.discord.DiscordUserClient;
+import com.discordadmin.entity.*;
+import com.discordadmin.repository.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+
+@Service
+public class GuildService {
+
+    private static final Logger log = LoggerFactory.getLogger(GuildService.class);
+
+    private final GuildServerRepository guildServerRepository;
+    private final GuildMemberRepository guildMemberRepository;
+    private final FetchProgressRepository fetchProgressRepository;
+    private final MerchantConfigRepository merchantConfigRepository;
+    private final DiscordAccountRepository accountRepository;
+    private final DiscordUserClient discordUserClient;
+
+    /** 进度缓存：guildServerId -> 当前进度 */
+    private final Map<Long, FetchProgress> progressCache = new ConcurrentHashMap<>();
+
+    public GuildService(GuildServerRepository guildServerRepository,
+                        GuildMemberRepository guildMemberRepository,
+                        FetchProgressRepository fetchProgressRepository,
+                        MerchantConfigRepository merchantConfigRepository,
+                        DiscordAccountRepository accountRepository,
+                        DiscordUserClient discordUserClient) {
+        this.guildServerRepository = guildServerRepository;
+        this.guildMemberRepository = guildMemberRepository;
+        this.fetchProgressRepository = fetchProgressRepository;
+        this.merchantConfigRepository = merchantConfigRepository;
+        this.accountRepository = accountRepository;
+        this.discordUserClient = discordUserClient;
+    }
+
+    /** 保存或更新服务器配置 */
+    @Transactional
+    public GuildServer saveGuildServer(GuildServer server) {
+        return guildServerRepository.save(server);
+    }
+
+    /** 获取商户下的所有服务器 */
+    public List<GuildServer> listGuildServers(Long merchantId, Long discordAccountId) {
+        if (discordAccountId != null) {
+            if (merchantId != null) {
+                return guildServerRepository.findByMerchantIdAndDiscordAccountId(merchantId, discordAccountId);
+            }
+            return guildServerRepository.findByDiscordAccountId(discordAccountId);
+        }
+        if (merchantId != null) {
+            return guildServerRepository.findByMerchantId(merchantId);
+        }
+        return guildServerRepository.findAll();
+    }
+
+    /** 删除服务器配置 */
+    @Transactional
+    public void deleteGuildServer(Long id) {
+        guildMemberRepository.deleteByGuildServerId(id);
+        guildServerRepository.deleteById(id);
+    }
+
+    /** 获取服务器成员列表 */
+    public List<GuildMember> listMembers(Long guildServerId) {
+        return guildMemberRepository.findByGuildServerId(guildServerId);
+    }
+
+    /** 分页获取服务器成员列表 */
+    public Page<GuildMember> listMembersPaginated(Long guildServerId, String keyword, int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            return guildMemberRepository.searchByGuildServerId(guildServerId, keyword.trim(), pageable);
+        }
+        return guildMemberRepository.findByGuildServerId(guildServerId, pageable);
+    }
+
+    /** 获取成员数量 */
+    public long countMembers(Long guildServerId) {
+        return guildMemberRepository.countByGuildServerId(guildServerId);
+    }
+
+    /** 按关键词获取成员数量 */
+    public long countMembers(Long guildServerId, String keyword) {
+        if (keyword != null && !keyword.trim().isEmpty()) {
+            return guildMemberRepository.countByGuildServerIdAndKeyword(guildServerId, keyword.trim());
+        }
+        return guildMemberRepository.countByGuildServerId(guildServerId);
+    }
+
+    /** 获取或创建商户配置 */
+    @Transactional
+    public MerchantConfig getOrCreateConfig(Long merchantId) {
+        if (merchantId == null) {
+            throw new IllegalArgumentException("商户ID不能为空");
+        }
+        return merchantConfigRepository.findByMerchantId(merchantId)
+                .orElseGet(() -> {
+                    MerchantConfig config = new MerchantConfig();
+                    config.setMerchantId(merchantId);
+                    return merchantConfigRepository.save(config);
+                });
+    }
+
+    /** 更新商户配置 */
+    @Transactional
+    public MerchantConfig updateConfig(Long merchantId, MerchantConfig config) {
+        if (merchantId == null) {
+            throw new IllegalArgumentException("商户ID不能为空");
+        }
+        MerchantConfig existing = getOrCreateConfig(merchantId);
+        existing.setFetchLimit(config.getFetchLimit());
+        existing.setRequestInterval(config.getRequestInterval());
+        existing.setRequestCount(config.getRequestCount());
+        existing.setMaxDepth(config.getMaxDepth());
+        existing.setMaxRequests(config.getMaxRequests());
+        existing.setUpdatedAt(Instant.now());
+        return merchantConfigRepository.save(existing);
+    }
+
+    /** 开始异步抓取成员数据 */
+    @Async
+    @Transactional
+    public void startFetchMembers(Long guildServerId, MerchantConfig config) {
+        GuildServer server = guildServerRepository.findById(guildServerId).orElse(null);
+        if (server == null) return;
+
+        DiscordAccount account = accountRepository.findById(server.getDiscordAccountId()).orElse(null);
+        if (account == null) return;
+
+        // 创建进度记录
+        FetchProgress progress = new FetchProgress();
+        progress.setGuildServerId(guildServerId);
+        progress.setDiscordAccountId(account.getId());
+        progress.setGuildId(server.getGuildId());
+        progress.setStatus("RUNNING");
+        progress.setStartedAt(Instant.now());
+        progress.setRequestCount(0);
+        progress.setRawMemberCount(0);
+        progress.setDedupedMemberCount(0);
+        progress.setCompletedPages(0);
+        progress.setRetryCount(0);
+
+        // 查找上一次抓取的最后一个成员ID，用于断点续抓
+        Optional<FetchProgress> lastProgress = fetchProgressRepository
+                .findTopByGuildServerIdAndStatusOrderByCreatedAtDesc(guildServerId, "COMPLETED");
+        String lastMemberId = null;
+        if (lastProgress.isPresent() && lastProgress.get().getLastBatchId() != null) {
+            lastMemberId = lastProgress.get().getLastBatchId();
+        }
+
+        FetchProgress saved = fetchProgressRepository.save(progress);
+        progressCache.put(guildServerId, saved);
+
+        try {
+            fetchMembersBatch(account, server, config, progress, lastMemberId);
+            
+            progress.setStatus("COMPLETED");
+            progress.setCompletedAt(Instant.now());
+            server.setLastFetchAt(Instant.now());
+            server.setMemberCount((int) guildMemberRepository.countByGuildServerId(guildServerId));
+            guildServerRepository.save(server);
+        } catch (Exception e) {
+            log.error("抓取服务器[id={}]成员失败", guildServerId, e);
+            progress.setStatus("FAILED");
+            progress.setErrorMessage(e.getMessage());
+        }
+
+        fetchProgressRepository.save(progress);
+        progressCache.put(guildServerId, progress);
+    }
+
+    /** 批量抓取成员（带分页、去重、断点续抓） */
+    private void fetchMembersBatch(DiscordAccount account, GuildServer server, 
+                                    MerchantConfig config, FetchProgress progress, 
+                                    String startAfter) throws Exception {
+        String token = account.getBotToken();
+        String guildId = server.getGuildId();
+        int limit = Math.min(config.getRequestCount(), 1000);
+        int maxRequests = config.getMaxRequests();
+        int intervalSec = config.getRequestInterval();
+
+        String after = startAfter;
+        int requestCount = 0;
+        int totalRaw = 0;
+        int totalDeduped = 0;
+        Set<String> seenUserIds = new HashSet<>();
+
+        while (requestCount < maxRequests) {
+            requestCount++;
+            progress.setRequestCount(requestCount);
+
+            JsonNode membersNode;
+            try {
+                membersNode = discordUserClient.listGuildMembers(token, guildId, limit, after);
+            } catch (DiscordUserClient.DiscordUserApiException e) {
+                if (e.statusCode == 429) {
+                    // 限流，等待后重试
+                    Thread.sleep(intervalSec * 1000L * 2L);
+                    requestCount--;
+                    continue;
+                }
+                throw e;
+            }
+
+            if (membersNode == null || !membersNode.isArray() || membersNode.isEmpty()) {
+                break;
+            }
+
+            List<GuildMember> batch = new ArrayList<>();
+            String lastUserId = null;
+
+            for (JsonNode m : membersNode) {
+                JsonNode user = m.path("user");
+                if (user.isMissingNode() || user.isNull()) continue;
+
+                String userId = user.path("id").asText(null);
+                lastUserId = userId;
+
+                // 去重
+                if (userId != null && seenUserIds.contains(userId)) continue;
+                if (userId != null) seenUserIds.add(userId);
+
+                totalRaw++;
+                totalDeduped++;
+
+                // 检查是否已存在
+                Optional<GuildMember> existing = guildMemberRepository
+                        .findByGuildServerIdAndUserId(server.getId(), userId);
+                if (existing.isPresent()) {
+                    GuildMember member = existing.get();
+                    updateMemberFromJson(member, m, server.getId(), guildId);
+                    batch.add(member);
+                } else {
+                    GuildMember member = new GuildMember();
+                    member.setGuildServerId(server.getId());
+                    member.setGuildId(guildId);
+                    member.setUserId(userId);
+                    fillMemberFromJson(member, m);
+                    batch.add(member);
+                }
+            }
+
+            // 批量保存
+            if (!batch.isEmpty()) {
+                guildMemberRepository.saveAll(batch);
+            }
+
+            after = lastUserId;
+            progress.setLastBatchId(after);
+            progress.setRawMemberCount(totalRaw);
+            progress.setDedupedMemberCount(totalDeduped);
+            progress.setCompletedPages(requestCount);
+
+            // 更新缓存中的进度
+            progressCache.put(server.getId(), progress);
+
+            // 保存进度到数据库
+            fetchProgressRepository.save(progress);
+
+            // 请求间隔
+            if (intervalSec > 0) {
+                Thread.sleep(intervalSec * 1000L);
+            }
+
+            // 如果返回数量不足 limit，说明已到末尾
+            if (membersNode.size() < limit) break;
+        }
+
+        log.info("服务器[id={}]成员抓取完成：请求{}次，原始{}条，去重{}条",
+                server.getId(), requestCount, totalRaw, totalDeduped);
+    }
+
+    private void fillMemberFromJson(GuildMember member, JsonNode m) {
+        JsonNode user = m.path("user");
+        member.setUsername(user.path("username").asText("Unknown"));
+        member.setGlobalName(user.path("global_name").asText(null));
+        member.setDisplayName(m.path("nick").asText(null));
+        if (member.getDisplayName() == null || member.getDisplayName().isBlank()) {
+            member.setDisplayName(member.getGlobalName() != null ? member.getGlobalName() : member.getUsername());
+        }
+        String avatarHash = user.path("avatar").asText(null);
+        String userId = user.path("id").asText(null);
+        if (userId != null && avatarHash != null) {
+            String ext = avatarHash.startsWith("a_") ? "gif" : "png";
+            member.setAvatarUrl("https://cdn.discordapp.com/avatars/" + userId + "/" + avatarHash + "." + ext);
+        }
+        member.setIsBot(user.path("bot").asBoolean(false));
+        member.setJoinedAt(m.path("joined_at").asText(null) != null 
+                ? Instant.parse(m.path("joined_at").asText()) 
+                : null);
+        
+        JsonNode rolesNode = m.path("roles");
+        if (rolesNode.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode r : rolesNode) {
+                if (sb.length() > 0) sb.append(",");
+                sb.append(r.asText());
+            }
+            member.setRoles(sb.toString());
+        }
+        member.setLastFetchedAt(Instant.now());
+    }
+
+    private void updateMemberFromJson(GuildMember member, JsonNode m, Long serverId, String guildId) {
+        fillMemberFromJson(member, m);
+    }
+
+    /** 获取当前抓取进度 */
+    public FetchProgress getProgress(Long guildServerId) {
+        FetchProgress cached = progressCache.get(guildServerId);
+        if (cached != null && "RUNNING".equals(cached.getStatus())) {
+            return cached;
+        }
+        return fetchProgressRepository.findTopByGuildServerIdOrderByCreatedAtDesc(guildServerId).orElse(null);
+    }
+
+    /** 获取最近的进度记录 */
+    public List<FetchProgress> listProgressHistory(Long guildServerId) {
+        return fetchProgressRepository.findByGuildServerIdOrderByCreatedAtDesc(guildServerId);
+    }
+}
