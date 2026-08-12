@@ -8,6 +8,7 @@ import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.GuildServer;
 import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.ConversationRepository;
+import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.FetchProgressRepository;
 import com.discordadmin.repository.FriendRepository;
@@ -44,6 +45,7 @@ public class DiscordAccountService {
     private final GuildServerRepository guildServerRepository;
     private final GuildMemberRepository guildMemberRepository;
     private final FetchProgressRepository fetchProgressRepository;
+    private final DiscordAccountNumberRepository accountNumberRepository;
 
     public DiscordAccountService(DiscordAccountRepository accountRepository,
                                  DiscordBotManager botManager,
@@ -55,7 +57,8 @@ public class DiscordAccountService {
                                  AgentRepository agentRepository,
                                  GuildServerRepository guildServerRepository,
                                  GuildMemberRepository guildMemberRepository,
-                                 FetchProgressRepository fetchProgressRepository) {
+                                 FetchProgressRepository fetchProgressRepository,
+                                 DiscordAccountNumberRepository accountNumberRepository) {
         this.accountRepository = accountRepository;
         this.botManager = botManager;
         this.userClient = userClient;
@@ -67,6 +70,7 @@ public class DiscordAccountService {
         this.guildServerRepository = guildServerRepository;
         this.guildMemberRepository = guildMemberRepository;
         this.fetchProgressRepository = fetchProgressRepository;
+        this.accountNumberRepository = accountNumberRepository;
     }
 
     public List<AccountDto> listAccounts(String keyword, String status) {
@@ -178,8 +182,16 @@ public class DiscordAccountService {
             agentUsername = agent.getUsername();
             agentId = agent.getId();
         }
+        
+        // 查询账号关联的编号
+        Long accountNumberId = null;
+        List<com.discordadmin.entity.DiscordAccountNumber> numbers = accountNumberRepository.findByDiscordAccountId(a.getId());
+        if (!numbers.isEmpty()) {
+            accountNumberId = numbers.get(0).getId();
+        }
+        
         return AccountDto.from(a, botManager.isConnected(a.getId()), botManager.isConnecting(a.getId()),
-                tokenValid, friendCount, conversationCount, messageCount, agentName, agentUsername, agentId);
+                tokenValid, friendCount, conversationCount, messageCount, agentName, agentUsername, agentId, accountNumberId);
     }
 
     public AccountDto createAccount(CreateAccountRequest request) {

@@ -63,6 +63,30 @@ public class FetchProgress {
     @Column(name = "error_message", length = 512)
     private String errorMessage;
 
+    /** 累计响应成员数（不去重） */
+    @Column(name = "total_responded_members")
+    private Integer totalRespondedMembers = 0;
+
+    /** 累计响应时间（ms） */
+    @Column(name = "total_response_time_ms")
+    private Long totalResponseTimeMs = 0L;
+
+    /** 最后处理的前缀 */
+    @Column(name = "last_prefix", length = 64)
+    private String lastPrefix;
+
+    /** 失败/中断原因 */
+    @Column(name = "failure_reason", length = 512)
+    private String failureReason;
+
+    /** 最大请求数配置 */
+    @Column(name = "max_requests")
+    private Integer maxRequests = 1000;
+
+    /** 最大成员数配置 */
+    @Column(name = "max_members")
+    private Integer maxMembers = 2000000;
+
     @Column(name = "started_at")
     private Instant startedAt;
 

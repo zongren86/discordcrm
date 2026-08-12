@@ -78,6 +78,7 @@ public class DiscordMemberService {
                     // 将未完成的任务标记为 FAILED（因为后端重启了，任务无法继续）
                     progress.setStatus("FAILED");
                     progress.setErrorMessage("后端重启导致任务中断");
+                    progress.setFailureReason("后端重启导致任务中断");
                     progress.setCompletedAt(Instant.now());
                     fetchProgressRepository.save(progress);
 
@@ -95,6 +96,12 @@ public class DiscordMemberService {
                     st.prefixesTotal = progress.getTotalPages() != null ? progress.getTotalPages() : 0;
                     st.reconnects = progress.getRetryCount() != null ? progress.getRetryCount() : 0;
                     st.error = "后端重启导致任务中断";
+                    st.failureReason = "后端重启导致任务中断";
+                    st.totalRespondedMembers = progress.getTotalRespondedMembers() != null ? progress.getTotalRespondedMembers() : 0;
+                    st.totalResponseTimeMs = progress.getTotalResponseTimeMs() != null ? progress.getTotalResponseTimeMs() : 0L;
+                    st.lastPrefix = progress.getLastPrefix() != null ? progress.getLastPrefix() : "";
+                    st.startedAt = progress.getStartedAt() != null ? progress.getStartedAt().toEpochMilli() : null;
+                    st.completedAt = progress.getCompletedAt() != null ? progress.getCompletedAt().toEpochMilli() : System.currentTimeMillis();
                     tasks.put(taskId, st);
                 }
                 log.info("已恢复 {} 个任务状态", runningProgresses.size());
@@ -132,6 +139,20 @@ public class DiscordMemberService {
         public Set<String> completedPrefixes = new LinkedHashSet<>();
         /** 本次完成的前缀集合 */
         public Set<String> newlyCompletedPrefixes = new LinkedHashSet<>();
+        
+        // 详细统计信息（用于结果展示）
+        /** 累计响应成员数（不去重） */
+        public int totalRespondedMembers = 0;
+        /** 累计响应时间（ms） */
+        public long totalResponseTimeMs = 0;
+        /** 采集开始时间 */
+        public Long startedAt = null;
+        /** 采集结束时间 */
+        public Long completedAt = null;
+        /** 最后处理的前缀 */
+        public String lastPrefix = "";
+        /** 失败/中断原因 */
+        public String failureReason = "";
     }
 
     /**
@@ -199,6 +220,8 @@ public class DiscordMemberService {
         progress.setGuildId(req.getLink());
         progress.setStatus("RUNNING");
         progress.setStartedAt(Instant.now());
+        progress.setMaxRequests(req.getMaxRequests());
+        progress.setMaxMembers(req.getMaxMembers());
         progress = fetchProgressRepository.save(progress);  // 保存并获取ID
         st.progressId = progress.getId();  // 关联进度ID
 
@@ -216,6 +239,7 @@ public class DiscordMemberService {
         if (st == null) return;
 
         st.status = "RUNNING";
+        st.startedAt = System.currentTimeMillis();
 
         FetchProgress progress = fetchProgressRepository.findTopByGuildServerIdOrderByCreatedAtDesc(st.guildServerId)
             .orElse(null);
@@ -245,6 +269,13 @@ public class DiscordMemberService {
                 t.reconnects = safeInt(info, "x");
                 int respondedMembers = safeInt(info, "rm");
                 long responseTimeMs = safeLong(info, "rt");
+                
+                // 更新详细统计
+                t.totalRespondedMembers = respondedMembers;
+                t.totalResponseTimeMs = responseTimeMs;
+                if (t.currentPrefix != null && !t.currentPrefix.isEmpty()) {
+                    t.lastPrefix = t.currentPrefix;
+                }
 
                 // ready 阶段获取服务器名称和配置
                 if ("ready".equals(stage) && info.get("s") != null) {
@@ -273,6 +304,9 @@ public class DiscordMemberService {
                         progress.setCompletedPages(t.prefixesDone);
                         progress.setTotalPages(t.prefixesTotal);
                         progress.setRetryCount(t.reconnects);
+                        progress.setTotalRespondedMembers(t.totalRespondedMembers);
+                        progress.setTotalResponseTimeMs(t.totalResponseTimeMs);
+                        progress.setLastPrefix(t.lastPrefix);
                         fetchProgressRepository.save(progress);
                     }
                 }
@@ -333,7 +367,9 @@ public class DiscordMemberService {
             st.records = recs;
             st.totalFetched = res.members().size();
             st.status = "COMPLETED";
+            st.completedAt = System.currentTimeMillis();
             st.progressMessage = "完成，有效成员 " + recs.size() + " 条（原始 " + res.members().size() + " 条）";
+            st.failureReason = "";  // 成功无失败原因
 
             Set<String> completedPrefixes = new LinkedHashSet<>(fetcher.getCompletedPrefixes());
             st.newlyCompletedPrefixes = new LinkedHashSet<>(completedPrefixes);
@@ -363,6 +399,10 @@ public class DiscordMemberService {
                         ? st.currentPrefix
                         : "batch_" + System.currentTimeMillis();
                 progress.setLastBatchId(marker);
+                progress.setLastPrefix(st.lastPrefix);
+                progress.setTotalRespondedMembers(st.totalRespondedMembers);
+                progress.setTotalResponseTimeMs(st.totalResponseTimeMs);
+                progress.setFailureReason("");
                 progress.setResumeFrontier(toJson(fetcher.getRemainingFrontier()));
                 progress.setCompletedPrefixes(toJson(new ArrayList<>(fetcher.getCompletedPrefixes())));
                 fetchProgressRepository.save(progress);
@@ -373,11 +413,17 @@ public class DiscordMemberService {
             String msg = e.getMessage() != null ? e.getMessage() : "未知网关异常";
             st.error = msg + (e.getCode() != 0 ? " (code " + e.getCode() + ")" : "");
             st.progressMessage = "错误: " + st.error;
+            st.completedAt = System.currentTimeMillis();
+            st.failureReason = st.error;
 
             if (progress != null) {
                 progress.setStatus("FAILED");
                 progress.setErrorMessage(st.error);
                 progress.setCompletedAt(Instant.now());
+                progress.setFailureReason(st.error);
+                progress.setLastPrefix(st.lastPrefix);
+                progress.setTotalRespondedMembers(st.totalRespondedMembers);
+                progress.setTotalResponseTimeMs(st.totalResponseTimeMs);
                 if (st.currentPrefix != null && !st.currentPrefix.isEmpty()) {
                     progress.setLastBatchId(st.currentPrefix);
                 }
@@ -396,11 +442,17 @@ public class DiscordMemberService {
             }
             st.error = msg;
             st.progressMessage = "异常: " + msg;
+            st.completedAt = System.currentTimeMillis();
+            st.failureReason = msg;
 
             if (progress != null) {
                 progress.setStatus("FAILED");
                 progress.setErrorMessage(st.error);
                 progress.setCompletedAt(Instant.now());
+                progress.setFailureReason(msg);
+                progress.setLastPrefix(st.lastPrefix);
+                progress.setTotalRespondedMembers(st.totalRespondedMembers);
+                progress.setTotalResponseTimeMs(st.totalResponseTimeMs);
                 if (st.currentPrefix != null && !st.currentPrefix.isEmpty()) {
                     progress.setLastBatchId(st.currentPrefix);
                 }
@@ -712,6 +764,17 @@ public class DiscordMemberService {
         st.reconnects = progress.getRetryCount() != null ? progress.getRetryCount() : 0;
         st.error = progress.getErrorMessage() != null ? progress.getErrorMessage() : "";
         st.progressMessage = buildProgressMessage(progress);
+
+        // 填充结果统计字段
+        st.totalRespondedMembers = progress.getTotalRespondedMembers() != null ? progress.getTotalRespondedMembers() : 0;
+        st.totalResponseTimeMs = progress.getTotalResponseTimeMs() != null ? progress.getTotalResponseTimeMs() : 0L;
+        st.lastPrefix = progress.getLastPrefix() != null ? progress.getLastPrefix() : "";
+        st.failureReason = progress.getFailureReason() != null ? progress.getFailureReason() : "";
+        st.startedAt = progress.getStartedAt() != null ? progress.getStartedAt().toEpochMilli() : null;
+        st.completedAt = progress.getCompletedAt() != null ? progress.getCompletedAt().toEpochMilli() : null;
+        st.maxRequests = progress.getMaxRequests() != null ? progress.getMaxRequests() : 1000;
+        st.maxMembers = progress.getMaxMembers() != null ? progress.getMaxMembers() : 2000000;
+
         return st;
     }
 

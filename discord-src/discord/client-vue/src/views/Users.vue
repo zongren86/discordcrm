@@ -53,13 +53,16 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="320" fixed="right">
+        <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click="openEdit(row)">
               <el-icon><Edit /></el-icon> 编辑
             </el-button>
             <el-button size="small" type="success" link @click="openAssignRoles(row)">
               <el-icon><User /></el-icon> 分配角色
+            </el-button>
+            <el-button size="small" type="info" link @click="openAccountNumbers(row)">
+              <el-icon><Link /></el-icon> 账号编号
             </el-button>
             <el-button size="small" type="warning" link @click="openResetPwd(row)">
               <el-icon><Key /></el-icon> 重置密码
@@ -190,14 +193,61 @@
         <el-button type="primary" :loading="assignRolesDialog.saving" @click="saveAssignRoles">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 账号编号管理 -->
+    <el-dialog v-model="accountNumbersDialog.visible" title="账号编号管理" width="700px" @close="resetAccountNumbersDialog">
+      <div class="account-numbers-section">
+        <div class="section-header">
+          <span class="section-title">关联的账号编号列表</span>
+          <el-button type="primary" size="small" @click="openLinkNumbers">关联账号编号</el-button>
+        </div>
+        <el-table :data="accountNumbersList" stripe style="width: 100%;">
+          <el-table-column label="操作" width="100" align="center">
+            <template #default="{ row }">
+              <el-button size="small" type="danger" link @click="handleUnlinkNumber(row)">删除</el-button>
+            </template>
+          </el-table-column>
+          <el-table-column prop="number" label="编号" width="100" align="center" />
+          <el-table-column prop="boundAccount" label="账号" min-width="180">
+            <template #default="{ row }">
+              <span>{{ row.boundAccount || '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="linkedAt" label="关联时间" width="180">
+            <template #default="{ row }">
+              {{ formatDateTime(row.linkedAt) }}
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="accountNumbersList.length === 0" description="暂无关联的账号编号" style="padding: 30px 0;" />
+      </div>
+    </el-dialog>
+
+    <!-- 关联账号编号弹窗 -->
+    <el-dialog v-model="linkNumbersDialog.visible" title="关联账号编号" width="500px" @close="resetLinkNumbersDialog">
+      <div class="link-tip">
+        请输入要关联的编号范围，支持以下格式：
+        <div class="format-examples">
+          <span>单个编号：<code>1</code></span>
+          <span>多个编号：<code>1, 3, 5</code></span>
+          <span>连续范围：<code>1-5</code> 或 <code>1~5</code></span>
+          <span>混合使用：<code>1-5, 10, 15-20</code></span>
+        </div>
+      </div>
+      <el-input v-model="linkNumbersDialog.range" placeholder="请输入编号范围，如：1-5, 10, 15-20" />
+      <template #footer>
+        <el-button @click="linkNumbersDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="handleLinkNumbers">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, Refresh, Key, User } from '@element-plus/icons-vue'
-import { api } from '@/api'
+import { Plus, Edit, Delete, Refresh, Key, User, Link } from '@element-plus/icons-vue'
+import { api, getUserAccountNumbers, batchLinkAccountNumbers, unlinkAccountNumber } from '@/api'
 
 const list = ref([])
 const loading = ref(false)
@@ -488,6 +538,92 @@ async function saveAssignRoles() {
   }
 }
 
+// 账号编号管理相关
+const accountNumbersDialog = reactive({
+  visible: false,
+  userId: null,
+  username: ''
+})
+
+const accountNumbersList = ref([])
+
+const linkNumbersDialog = reactive({
+  visible: false,
+  range: ''
+})
+
+function formatDateTime(dateStr) {
+  if (!dateStr) return '-'
+  const date = new Date(dateStr)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  })
+}
+
+async function openAccountNumbers(row) {
+  accountNumbersDialog.visible = true
+  accountNumbersDialog.userId = row.id
+  accountNumbersDialog.username = row.username || row.displayName || ''
+  await fetchAccountNumbers(row.id)
+}
+
+function resetAccountNumbersDialog() {
+  accountNumbersDialog.userId = null
+  accountNumbersDialog.username = ''
+  accountNumbersList.value = []
+}
+
+async function fetchAccountNumbers(userId) {
+  try {
+    accountNumbersList.value = await getUserAccountNumbers(userId)
+  } catch (e) {
+    accountNumbersList.value = []
+    ElMessage.error('获取账号编号失败')
+  }
+}
+
+function openLinkNumbers() {
+  linkNumbersDialog.visible = true
+  linkNumbersDialog.range = ''
+}
+
+function resetLinkNumbersDialog() {
+  linkNumbersDialog.range = ''
+}
+
+async function handleLinkNumbers() {
+  if (!linkNumbersDialog.range.trim()) {
+    ElMessage.warning('请输入编号范围')
+    return
+  }
+  try {
+    await batchLinkAccountNumbers(accountNumbersDialog.userId, linkNumbersDialog.range)
+    ElMessage.success('关联成功')
+    linkNumbersDialog.visible = false
+    await fetchAccountNumbers(accountNumbersDialog.userId)
+  } catch (e) {
+    ElMessage.error('关联失败')
+  }
+}
+
+async function handleUnlinkNumber(row) {
+  try {
+    await ElMessageBox.confirm('确定要删除此关联吗？', '提示', { type: 'warning' })
+    await unlinkAccountNumber(accountNumbersDialog.userId, row.relId)
+    ElMessage.success('删除成功')
+    await fetchAccountNumbers(accountNumbersDialog.userId)
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('删除失败')
+    }
+  }
+}
+
 onMounted(() => {
   fetchList()
   fetchMerchants()
@@ -609,5 +745,48 @@ onMounted(() => {
   font-size: 14px;
   color: var(--color-text);
   font-weight: 500;
+}
+
+/* 账号编号管理样式 */
+.account-numbers-section {
+  padding: 10px 0;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.section-header .section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 0;
+}
+
+.link-tip {
+  background: var(--el-fill-color-light);
+  padding: 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--color-text-2);
+}
+
+.format-examples {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.format-examples code {
+  background: var(--color-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin: 0 4px;
 }
 </style>

@@ -38,19 +38,28 @@ public class DiscordAccountDtos {
                               Long friendCount, Long conversationCount, Long messageCount,
                               String email, String remark, Long merchantId,
                               String agentName, String agentUsername, Long agentId,
-                              String tokenExpiresAt, String tokenCheckedAt) {
+                              String tokenExpiresAt, String tokenCheckedAt,
+                              Long accountNumberId) {
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting) {
-            return from(a, connected, connecting, true, 0L, 0L, 0L, null, null, null);
+            return from(a, connected, connecting, true, 0L, 0L, 0L, null, null, null, null);
         }
 
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting,
                                       Long friendCount, Long conversationCount, Long messageCount) {
-            return from(a, connected, connecting, true, friendCount, conversationCount, messageCount, null, null, null);
+            return from(a, connected, connecting, true, friendCount, conversationCount, messageCount, null, null, null, null);
         }
 
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting,
                                       boolean tokenValid, Long friendCount, Long conversationCount, Long messageCount,
                                       String agentName, String agentUsername, Long agentId) {
+            return from(a, connected, connecting, tokenValid, friendCount, conversationCount, messageCount,
+                    agentName, agentUsername, agentId, null);
+        }
+
+        public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting,
+                                      boolean tokenValid, Long friendCount, Long conversationCount, Long messageCount,
+                                      String agentName, String agentUsername, Long agentId,
+                                      Long accountNumberId) {
             return new AccountDto(a.getId(), a.getName(), maskToken(a.getBotToken()),
                     a.getAccountType() != null ? a.getAccountType().name() : "BOT",
                     a.getDiscordBotId(), a.getDiscordBotName(), a.getAvatarUrl(),
@@ -62,7 +71,8 @@ public class DiscordAccountDtos {
                     a.getEmail(), a.getRemark(), a.getMerchantId(),
                     agentName, agentUsername, agentId,
                     a.getTokenExpiresAt() != null ? a.getTokenExpiresAt().toString() : null,
-                    a.getTokenCheckedAt() != null ? a.getTokenCheckedAt().toString() : null);
+                    a.getTokenCheckedAt() != null ? a.getTokenCheckedAt().toString() : null,
+                    accountNumberId);
         }
 
         private static String maskToken(String token) {

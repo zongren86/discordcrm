@@ -198,6 +198,15 @@ public class DiscordMemberController {
         r.put("error", st.error);
         r.put("guildServerId", st.guildServerId);
         r.put("discordAccountId", st.discordAccountId);
+        // 添加详细统计字段
+        r.put("maxRequests", st.maxRequests);
+        r.put("maxMembers", st.maxMembers);
+        r.put("totalRespondedMembers", st.totalRespondedMembers);
+        r.put("totalResponseTimeMs", st.totalResponseTimeMs);
+        r.put("lastPrefix", st.lastPrefix);
+        r.put("failureReason", st.failureReason);
+        r.put("startedAt", st.startedAt);
+        r.put("completedAt", st.completedAt);
         return r;
     }
 

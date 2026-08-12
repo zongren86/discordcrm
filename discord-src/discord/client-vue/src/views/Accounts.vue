@@ -82,6 +82,15 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="账号编号" width="120" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.accountNumberId" type="success" size="small" effect="light">
+              #{{ row.accountNumberId }}
+            </el-tag>
+            <span v-else class="cell-hint">-</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="所属商户" width="140">
           <template #default="{ row }">
             <span v-if="getMerchantName(row.merchantId)" class="merchant-cell">

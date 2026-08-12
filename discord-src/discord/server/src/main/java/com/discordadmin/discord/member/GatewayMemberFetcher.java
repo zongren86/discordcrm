@@ -7,13 +7,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
-import java.net.Proxy;
-import java.net.ProxySelector;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -23,7 +16,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.zip.Inflater;
-import javax.net.ssl.SSLContext;
 
 /**
  * 经 Discord Gateway(WebSocket) 拉取服务器成员
@@ -51,7 +43,6 @@ public class GatewayMemberFetcher {
     private final String guildId;
     private final String proxyHost;
     private final int proxyPort;
-    private final HttpClient restClient;
     private final ObjectMapper mapper = new ObjectMapper();
 
     private final Map<String, JsonNode> members = new ConcurrentHashMap<>();
@@ -91,6 +82,9 @@ public class GatewayMemberFetcher {
     private final Queue<String> prefixQueue = new LinkedList<>();
     private final Set<String> visitedPrefixes = ConcurrentHashMap.newKeySet();
 
+    // 深度级统计：追踪每层的扩展/剪枝情况
+    private final Map<Integer, int[]> depthStats = new LinkedHashMap<>();  // depth -> [processed, expanded, pruned, no_expand]
+
     // 进度节流压缩：减少上报频率
     private static final long EMIT_INTERVAL_MS = 2000;  // 至少间隔 2 秒
     private static final int EMIT_PREFIX_BATCH = 5;     // 每 5 个前缀批量上报
@@ -122,20 +116,6 @@ public class GatewayMemberFetcher {
         this.maxRequestsRef = maxRequests;
         this.maxMembersRef = maxMembers;
         this.pageDelayMs = Math.max((int)(MIN_REQUEST_INTERVAL * 1000), pageDelayMs);
-
-        HttpClient.Builder builder = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15));
-        try {
-            SSLContext ctx = SSLContext.getInstance("TLS");
-            ctx.init(null, null, null);
-            builder.sslContext(ctx);
-        } catch (Exception e) {
-            log.warn("自定义 SSLContext 初始化失败: {}", e.getMessage());
-        }
-        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
-            builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));
-        }
-        this.restClient = builder.build();
     }
 
     /** 断点续传：设置之前已完成的前缀 */
@@ -200,19 +180,24 @@ public class GatewayMemberFetcher {
                 throw new GatewayException("等待 Gateway READY 超时(30秒)，可能 Token 无效或网络不稳定", 408);
             }
 
+            log.info("开始执行 fetchAll()，最大请求数={}, 最大成员数={}", maxRequestsRef, maxMembersRef);
             emit("fetching", "开始抓取成员...");
             fetchAll();
 
+            log.info("fetchAll() 执行完成，成员数={}, 请求数={}", members.size(), requestsSent.get());
             emit("done", String.format("抓取完成：%d 名成员", members.size()));
         } catch (GatewayException e) {
+            log.error("fetchAll() 抛出 GatewayException: code={}, msg={}", e.getCode(), e.getMessage(), e);
             throw e;
         } catch (Exception e) {
             String msg = e.getMessage();
             if (msg == null || msg.isEmpty()) {
                 msg = e.getClass().getSimpleName();
             }
+            log.error("fetchAll() 抛出未知异常: {}", msg, e);
             throw new GatewayException("抓取成员时出错: " + msg, 500);
         } finally {
+            log.info("执行 flushAllRemainingMembers() 和 disconnect()");
             flushAllRemainingMembers();
             disconnect();
         }
@@ -240,36 +225,58 @@ public class GatewayMemberFetcher {
         initPrefixes();
 
         int timeoutCount = 0;
+        long startTime = System.currentTimeMillis();
+        int loopCount = 0;
+        int expandedTotal = 0;
+        int prunedTotal = 0;
+        int noExpandTotal = 0;
+        String exitReason = "未知";
+        String lastExpandedPrefix = "";
 
         while (!prefixQueue.isEmpty() && !stop) {
+            loopCount++;
+            
+            // 每 50 个循环打印一次状态摘要
+            if (loopCount % 50 == 0) {
+                long elapsedMs = System.currentTimeMillis() - startTime;
+                log.info("[状态检查] 循环次数={}, 队列大小={}, 已发送请求={}/{}, 成员数={}/{}, stop={}, disconnected={}, 耗时={}ms",
+                        loopCount, prefixQueue.size(), requestsSent.get(), maxRequestsRef,
+                        members.size(), maxMembersRef, stop, disconnected.get(), elapsedMs);
+                // 打印深度统计
+                logDepthStats();
+            }
+            
             if (disconnected.get()) {
-                log.warn("检测到连接断开，尝试重连...");
+                log.warn("检测到连接断开，尝试重连... (队列大小={}, 已发送请求={})", prefixQueue.size(), requestsSent.get());
                 try {
                     reconnect();
                     currentRequestComplete.set(true);
                     log.info("重连成功，继续抓取...");
                 } catch (GatewayException e) {
-                    log.error("重连失败: {}", e.getMessage());
+                    log.error("重连失败，抛出异常终止采集: {}", e.getMessage(), e);
                     throw e;
                 }
             }
 
             if (requestsSent.get() >= maxRequestsRef) {
-                log.info("达到最大请求数限制: {}", maxRequestsRef);
-                emit("done", "达到最大请求数限制");
+                log.info("达到最大请求数限制: {} (队列大小={}, 已处理前缀={})", maxRequestsRef, prefixQueue.size(), prefixesDone);
+                exitReason = "达到最大请求数限制";
+                emit("done", exitReason);
                 break;
             }
             if (members.size() >= maxMembersRef) {
                 log.info("达到最大成员数限制: {}", maxMembersRef);
-                emit("done", "达到最大成员数限制");
+                exitReason = "达到最大成员数限制";
+                emit("done", exitReason);
                 break;
             }
 
             String prefix = prefixQueue.poll();
             currentPrefix = prefix;
+            int depth = prefix.length();
             int beforeSize = members.size();
 
-            log.info("开始处理前缀 '{}' (深度={})", prefix, prefix.length());
+            log.info("开始处理前缀 '{}' (深度={})", prefix, depth);
 
             try {
                 // 每个前缀只请求一次（query模式下after参数无效）
@@ -283,13 +290,8 @@ public class GatewayMemberFetcher {
                 totalResponseTimeMs.addAndGet(requestTime);
 
                 if (respondedCount == 0) {
-                    // 超时或无数据
-                    timeoutCount++;
-                    log.info("前缀 '{}' 响应为空或超时, 耗时={}ms, 超时计数={}", prefix, requestTime, timeoutCount);
-                    if (timeoutCount >= 5) {
-                        log.error("连续失败过多（{}次），停止抓取", timeoutCount);
-                        break;
-                    }
+                    log.info("前缀 '{}' 响应为空或超时, 耗时={}ms", prefix, requestTime);
+                    timeoutCount = 0;
                 } else {
                     timeoutCount = 0;
                 }
@@ -300,11 +302,20 @@ public class GatewayMemberFetcher {
                 log.info("前缀 '{}' 完成: 响应{}条, 去重后新增{}条, 耗时={}ms, 总计{} ({}/{})", 
                         prefix, respondedCount, newMemberCount, requestTime, members.size(), prefixesDone, prefixesTotal);
 
-                // 剪枝: 前缀返回 0 成员 → 该分支已无数据，停止下钻
+                // 更新深度统计
+                depthStats.computeIfAbsent(depth, k -> new int[4]);
+                depthStats.get(depth)[0]++; // processed
+
+                // 剪枝/扩展判断
                 if (respondedCount == 0) {
-                    log.info("前缀 '{}' 返回 0 条，剪枝（不再下钻）", prefix);
-                } else if (respondedCount >= 100 && prefix.length() < maxPrefixDepth) {
-                    // 前缀树 BFS: 命中平台上限(100)且未到最大深度 → 继续下钻更具体的后缀
+                    // 剪枝: 前缀返回 0 成员 → 该分支已无数据
+                    prunedTotal++;
+                    depthStats.get(depth)[2]++; // pruned
+                    log.info("前缀 '{}' 返回 0 条，剪枝（不再下钻） | 深度统计: 处理{} 扩展{} 剪枝{} 不扩展{}",
+                            prefix, depthStats.get(depth)[0], depthStats.get(depth)[1], depthStats.get(depth)[2], depthStats.get(depth)[3]);
+                } else if (depth < maxPrefixDepth) {
+                    // 扩展: 只要有数据且未到最大深度，就扩展子前缀
+                    // 原因: Discord Gateway 使用 query 时返回最多100条，但可能存在更多匹配成员需要通过更精确的前缀细分来获取
                     List<String> subPrefixes = generateSubPrefixes(prefix);
                     int added = 0;
                     for (String sub : subPrefixes) {
@@ -313,9 +324,26 @@ public class GatewayMemberFetcher {
                             added++;
                         }
                     }
+                    expandedTotal++;
+                    depthStats.get(depth)[1]++; // expanded
+                    lastExpandedPrefix = prefix;
                     if (added > 0) {
-                        log.info("前缀 '{}' 命中下钻: 扩展 {} 个子前缀 (深度={})", prefix, added, prefix.length() + 1);
+                        if (respondedCount >= 100) {
+                            log.info("前缀 '{}' 命中上限(100条)下钻: 扩展 {} 个子前缀 (深度={}) | 深度统计: 处理{} 扩展{} 剪枝{} 不扩展{}",
+                                    prefix, added, depth + 1, depthStats.get(depth)[0], depthStats.get(depth)[1], depthStats.get(depth)[2], depthStats.get(depth)[3]);
+                        } else {
+                            log.info("前缀 '{}' 返回{}条 (< 100) 但仍扩展: 扩展 {} 个子前缀 (深度={}) | 深度统计: 处理{} 扩展{} 剪枝{} 不扩展{}",
+                                    prefix, respondedCount, added, depth + 1, depthStats.get(depth)[0], depthStats.get(depth)[1], depthStats.get(depth)[2], depthStats.get(depth)[3]);
+                        }
+                    } else {
+                        log.info("前缀 '{}' 有数据({}条)但所有子前缀已访问/已在队列中（添加0个）", prefix, respondedCount);
                     }
+                } else {
+                    // 不扩展: 已达最大深度
+                    noExpandTotal++;
+                    depthStats.get(depth)[3]++; // no_expand
+                    log.info("前缀 '{}' 返回{}条 但已达最大深度{}，不再扩展 | 深度统计: 处理{} 扩展{} 剪枝{} 不扩展{}",
+                            prefix, respondedCount, maxPrefixDepth, depthStats.get(depth)[0], depthStats.get(depth)[1], depthStats.get(depth)[2], depthStats.get(depth)[3]);
                 }
 
                 sleepQuietly(pageDelayMs);
@@ -328,6 +356,7 @@ public class GatewayMemberFetcher {
                     log.warn("Gateway 连接错误, 第 {} 次, 尝试重连", timeoutCount);
                     if (timeoutCount >= 5) {
                         log.error("连续失败过多（{}次），停止抓取", timeoutCount);
+                        exitReason = "连续Gateway连接错误";
                         throw e;
                     }
                     try {
@@ -336,9 +365,11 @@ public class GatewayMemberFetcher {
                         continue;
                     } catch (GatewayException re) {
                         log.error("重连失败: {}", re.getMessage());
+                        exitReason = "重连失败";
                         throw re;
                     }
                 } else {
+                    exitReason = "Gateway错误: " + e.getMessage();
                     throw e;
                 }
             }
@@ -350,9 +381,55 @@ public class GatewayMemberFetcher {
             }
         }
 
+        // 循环结束日志：详细说明为什么结束
+        long endTime = System.currentTimeMillis();
+        long elapsedMs = endTime - startTime;
+
+        // 分析退出原因（如果 break 时已设置 exitReason，则使用已设置的值）
+        if (exitReason.equals("未知")) {
+            if (stop) {
+                exitReason = "stop标志被设置（可能是外部取消或连接断开导致）";
+            } else if (prefixQueue.isEmpty()) {
+                exitReason = "前缀队列已空（所有前缀处理完毕，无更多数据可采集）";
+            }
+            // 其他情况（如异常退出）会在 catch 块中设置 exitReason
+        }
+
+        log.info("========== 采集任务结束 ==========");
+        log.info("【退出原因】{}", exitReason);
+        log.info("循环次数={}, 队列是否为空={}, stop={}, 已断开={}", loopCount, prefixQueue.isEmpty(), stop, disconnected.get());
+        log.info("最终状态: 队列大小={}, 已发送请求={}/{}, 成员数={}/{}, 已处理前缀={}/{}, 耗时={}ms",
+                prefixQueue.size(), requestsSent.get(), maxRequestsRef,
+                members.size(), maxMembersRef, prefixesDone, prefixesTotal, elapsedMs);
+        log.info("深度统计汇总: 扩展总计={}, 剪枝总计={}, 不扩展总计={}, 最后扩展前缀={}",
+                expandedTotal, prunedTotal, noExpandTotal, lastExpandedPrefix);
+        log.info("各深度统计 [深度]: 处理/扩展/剪枝/不扩展");
+        for (Map.Entry<Integer, int[]> entry : depthStats.entrySet()) {
+            int[] s = entry.getValue();
+            log.info("  深度{}: 处理={} 扩展={} 剪枝={} 不扩展={}", entry.getKey(), s[0], s[1], s[2], s[3]);
+        }
+        log.info("累计响应成员(不去重)={}, 累计响应时间={}ms", totalRespondedAll.get(), totalResponseTimeMs.get());
+
+        // 计算完成率
+        double requestRate = maxRequestsRef > 0 ? (requestsSent.get() * 100.0 / maxRequestsRef) : 0;
+        double memberRate = maxMembersRef > 0 ? (members.size() * 100.0 / maxMembersRef) : 0;
+        log.info("请求完成率: {}/{} ({:.1f}%), 成员采集率: {}/{} ({:.1f}%)",
+                requestsSent.get(), maxRequestsRef, requestRate,
+                members.size(), maxMembersRef, memberRate);
+
         emitProgress("fetching", "completed");
         log.info("全量抓取完成，共抓取 {} 名成员，发送 {} 个请求，完成 {} 个前缀", 
                 members.size(), requestsSent.get(), prefixesDone);
+    }
+
+    private void logDepthStats() {
+        if (depthStats.isEmpty()) return;
+        StringBuilder sb = new StringBuilder("[深度统计] ");
+        for (Map.Entry<Integer, int[]> entry : depthStats.entrySet()) {
+            int[] s = entry.getValue();
+            sb.append(String.format("D%d(处理=%d 扩=%d 剪=%d 不扩=%d) ", entry.getKey(), s[0], s[1], s[2], s[3]));
+        }
+        log.info(sb.toString());
     }
 
     /**
@@ -516,6 +593,49 @@ public class GatewayMemberFetcher {
 
     private final AtomicReference<String> nextAfterUserId = new AtomicReference<>();
 
+    /**
+     * 快速探测代理是否可用于 WebSocket CONNECT 隧道。
+     * 仅在配置了 proxyHost/proxyPort 时使用；不改变 restClient 的构造，
+     * 只决定 WebSocket 是否走代理。
+     *
+     * @return true 表示代理支持 CONNECT 隧道（可用于 wss）
+     */
+    private static boolean isProxyUsableForWebSocket(String proxyHost, int proxyPort) {
+        if (proxyHost == null || proxyHost.isBlank() || proxyPort <= 0) {
+            return false;
+        }
+        java.net.Socket sock = null;
+        try {
+            sock = new java.net.Socket();
+            sock.connect(new InetSocketAddress(proxyHost, proxyPort), 3000);
+            sock.setSoTimeout(5000);
+            java.io.OutputStream out = sock.getOutputStream();
+            String connectReq = "CONNECT gateway.discord.gg:443 HTTP/1.1\r\n"
+                    + "Host: gateway.discord.gg:443\r\n"
+                    + "Proxy-Connection: Keep-Alive\r\n\r\n";
+            out.write(connectReq.getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            java.io.InputStream in = sock.getInputStream();
+            byte[] buf = new byte[1024];
+            int n = in.read(buf);
+            if (n <= 0) {
+                log.warn("代理 {}:{} CONNECT 探测失败: 无响应", proxyHost, proxyPort);
+                return false;
+            }
+            String resp = new String(buf, 0, n, StandardCharsets.UTF_8);
+            boolean ok = resp.startsWith("HTTP/1.1 200") || resp.startsWith("HTTP/1.0 200");
+            log.info("代理 {}:{} CONNECT 探测结果: {} - {}", proxyHost, proxyPort, ok ? "OK" : "FAIL", resp.split("\r\n")[0]);
+            return ok;
+        } catch (Exception e) {
+            log.warn("代理 {}:{} CONNECT 探测异常: {}", proxyHost, proxyPort, e.getMessage());
+            return false;
+        } finally {
+            if (sock != null) {
+                try { sock.close(); } catch (Exception ignore) {}
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ //
     // 连接管理
     // ------------------------------------------------------------------ //
@@ -548,15 +668,19 @@ public class GatewayMemberFetcher {
         }
 
         try {
+            // 探测代理是否可用于 WebSocket CONNECT 隧道，不可用则回退直连
+            boolean proxyUsable = isProxyUsableForWebSocket(proxyHost, proxyPort);
             WebSocketFactory factory = new WebSocketFactory();
             factory.setConnectionTimeout(30000);
             factory.setSocketTimeout(60000);
 
-            if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+            if (proxyUsable) {
                 ProxySettings proxySettings = factory.getProxySettings();
                 proxySettings.setHost(proxyHost);
                 proxySettings.setPort(proxyPort);
                 log.info("WebSocketFactory 使用代理: {}:{}", proxyHost, proxyPort);
+            } else if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+                log.warn("代理 {}:{} 不支持 WebSocket CONNECT 隧道或不可达，回退为直连 Discord", proxyHost, proxyPort);
             }
 
             webSocket = factory.createSocket(GATEWAY_URL);
@@ -993,8 +1117,13 @@ public class GatewayMemberFetcher {
         
         log.info("   当前进度: 总计 {} 名成员, chunksReceived={}", members.size(), chunksReceived.get());
         
-        if (complete) {
-            log.info("✓ 成员数据加载完成: chunks={}, 总成员={}", chunkCount, members.size());
+        // 判断请求完成的条件：
+        // 1. Discord 明确返回 complete=true
+        // 2. 或者已经收到所有 chunk（chunk_count > 0 && chunksReceived >= chunk_count）
+        boolean allChunksReceived = chunkCount > 0 && chunksReceived.get() >= chunkCount;
+        if (complete || allChunksReceived) {
+            log.info("✓ 成员数据加载完成: chunks={}, 总成员={}, complete={}, allChunksReceived={}", 
+                    chunkCount, members.size(), complete, allChunksReceived);
             currentRequestComplete.set(true);
             synchronized (currentRequestComplete) {
                 currentRequestComplete.notifyAll();

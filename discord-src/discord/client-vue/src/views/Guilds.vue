@@ -260,19 +260,17 @@
         </div>
 
         <!-- 详细信息 -->
-        <div class="progress-detail-grid" v-if="currentProgressTask">
+        <div class="progress-detail-grid" v-if="currentProgressTask && !isTerminalStatus">
           <div class="detail-item">
             <span class="detail-label">采集状态</span>
-            <el-tag :type="progressStatusClass === 'failed' ? 'danger' : progressStatusClass === 'completed' ? 'success' : 'warning'" size="small">
-              {{ progressStatusText }}
-            </el-tag>
+            <el-tag type="warning" size="small">采集中</el-tag>
           </div>
           <div class="detail-item">
-            <span class="detail-label">当前分页</span>
+            <span class="detail-label">当前前缀</span>
             <span class="detail-value mono-text">{{ currentProgressTask.currentPrefix || '-' }}</span>
           </div>
           <div class="detail-item">
-            <span class="detail-label">分页进度</span>
+            <span class="detail-label">前缀进度</span>
             <span class="detail-value">{{ currentProgressTask.prefixesDone || 0 }} / {{ currentProgressTask.prefixesTotal || '-' }}</span>
           </div>
           <div class="detail-item">
@@ -281,8 +279,78 @@
           </div>
         </div>
 
-        <!-- 进度消息 -->
-        <div class="progress-message" v-if="currentProgressTask && (currentProgressTask.progressMessage || currentProgressTask.progress)">
+        <!-- 采集结果详情（仅在完成/失败时显示） -->
+        <div class="progress-result-section" v-if="currentProgressTask && isTerminalStatus">
+          <div class="result-header">
+            <el-icon class="result-icon" :class="progressStatusClass">
+              <component :is="progressStatusIcon" />
+            </el-icon>
+            <div class="result-title">
+              <span :class="'result-status-text ' + progressStatusClass">{{ progressStatusText }}</span>
+            </div>
+          </div>
+
+          <div class="result-grid">
+            <div class="result-item">
+              <div class="result-label">请求数 / 总请求数</div>
+              <div class="result-value">{{ currentProgressTask.requestsSent || 0 }} / {{ currentProgressTask.maxRequests || '-' }}</div>
+              <div class="result-sub">完成率: {{ getRequestRate(currentProgressTask) }}%</div>
+            </div>
+            <div class="result-item">
+              <div class="result-label">响应总量 / 去重量</div>
+              <div class="result-value">{{ currentProgressTask.totalRespondedMembers || 0 }} / {{ currentProgressTask.membersUnique || 0 }}</div>
+              <div class="result-sub">去重率: {{ getDedupRate(currentProgressTask) }}%</div>
+            </div>
+            <div class="result-item">
+              <div class="result-label">本次采集量 / 采集上限</div>
+              <div class="result-value">{{ currentProgressTask.membersUnique || 0 }} / {{ currentProgressTask.maxMembers || '-' }}</div>
+              <div class="result-sub">完成率: {{ getCollectRate(currentProgressTask) }}%</div>
+            </div>
+            <div class="result-item">
+              <div class="result-label">总耗时</div>
+              <div class="result-value">{{ formatElapsedTime(currentProgressTask) }}</div>
+              <div class="result-sub">开始: {{ formatStartTime(currentProgressTask) }}</div>
+            </div>
+            <div class="result-item">
+              <div class="result-label">最后请求前缀</div>
+              <div class="result-value mono-text">{{ currentProgressTask.lastPrefix || currentProgressTask.currentPrefix || '-' }}</div>
+              <div class="result-sub">前缀深度: {{ (currentProgressTask.lastPrefix || currentProgressTask.currentPrefix || '').length || 0 }}</div>
+            </div>
+            <div class="result-item">
+              <div class="result-label">重连次数</div>
+              <div class="result-value">{{ currentProgressTask.reconnects || 0 }}</div>
+              <div class="result-sub">响应累计: {{ formatResponseTime(currentProgressTask) }}</div>
+            </div>
+          </div>
+
+          <!-- 失败/中断原因 -->
+          <div class="result-failure" v-if="currentProgressTask.status === 'FAILED' || currentProgressTask.status === 'ERROR'">
+            <el-alert
+              type="error"
+              show-icon
+              :closable="false"
+            >
+              <template #title>
+                <span>{{ currentProgressTask.failureReason || currentProgressTask.error || currentProgressTask.progressMessage || '未知错误' }}</span>
+              </template>
+            </el-alert>
+          </div>
+          <div class="result-failure" v-else-if="currentProgressTask.status === 'COMPLETED' || currentProgressTask.status === 'DONE'">
+            <el-alert
+              type="success"
+              show-icon
+              :closable="false"
+              title="数据采集任务已完成"
+            />
+          </div>
+
+          <div class="result-actions">
+            <el-button type="primary" size="small" @click="progressDialog.visible = false">关闭</el-button>
+          </div>
+        </div>
+
+        <!-- 进度消息（仅采集中显示） -->
+        <div class="progress-message" v-if="currentProgressTask && !isTerminalStatus && (currentProgressTask.progressMessage || currentProgressTask.progress)">
           <el-alert
             :title="currentProgressTask.progressMessage || currentProgressTask.progress"
             :type="currentProgressTask.status === 'FAILED' ? 'error' : 'info'"
@@ -294,12 +362,6 @@
         <!-- 实时更新提示 -->
         <div v-if="progressDialog.taskId && currentProgressTask && !isTerminalStatus" class="progress-tip">
           <el-icon class="is-loading"><Loading /></el-icon> 数据采集中，进度每 2 秒自动刷新...
-        </div>
-        <div v-else-if="currentProgressTask && (currentProgressTask.status === 'COMPLETED' || currentProgressTask.status === 'DONE')" class="progress-tip completed">
-          <el-icon><CircleCheck /></el-icon> 数据采集已完成
-        </div>
-        <div v-else-if="currentProgressTask && (currentProgressTask.status === 'FAILED' || currentProgressTask.status === 'ERROR')" class="progress-tip failed">
-          <el-icon><Warning /></el-icon> 数据采集失败：{{ currentProgressTask.progressMessage || currentProgressTask.error || '未知错误' }}
         </div>
       </div>
     </el-dialog>
@@ -391,7 +453,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Edit, Delete, Download, DataLine, MagicStick,
   Loading, CircleCheck, Warning, Close, Monitor, Connection, User, Search,
-  CopyDocument
+  CopyDocument, InfoFilled
 } from '@element-plus/icons-vue'
 import { useAccountsStore } from '@/stores/accounts'
 import { useGuildServersStore } from '@/stores/guildServers'
@@ -493,9 +555,11 @@ const statusMap = {
   PENDING: { icon: Loading, text: '等待开始', class: 'pending' },
   RUNNING: { icon: Loading, text: '抓取进行中', class: 'running' },
   COMPLETED: { icon: CircleCheck, text: '采集完成', class: 'completed' },
-  FAILED: { icon: Warning, text: '抓取失败', class: 'failed' },
+  FAILED: { icon: Warning, text: '采集中断', class: 'failed' },
   DONE: { icon: CircleCheck, text: '采集完成', class: 'completed' },
-  ERROR: { icon: Warning, text: '抓取失败', class: 'failed' }
+  ERROR: { icon: Warning, text: '采集失败', class: 'failed' },
+  NO_DATA: { icon: InfoFilled, text: '暂无记录', class: 'pending' },
+  UNKNOWN: { icon: Warning, text: '状态未知', class: 'failed' }
 }
 
 const progressStatus = computed(() => {
@@ -520,6 +584,64 @@ const isTerminalStatus = computed(() => {
   const status = currentProgressTask.value.status
   return status === 'COMPLETED' || status === 'DONE' || status === 'FAILED' || status === 'ERROR'
 })
+
+// 结果详情辅助函数
+function getRequestRate(task) {
+  if (!task) return 0
+  const total = task.maxRequests || 0
+  if (total <= 0) return 0
+  return Math.min(100, Math.round((task.requestsSent || 0) / total * 100))
+}
+
+function getDedupRate(task) {
+  if (!task) return 0
+  const total = task.totalRespondedMembers || 0
+  if (total <= 0) return 0
+  return Math.min(100, Math.round((task.membersUnique || 0) / total * 100))
+}
+
+function getCollectRate(task) {
+  if (!task) return 0
+  const total = task.maxMembers || 0
+  if (total <= 0) return 0
+  return Math.min(100, Math.round((task.membersUnique || 0) / total * 100))
+}
+
+function formatElapsedTime(task) {
+  if (!task) return '-'
+  if (task.startedAt && task.completedAt) {
+    const elapsed = task.completedAt - task.startedAt
+    return formatMs(elapsed)
+  }
+  if (task.startedAt) {
+    return formatMs(Date.now() - task.startedAt)
+  }
+  return '-'
+}
+
+function formatStartTime(task) {
+  if (!task || !task.startedAt) return '-'
+  const d = new Date(task.startedAt)
+  return d.toLocaleTimeString('zh-CN', { hour12: false })
+}
+
+function formatResponseTime(task) {
+  if (!task) return '-'
+  const ms = task.totalResponseTimeMs || 0
+  return formatMs(ms)
+}
+
+function formatMs(ms) {
+  if (ms <= 0) return '0s'
+  const seconds = Math.floor(ms / 1000)
+  if (seconds < 60) return seconds + 's'
+  const minutes = Math.floor(seconds / 60)
+  const remainSeconds = seconds % 60
+  if (minutes < 60) return minutes + 'm ' + remainSeconds + 's'
+  const hours = Math.floor(minutes / 60)
+  const remainMinutes = minutes % 60
+  return hours + 'h ' + remainMinutes + 'm'
+}
 
 // 方法
 async function loadServers() {
@@ -694,7 +816,7 @@ async function startFetch() {
   }
 }
 
-function openProgressDialog(server, taskId = null) {
+async function openProgressDialog(server, taskId = null) {
   progressDialog.server = server
   progressDialog.visible = true
 
@@ -712,6 +834,36 @@ function openProgressDialog(server, taskId = null) {
     // 如果该任务的轮询未启动，启动它
     if (!syncTimersMap.has(taskId)) {
       startTaskPolling(taskId, server.id)
+    }
+  } else {
+    // 没有正在进行的任务，从后端获取最近的采集结果
+    try {
+      const latestTask = await guildServers.getLatestTask(server.id)
+      if (latestTask && latestTask.status) {
+        // 生成一个临时 taskId 用于显示
+        const tempTaskId = 'latest_' + server.id
+        progressDialog.taskId = tempTaskId
+        progressTasksMap.set(tempTaskId, {
+          ...latestTask,
+          taskId: tempTaskId,
+          // 计算 maxRequests 和 maxMembers（从已请求数推算）
+          maxRequests: latestTask.requestsSent || 1000,
+          maxMembers: latestTask.membersUnique || 0
+        })
+      } else {
+        // 没有历史记录，显示空状态
+        progressTasksMap.set('empty_' + server.id, {
+          status: 'NO_DATA',
+          progressMessage: '暂无采集记录',
+          requestsSent: 0,
+          membersUnique: 0,
+          prefixesDone: 0,
+          prefixesTotal: 0
+        })
+        progressDialog.taskId = 'empty_' + server.id
+      }
+    } catch (e) {
+      console.error('获取最近采集记录失败:', e)
     }
   }
 }
@@ -769,6 +921,7 @@ function startTaskPolling(taskId, serverId) {
             stopMemberAutoRefresh()
             await loadMemberPage()
           }
+          // 采集完成/失败时不自动关闭对话框，保留结果供查看
           if (task.status === 'COMPLETED' || task.status === 'DONE') {
             ElMessage.success('数据采集已完成')
           } else if (task.status === 'FAILED' || task.status === 'ERROR') {
@@ -1209,6 +1362,87 @@ onUnmounted(() => {
   background: linear-gradient(135deg, rgba(245,108,108,0.15), rgba(245,108,108,0.05));
   color: #f56c6c;
   border: 1px solid rgba(245,108,108,0.2);
+}
+
+/* ========== 采集结果详情 ========== */
+.progress-result-section {
+  margin-top: 8px;
+}
+
+.result-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--color-bg-2);
+  border-radius: 10px;
+  margin-bottom: 14px;
+  border: 1px solid var(--color-border);
+}
+
+.result-icon {
+  font-size: 32px;
+}
+
+.result-icon.completed { color: #67c23a; }
+.result-icon.failed { color: #f56c6c; }
+.result-icon.running { color: #409eff; }
+.result-icon.pending { color: #e6a23c; }
+
+.result-title {
+  display: flex;
+  flex-direction: column;
+}
+
+.result-status-text {
+  font-size: 18px;
+  font-weight: 600;
+}
+.result-status-text.completed { color: #67c23a; }
+.result-status-text.failed { color: #f56c6c; }
+.result-status-text.running { color: #409eff; }
+.result-status-text.pending { color: #e6a23c; }
+
+.result-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.result-item {
+  padding: 10px 12px;
+  background: var(--color-bg-2);
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+}
+
+.result-label {
+  font-size: 11px;
+  color: var(--color-text-2);
+  margin-bottom: 4px;
+}
+
+.result-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.result-sub {
+  font-size: 11px;
+  color: var(--color-text-3);
+  margin-top: 3px;
+}
+
+.result-failure {
+  margin-bottom: 14px;
+}
+
+.result-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
 }
 
 @keyframes spin {

@@ -408,3 +408,34 @@ export function getLatestServerTask(serverId) {
 export function getGuildMerchantConfig() {
   return http.get('/guild-servers/merchant-config')
 }
+
+// === 账号编号管理 ===
+export function listAccountNumbers(params = {}) {
+  return http.get('/account-numbers', { params })
+}
+export function batchCreateAccountNumbers(accounts) {
+  return http.post('/account-numbers/batch', { accounts })
+}
+export function bindAccountNumber(id, data) {
+  return http.put(`/account-numbers/${id}/bind`, data)
+}
+export function getAccountNumberHistory(id) {
+  return http.get(`/account-numbers/${id}/history`)
+}
+export function listUnboundAccounts(keyword) {
+  return http.get('/account-numbers/unbound-accounts', { params: { keyword } })
+}
+export function getAccountNumber(id) {
+  return http.get(`/account-numbers/${id}`)
+}
+
+// === 用户-账号编号关联 ===
+export function getUserAccountNumbers(userId) {
+  return http.get(`/users/${userId}/account-numbers`)
+}
+export function batchLinkAccountNumbers(userId, range) {
+  return http.post(`/users/${userId}/account-numbers`, { range })
+}
+export function unlinkAccountNumber(userId, accountNumberId) {
+  return http.delete(`/users/${userId}/account-numbers/${accountNumberId}`)
+}
