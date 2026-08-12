@@ -93,9 +93,10 @@ public class DiscordAccountNumberService {
     /** 批量创建账号编号 */
     @Transactional
     public List<DiscordAccountNumber> batchCreate(List<String> accounts) {
-        Agent currentUser = agentRepository.findById(SecurityUtils.currentUserId())
-                .orElseThrow(() -> new IllegalArgumentException("当前用户不存在"));
-        String creatorName = currentUser.getDisplayName() != null ? currentUser.getDisplayName() : currentUser.getUsername();
+        Long agentId = SecurityUtils.currentAgentId();
+        Agent currentUser = agentId != null ? agentRepository.findById(agentId)
+                .orElseThrow(() -> new IllegalArgumentException("当前用户不存在")) : null;
+        String creatorName = currentUser != null && currentUser.getDisplayName() != null ? currentUser.getDisplayName() : (currentUser != null ? currentUser.getUsername() : "系统");
 
         List<DiscordAccountNumber> numbers = new ArrayList<>();
         for (String account : accounts) {
@@ -103,7 +104,7 @@ public class DiscordAccountNumberService {
             if (!account.isEmpty()) {
                 DiscordAccountNumber num = new DiscordAccountNumber();
                 num.setBoundAccount(account);
-                num.setCreatorId(currentUser.getId());
+                num.setCreatorId(currentUser != null ? currentUser.getId() : null);
                 num.setCreatorName(creatorName);
                 numbers.add(num);
             }
@@ -118,9 +119,10 @@ public class DiscordAccountNumberService {
                 .orElseThrow(() -> new IllegalArgumentException("账号编号不存在"));
 
         String oldAccount = num.getBoundAccount();
-        Agent currentUser = agentRepository.findById(SecurityUtils.currentUserId())
-                .orElseThrow(() -> new IllegalArgumentException("当前用户不存在"));
-        String operatorName = currentUser.getDisplayName() != null ? currentUser.getDisplayName() : currentUser.getUsername();
+        Long agentId = SecurityUtils.currentAgentId();
+        Agent currentUser = agentId != null ? agentRepository.findById(agentId)
+                .orElseThrow(() -> new IllegalArgumentException("当前用户不存在")) : null;
+        String operatorName = currentUser != null && currentUser.getDisplayName() != null ? currentUser.getDisplayName() : (currentUser != null ? currentUser.getUsername() : "系统");
 
         num.setBoundAccount(newAccount);
         num.setDiscordAccountId(discordAccountId);
@@ -133,7 +135,7 @@ public class DiscordAccountNumberService {
         history.setOldAccount(oldAccount);
         history.setNewAccount(newAccount);
         history.setChangeReason(changeReason);
-        history.setOperatorId(currentUser.getId());
+        history.setOperatorId(currentUser != null ? currentUser.getId() : null);
         history.setOperatorName(operatorName);
         history.setChangedAt(Instant.now());
         bindingHistoryRepository.save(history);
@@ -146,7 +148,7 @@ public class DiscordAccountNumberService {
         return bindingHistoryRepository.findByAccountNumberIdOrderByChangedAtDesc(accountNumberId);
     }
 
-    /** 查询未绑定的账号列表（用于绑定时的下拉选择） */
+    /** 查询未绑定的账号列表（用于绑定时的下拉选择）- 只显示当前商户下的未绑定账号 */
     public List<Map<String, Object>> listUnboundAccounts(String keyword) {
         // 找出已被绑定的 discordAccountId
         List<DiscordAccountNumber> boundNumbers = accountNumberRepository.findAll();
@@ -155,8 +157,21 @@ public class DiscordAccountNumberService {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
 
-        List<DiscordAccount> allAccounts = accountRepository.findAll();
-        return allAccounts.stream()
+        // 获取当前用户的商户ID
+        Long merchantId = SecurityUtils.currentMerchantId();
+        boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
+
+        // 查询账号：只显示当前商户下的账号（商户管理员）或所有账号（平台管理员）
+        List<DiscordAccount> accounts;
+        if (isPlatformAdmin) {
+            accounts = accountRepository.findAll();
+        } else if (merchantId != null) {
+            accounts = accountRepository.findByMerchantIdOrNull(merchantId);
+        } else {
+            accounts = accountRepository.findByMerchantIdIsNull();
+        }
+
+        return accounts.stream()
                 .filter(a -> !boundAccountIds.contains(a.getId()))
                 .filter(a -> keyword == null || keyword.trim().isEmpty() ||
                         a.getName().toLowerCase().contains(keyword.toLowerCase()) ||

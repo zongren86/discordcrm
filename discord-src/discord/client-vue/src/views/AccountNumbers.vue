@@ -193,7 +193,7 @@ import {
   bindAccountNumber,
   getAccountNumberHistory,
   listUnboundAccounts
-} from '../api/index.js'
+} from '@/api'
 
 const loading = ref(false)
 const tableData = ref([])
