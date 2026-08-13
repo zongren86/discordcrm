@@ -25,11 +25,11 @@
       >
         <el-table-column fixed="left" label="操作" width="220">
           <template #default="{ row }">
-            <span class="op-links">
+            <div class="action-cell">
               <el-button size="small" type="primary" link @click="openDialog(null, row)">新增子项</el-button>
-              <el-button size="small" type="warning" link @click="openDialog(row, null)">编辑</el-button>
-              <el-button size="small" type="danger" link @click="handleDelete(row)">删除</el-button>
-            </span>
+              <el-button size="small" type="primary" link @click="openDialog(row, null)">编辑</el-button>
+              <el-button size="small" type="primary" link @click="handleDelete(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="name" label="功能名称" min-width="180" />
@@ -194,4 +194,5 @@ onMounted(fetchList)
 .cell-mono { font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--color-text-2); }
 .cell-hint { font-size:12px; color:var(--color-text-3); }
 .op-links { display:flex; gap:4px; white-space:nowrap; }
+.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

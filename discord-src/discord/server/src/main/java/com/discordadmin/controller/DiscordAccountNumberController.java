@@ -74,4 +74,19 @@ public class DiscordAccountNumberController {
     public DiscordAccountNumber findById(@PathVariable Long id) {
         return accountNumberService.findById(id);
     }
+
+    /** 解绑账号（清除绑定） */
+    @PutMapping("/{id}/unbind")
+    public DiscordAccountNumber unbindAccount(@PathVariable Long id) {
+        return accountNumberService.unbindAccount(id);
+    }
+
+    /** 删除账号编号 */
+    @DeleteMapping("/{id}")
+    public Map<String, Object> deleteAccountNumber(@PathVariable Long id) {
+        accountNumberService.deleteAccountNumber(id);
+        Map<String, Object> result = new java.util.HashMap<>();
+        result.put("success", true);
+        return result;
+    }
 }

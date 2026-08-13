@@ -26,6 +26,49 @@ public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, 
 
     List<DiscordAccount> findByMerchantIdIsNullAndStatus(DiscordAccount.AccountStatus status);
 
+    /** 带 JOIN FETCH agents 的查询 - 用于列表展示 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE " +
+           "(a.merchantId = :merchantId OR a.merchantId IS NULL) AND " +
+           "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.email) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.remark) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(a.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    List<DiscordAccount> searchWithAgentsByMerchantOrNullAndKeyword(@Param("merchantId") Long merchantId,
+                                                                   @Param("keyword") String keyword);
+
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE " +
+           "(a.merchantId = :merchantId OR a.merchantId IS NULL) AND a.status = :status AND " +
+           "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.email) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.remark) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(a.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    List<DiscordAccount> searchWithAgentsByMerchantOrNullAndKeywordAndStatus(@Param("merchantId") Long merchantId,
+                                                                             @Param("keyword") String keyword,
+                                                                             @Param("status") DiscordAccount.AccountStatus status);
+
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId = :merchantId OR a.merchantId IS NULL")
+    List<DiscordAccount> findWithAgentsByMerchantIdOrNull(@Param("merchantId") Long merchantId);
+
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE " +
+           "(a.merchantId = :merchantId OR a.merchantId IS NULL) AND a.status = :status")
+    List<DiscordAccount> findWithAgentsByMerchantIdOrNullAndStatus(@Param("merchantId") Long merchantId,
+                                                                    @Param("status") DiscordAccount.AccountStatus status);
+
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE " +
+           "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.email) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.remark) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(a.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    List<DiscordAccount> searchWithAgentsAllByKeyword(@Param("keyword") String keyword);
+
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.status = :status AND " +
+           "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.email) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.remark) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(a.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    List<DiscordAccount> searchWithAgentsAllByKeywordAndStatus(@Param("keyword") String keyword,
+                                                               @Param("status") DiscordAccount.AccountStatus status);
+
     @Query("SELECT a FROM DiscordAccount a WHERE " +
            "(a.merchantId = :merchantId OR a.merchantId IS NULL) AND " +
            "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
@@ -70,6 +113,14 @@ public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, 
 
     @Query("SELECT a FROM DiscordAccount a WHERE a.status = :status")
     List<DiscordAccount> findAllByStatus(@Param("status") DiscordAccount.AccountStatus status);
+
+    /** 带 JOIN FETCH agents 的查询 - 平台管理员无筛选查询 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents")
+    List<DiscordAccount> findAllWithAgents();
+
+    /** 带 JOIN FETCH agents 的查询 - 平台管理员按状态查询 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.status = :status")
+    List<DiscordAccount> findWithAgentsByStatus(@Param("status") DiscordAccount.AccountStatus status);
 
     /** 批量获取账号，避免 N+1 查询 */
     List<DiscordAccount> findByIdIn(List<Long> ids);

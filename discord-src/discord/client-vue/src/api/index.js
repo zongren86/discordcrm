@@ -428,6 +428,12 @@ export function listUnboundAccounts(keyword) {
 export function getAccountNumber(id) {
   return http.get(`/account-numbers/${id}`)
 }
+export function unbindAccountNumber(id) {
+  return http.put(`/account-numbers/${id}/unbind`)
+}
+export function deleteAccountNumber(id) {
+  return http.delete(`/account-numbers/${id}`)
+}
 
 // === 用户-账号编号关联 ===
 export function getUserAccountNumbers(userId) {

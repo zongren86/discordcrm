@@ -7,7 +7,9 @@ import lombok.Setter;
 import java.time.Instant;
 
 @Entity
-@Table(name = "merchants")
+@Table(name = "merchants", indexes = {
+        @Index(name = "idx_merchant_status", columnList = "status")
+})
 @Getter
 @Setter
 public class Merchant {

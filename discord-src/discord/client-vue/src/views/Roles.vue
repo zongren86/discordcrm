@@ -55,20 +55,22 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="openEdit(row)">
-              <el-icon><Edit /></el-icon> 编辑
-            </el-button>
-            <el-button v-if="row.roleType !== 'PLATFORM'" size="small" type="success" link @click="openMerchants(row)">
-              <el-icon><OfficeBuilding /></el-icon> 适用商户
-            </el-button>
-            <el-button size="small" type="warning" link @click="openPerm(row)">
-              <el-icon><Lock /></el-icon> 分配权限
-            </el-button>
-            <el-button size="small" type="danger" link :disabled="row.builtin" @click="remove(row)">
-              <el-icon><Delete /></el-icon> 删除
-            </el-button>
+            <div class="action-cell">
+              <el-button size="small" type="primary" link @click="openEdit(row)">
+                <el-icon><Edit /></el-icon> 编辑
+              </el-button>
+              <el-button v-if="row.roleType !== 'PLATFORM'" size="small" type="primary" link @click="openMerchants(row)">
+                <el-icon><OfficeBuilding /></el-icon> 适用商户
+              </el-button>
+              <el-button size="small" type="primary" link @click="openPerm(row)">
+                <el-icon><Lock /></el-icon> 分配权限
+              </el-button>
+              <el-button size="small" type="primary" link :disabled="row.builtin" @click="remove(row)">
+                <el-icon><Delete /></el-icon> 删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -481,4 +483,5 @@ onMounted(() => { fetchList(); fetchCatalog(); fetchMerchants() })
 .merchant-name { font-weight: 600; color: var(--color-text); }
 .add-merchant-section { border-top: 1px solid var(--color-border); padding-top: 16px; }
 .add-merchant-row { display: flex; gap: 10px; }
+.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

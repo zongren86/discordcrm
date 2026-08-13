@@ -38,12 +38,14 @@
             </el-table-column>
             <el-table-column label="操作" width="180" fixed="right">
               <template #default="{ row }">
-                <el-button size="small" type="primary" link @click="openEdit(row)">
-                  <el-icon><Edit /></el-icon> 编辑
-                </el-button>
-                <el-button size="small" type="danger" link @click="remove(row)">
-                  <el-icon><Delete /></el-icon> 删除
-                </el-button>
+                <div class="action-cell">
+                  <el-button size="small" type="primary" link @click="openEdit(row)">
+                    <el-icon><Edit /></el-icon> 编辑
+                  </el-button>
+                  <el-button size="small" type="primary" link @click="remove(row)">
+                    <el-icon><Delete /></el-icon> 删除
+                  </el-button>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -250,4 +252,5 @@ onMounted(() => { fetchList(); fetchNotif() })
 .cell-strong { font-weight:600; color:var(--color-text); }
 .cell-mono { font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--color-text-2); }
 .notif-toolbar { display:flex; gap:10px; margin-bottom:12px; }
+.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

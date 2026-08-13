@@ -7,7 +7,11 @@ import lombok.Setter;
 import java.time.Instant;
 
 @Entity
-@Table(name = "fetch_progress")
+@Table(name = "fetch_progress", indexes = {
+        @Index(name = "idx_fp_guild_server_id", columnList = "guild_server_id"),
+        @Index(name = "idx_fp_status", columnList = "status"),
+        @Index(name = "idx_fp_guild_server_status", columnList = "guild_server_id, status")
+})
 @Getter
 @Setter
 public class FetchProgress {

@@ -9,7 +9,11 @@ import java.util.HashSet;
 import java.util.Set;
 
 @Entity
-@Table(name = "agents")
+@Table(name = "agents", indexes = {
+        @Index(name = "idx_agent_merchant_id", columnList = "merchant_id"),
+        @Index(name = "idx_agent_role", columnList = "role"),
+        @Index(name = "idx_agent_merchant_enabled", columnList = "merchant_id, enabled")
+})
 @Getter
 @Setter
 public class Agent {

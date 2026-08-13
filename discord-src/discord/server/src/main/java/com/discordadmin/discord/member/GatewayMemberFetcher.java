@@ -166,6 +166,10 @@ public class GatewayMemberFetcher {
         requestsSent.set(0);
         prefixesDone = 0;
         prefixesTotal = 0;
+        lastRespondedCount.set(0);
+        lastDedupedCount.set(0);
+        lastRequestTimeMs.set(0);
+        fetchStartTimeMs.set(System.currentTimeMillis());
 
         // 计算总页数（预估：假设每1000成员一页）
         // 使用 maxMembersRef / 1000 作为预估页数，最少1页
@@ -289,6 +293,10 @@ public class GatewayMemberFetcher {
                 totalRespondedAll.addAndGet(respondedCount);
                 totalResponseTimeMs.addAndGet(requestTime);
 
+                // 本次请求统计
+                lastRespondedCount.set(respondedCount);
+                lastRequestTimeMs.set(requestTime);
+
                 if (respondedCount == 0) {
                     log.info("前缀 '{}' 响应为空或超时, 耗时={}ms", prefix, requestTime);
                     timeoutCount = 0;
@@ -299,6 +307,7 @@ public class GatewayMemberFetcher {
                 visitedPrefixes.add(prefix);
                 prefixesDone++;
                 int newMemberCount = members.size() - beforeSize;
+                lastDedupedCount.set(newMemberCount);
                 log.info("前缀 '{}' 完成: 响应{}条, 去重后新增{}条, 耗时={}ms, 总计{} ({}/{})", 
                         prefix, respondedCount, newMemberCount, requestTime, members.size(), prefixesDone, prefixesTotal);
 
@@ -489,6 +498,12 @@ public class GatewayMemberFetcher {
     private final AtomicInteger totalRespondedAll = new AtomicInteger(0);  // 累计响应成员数
     private final AtomicLong totalResponseTimeMs = new AtomicLong(0);     // 累计响应时间(ms)
 
+    // 本次请求统计（用于实时展示）
+    private final AtomicInteger lastRespondedCount = new AtomicInteger(0);   // 本次响应数
+    private final AtomicInteger lastDedupedCount = new AtomicInteger(0);     // 本次去重数
+    private final AtomicLong lastRequestTimeMs = new AtomicLong(0);          // 本次耗时(ms)
+    private final AtomicLong fetchStartTimeMs = new AtomicLong(0);            // 采集开始时间
+
     private void emitProgress(String stage, String prefix) {
         if (progress == null) return;
         try {
@@ -502,6 +517,12 @@ public class GatewayMemberFetcher {
             info.put("x", reconnects.get());           // reconnects
             info.put("rm", totalRespondedAll.get());   // respondedMembers (响应总数)
             info.put("rt", totalResponseTimeMs.get()); // responseTimeMs (累计响应时间)
+            // 本次请求统计
+            info.put("lr", lastRespondedCount.get());  // 本次响应数
+            info.put("ld", lastDedupedCount.get());    // 本次去重数
+            info.put("lrt", lastRequestTimeMs.get()); // 本次耗时(ms)
+            long elapsed = fetchStartTimeMs.get() > 0 ? (System.currentTimeMillis() - fetchStartTimeMs.get()) : 0;
+            info.put("elapsed", elapsed);              // 总耗时(ms)
             progress.onProgress(info);
         } catch (Exception ignore) {
         }

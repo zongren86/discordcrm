@@ -4,8 +4,10 @@ import com.discordadmin.discord.DiscordBotManager;
 import com.discordadmin.discord.DiscordUserClient;
 import com.discordadmin.dto.DiscordAccountDtos.*;
 import com.discordadmin.entity.Agent;
+import com.discordadmin.entity.AgentAccountNumberRel;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.GuildServer;
+import com.discordadmin.repository.AgentAccountNumberRelRepository;
 import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.ConversationRepository;
 import com.discordadmin.repository.DiscordAccountNumberRepository;
@@ -28,6 +30,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class DiscordAccountService {
@@ -46,6 +49,7 @@ public class DiscordAccountService {
     private final GuildMemberRepository guildMemberRepository;
     private final FetchProgressRepository fetchProgressRepository;
     private final DiscordAccountNumberRepository accountNumberRepository;
+    private final AgentAccountNumberRelRepository relRepository;
 
     public DiscordAccountService(DiscordAccountRepository accountRepository,
                                  DiscordBotManager botManager,
@@ -58,7 +62,8 @@ public class DiscordAccountService {
                                  GuildServerRepository guildServerRepository,
                                  GuildMemberRepository guildMemberRepository,
                                  FetchProgressRepository fetchProgressRepository,
-                                 DiscordAccountNumberRepository accountNumberRepository) {
+                                 DiscordAccountNumberRepository accountNumberRepository,
+                                 AgentAccountNumberRelRepository relRepository) {
         this.accountRepository = accountRepository;
         this.botManager = botManager;
         this.userClient = userClient;
@@ -71,6 +76,7 @@ public class DiscordAccountService {
         this.guildMemberRepository = guildMemberRepository;
         this.fetchProgressRepository = fetchProgressRepository;
         this.accountNumberRepository = accountNumberRepository;
+        this.relRepository = relRepository;
     }
 
     public List<AccountDto> listAccounts(String keyword, String status) {
@@ -133,33 +139,33 @@ public class DiscordAccountService {
 
         if (isPlatformAdmin) {
             if (hasKeyword && hasStatus) {
-                return accountRepository.searchAllByKeywordAndStatus(
+                return accountRepository.searchWithAgentsAllByKeywordAndStatus(
                         keyword.trim(), DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
             }
             if (hasKeyword) {
-                return accountRepository.searchAllByKeyword(keyword.trim());
+                return accountRepository.searchWithAgentsAllByKeyword(keyword.trim());
             }
             if (hasStatus) {
-                return accountRepository.findAllByStatus(
+                return accountRepository.findWithAgentsByStatus(
                         DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
             }
-            return accountRepository.findAll();
+            return accountRepository.findAllWithAgents();
         }
 
         // Non-platform admin: see own merchant's accounts + null merchantId accounts
         if (hasKeyword && hasStatus) {
-            return accountRepository.searchByMerchantOrNullAndKeywordAndStatus(
+            return accountRepository.searchWithAgentsByMerchantOrNullAndKeywordAndStatus(
                     merchantId, keyword.trim(),
                     DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
         }
         if (hasKeyword) {
-            return accountRepository.searchByMerchantOrNullAndKeyword(merchantId, keyword.trim());
+            return accountRepository.searchWithAgentsByMerchantOrNullAndKeyword(merchantId, keyword.trim());
         }
         if (hasStatus) {
-            return accountRepository.findByMerchantIdOrNullAndStatus(
+            return accountRepository.findWithAgentsByMerchantIdOrNullAndStatus(
                     merchantId, DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
         }
-        return accountRepository.findByMerchantIdOrNull(merchantId);
+        return accountRepository.findWithAgentsByMerchantIdOrNull(merchantId);
     }
 
     private AccountDto buildAccountDto(DiscordAccount a, boolean tokenValid) {
@@ -169,6 +175,8 @@ public class DiscordAccountService {
         String agentName = null;
         String agentUsername = null;
         Long agentId = null;
+
+        // 1. 优先通过直接关联（agent_discord_accounts）查找
         if (a.getAgents() != null && !a.getAgents().isEmpty()) {
             Agent agent = null;
             Long curAgentId = SecurityUtils.currentAgentId();
@@ -181,6 +189,39 @@ public class DiscordAccountService {
             agentName = agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername();
             agentUsername = agent.getUsername();
             agentId = agent.getId();
+        }
+
+        // 2. 若直接关联为空，通过编号链路（AgentAccountNumberRel → DiscordAccountNumber）查找
+        if (agentName == null) {
+            List<com.discordadmin.entity.DiscordAccountNumber> numbers = accountNumberRepository.findByDiscordAccountId(a.getId());
+            if (!numbers.isEmpty()) {
+                List<Long> numberIds = numbers.stream()
+                        .map(com.discordadmin.entity.DiscordAccountNumber::getId)
+                        .toList();
+                List<AgentAccountNumberRel> rels = relRepository.findByAccountNumberIdIn(numberIds);
+                if (!rels.isEmpty()) {
+                    List<Long> agentIds = rels.stream()
+                            .map(AgentAccountNumberRel::getAgentId)
+                            .distinct()
+                            .toList();
+                    Map<Long, Agent> agentMap = agentRepository.findAllById(agentIds).stream()
+                            .collect(Collectors.toMap(Agent::getId, ag -> ag));
+                    // 优先选择当前用户
+                    Agent matchedAgent = null;
+                    Long curAgentId = SecurityUtils.currentAgentId();
+                    if (curAgentId != null && agentMap.containsKey(curAgentId)) {
+                        matchedAgent = agentMap.get(curAgentId);
+                    }
+                    if (matchedAgent == null && !agentMap.isEmpty()) {
+                        matchedAgent = agentMap.values().iterator().next();
+                    }
+                    if (matchedAgent != null) {
+                        agentName = matchedAgent.getDisplayName() != null ? matchedAgent.getDisplayName() : matchedAgent.getUsername();
+                        agentUsername = matchedAgent.getUsername();
+                        agentId = matchedAgent.getId();
+                    }
+                }
+            }
         }
         
         // 查询账号关联的编号

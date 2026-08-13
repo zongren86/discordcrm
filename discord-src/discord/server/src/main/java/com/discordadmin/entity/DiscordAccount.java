@@ -10,7 +10,12 @@ import java.util.HashSet;
 import java.util.Set;
 
 @Entity
-@Table(name = "discord_accounts")
+@Table(name = "discord_accounts", indexes = {
+        @Index(name = "idx_merchant_id", columnList = "merchant_id"),
+        @Index(name = "idx_status", columnList = "status"),
+        @Index(name = "idx_merchant_status", columnList = "merchant_id, status"),
+        @Index(name = "idx_account_type", columnList = "account_type")
+})
 @Getter
 @Setter
 public class DiscordAccount {

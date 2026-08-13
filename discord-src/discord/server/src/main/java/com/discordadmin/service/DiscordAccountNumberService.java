@@ -192,4 +192,43 @@ public class DiscordAccountNumberService {
         return accountNumberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("账号编号不存在"));
     }
+
+    /** 解绑账号（清除绑定的DiscordAccount，保留编号记录） */
+    @Transactional
+    public DiscordAccountNumber unbindAccount(Long id) {
+        DiscordAccountNumber num = accountNumberRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("账号编号不存在"));
+        
+        String oldAccount = num.getBoundAccount();
+        Long agentId = SecurityUtils.currentAgentId();
+        Agent currentUser = agentId != null ? agentRepository.findById(agentId)
+                .orElseThrow(() -> new IllegalArgumentException("当前用户不存在")) : null;
+        String operatorName = currentUser != null && currentUser.getDisplayName() != null ? currentUser.getDisplayName() : (currentUser != null ? currentUser.getUsername() : "系统");
+
+        num.setDiscordAccountId(null);
+        num.setBoundAccount(null);
+        num.setUpdatedAt(Instant.now());
+        DiscordAccountNumber saved = accountNumberRepository.save(num);
+
+        // 记录解绑历史
+        AccountBindingHistory history = new AccountBindingHistory();
+        history.setAccountNumberId(id);
+        history.setOldAccount(oldAccount);
+        history.setNewAccount(null);
+        history.setChangeReason("解绑账号");
+        history.setOperatorId(currentUser != null ? currentUser.getId() : null);
+        history.setOperatorName(operatorName);
+        history.setChangedAt(Instant.now());
+        bindingHistoryRepository.save(history);
+
+        return saved;
+    }
+
+    /** 删除账号编号 */
+    @Transactional
+    public void deleteAccountNumber(Long id) {
+        DiscordAccountNumber num = accountNumberRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("账号编号不存在"));
+        accountNumberRepository.delete(num);
+    }
 }

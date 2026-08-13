@@ -134,20 +134,22 @@
           <template #default="{ row }">{{ row.remark || '-' }}</template>
         </el-table-column>
 
-        <el-table-column label="操作" width="320" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="openRefreshToken(row)">
-              <el-icon><Key /></el-icon> 更新Token
-            </el-button>
-            <el-button v-if="row.accountType === 'USER'" size="small" link type="warning" @click="syncAccount(row)">
-              <el-icon><Refresh /></el-icon> 同步
-            </el-button>
-            <el-button size="small" link type="warning" @click="openEdit(row)">
-              <el-icon><Edit /></el-icon> 编辑
-            </el-button>
-            <el-button size="small" link type="danger" @click="removeAccount(row)">
-              <el-icon><Delete /></el-icon> 删除
-            </el-button>
+            <div class="action-cell">
+              <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="openRefreshToken(row)">
+                <el-icon><Key /></el-icon> 更新Token
+              </el-button>
+              <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="syncAccount(row)">
+                <el-icon><Refresh /></el-icon> 同步
+              </el-button>
+              <el-button size="small" type="primary" link @click="openEdit(row)">
+                <el-icon><Edit /></el-icon> 编辑
+              </el-button>
+              <el-button size="small" type="primary" link @click="removeAccount(row)">
+                <el-icon><Delete /></el-icon> 删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -664,4 +666,5 @@ watch(() => filters.keyword, () => {
 .status-text.expired { color: var(--color-yellow); }
 .merchant-cell { font-size: 13px; color: var(--color-text); display: inline-flex; align-items: center; }
 .cell-hint { font-size: 12px; color: var(--color-text-3); }
+.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

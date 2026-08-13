@@ -53,23 +53,25 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="400" fixed="right">
+        <el-table-column label="操作" width="380" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="openEdit(row)">
-              <el-icon><Edit /></el-icon> 编辑
-            </el-button>
-            <el-button size="small" type="success" link @click="openAssignRoles(row)">
-              <el-icon><User /></el-icon> 分配角色
-            </el-button>
-            <el-button size="small" type="info" link @click="openAccountNumbers(row)">
-              <el-icon><Link /></el-icon> 账号编号
-            </el-button>
-            <el-button size="small" type="warning" link @click="openResetPwd(row)">
-              <el-icon><Key /></el-icon> 重置密码
-            </el-button>
-            <el-button size="small" type="danger" link :disabled="row.username === 'admin'" @click="remove(row)">
-              <el-icon><Delete /></el-icon> 删除
-            </el-button>
+            <div class="action-cell">
+              <el-button size="small" type="primary" link @click="openEdit(row)">
+                <el-icon><Edit /></el-icon> 编辑
+              </el-button>
+              <el-button size="small" type="primary" link @click="openAssignRoles(row)">
+                <el-icon><User /></el-icon> 分配角色
+              </el-button>
+              <el-button size="small" type="primary" link @click="openAccountNumbers(row)">
+                <el-icon><Link /></el-icon> 关联账号
+              </el-button>
+              <el-button size="small" type="primary" link @click="openResetPwd(row)">
+                <el-icon><Key /></el-icon> 重置密码
+              </el-button>
+              <el-button size="small" type="primary" link :disabled="row.username === 'admin'" @click="remove(row)">
+                <el-icon><Delete /></el-icon> 删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -614,7 +616,7 @@ async function handleLinkNumbers() {
 async function handleUnlinkNumber(row) {
   try {
     await ElMessageBox.confirm('确定要删除此关联吗？', '提示', { type: 'warning' })
-    await unlinkAccountNumber(accountNumbersDialog.userId, row.relId)
+    await unlinkAccountNumber(accountNumbersDialog.userId, row.accountNumberId)
     ElMessage.success('删除成功')
     await fetchAccountNumbers(accountNumbersDialog.userId)
   } catch (e) {
@@ -788,5 +790,13 @@ onMounted(() => {
   border-radius: 4px;
   font-size: 12px;
   margin: 0 4px;
+}
+
+.action-cell {
+  display: flex;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  align-items: center;
+  gap: 0;
 }
 </style>

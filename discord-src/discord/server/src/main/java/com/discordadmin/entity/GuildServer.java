@@ -7,7 +7,12 @@ import lombok.Setter;
 import java.time.Instant;
 
 @Entity
-@Table(name = "guild_servers")
+@Table(name = "guild_servers", indexes = {
+        @Index(name = "idx_guild_merchant_id", columnList = "merchant_id"),
+        @Index(name = "idx_guild_discord_account_id", columnList = "discord_account_id"),
+        @Index(name = "idx_guild_status", columnList = "status"),
+        @Index(name = "idx_guild_merchant_status", columnList = "merchant_id, status")
+})
 @Getter
 @Setter
 public class GuildServer {

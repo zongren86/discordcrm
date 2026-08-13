@@ -153,6 +153,16 @@ public class DiscordMemberService {
         public String lastPrefix = "";
         /** 失败/中断原因 */
         public String failureReason = "";
+        
+        // 本次请求统计（用于实时展示）
+        /** 本次响应数 */
+        public int lastResponded = 0;
+        /** 本次去重数 */
+        public int lastDeduped = 0;
+        /** 本次耗时(ms) */
+        public long lastRequestTimeMs = 0;
+        /** 总耗时(ms) */
+        public long elapsedMs = 0;
     }
 
     /**
@@ -269,6 +279,12 @@ public class DiscordMemberService {
                 t.reconnects = safeInt(info, "x");
                 int respondedMembers = safeInt(info, "rm");
                 long responseTimeMs = safeLong(info, "rt");
+
+                // 本次请求统计
+                t.lastResponded = safeInt(info, "lr");
+                t.lastDeduped = safeInt(info, "ld");
+                t.lastRequestTimeMs = safeLong(info, "lrt");
+                t.elapsedMs = safeLong(info, "elapsed");
                 
                 // 更新详细统计
                 t.totalRespondedMembers = respondedMembers;
@@ -282,17 +298,26 @@ public class DiscordMemberService {
                     t.serverName = (String) info.get("s");
                 }
 
-                String msg = (String) info.get("msg");
+                // 构建进度消息
                 StringBuilder progressMsg = new StringBuilder();
                 progressMsg.append("[").append(stage).append("] ");
-                if (msg != null) progressMsg.append(msg);
-                progressMsg.append(" | ").append(t.currentPrefix);
-                progressMsg.append(" ").append(t.requestsSent).append("请求");
-                progressMsg.append(" 响应").append(respondedMembers).append("条");
-                progressMsg.append(" 去重").append(t.membersUnique).append("条");
-                progressMsg.append(" ").append(t.prefixesDone).append("/").append(t.prefixesTotal);
-                progressMsg.append(" 耗时").append(responseTimeMs / 1000.0).append("s");
-                progressMsg.append(" ").append(t.reconnects).append("重连");
+                if ("fetching".equals(stage)) {
+                    // fetching 阶段：请求批次 前缀 本次响应数量 本次去重数
+                    progressMsg.append(t.requestsSent).append(" ");
+                    progressMsg.append(t.currentPrefix != null ? t.currentPrefix : "-").append(" ");
+                    progressMsg.append(t.lastResponded).append(" ");
+                    progressMsg.append(t.lastDeduped);
+                } else {
+                    String msg = (String) info.get("msg");
+                    if (msg != null) progressMsg.append(msg);
+                    progressMsg.append(" | ").append(t.currentPrefix);
+                    progressMsg.append(" ").append(t.requestsSent).append("请求");
+                    progressMsg.append(" 响应").append(respondedMembers).append("条");
+                    progressMsg.append(" 去重").append(t.membersUnique).append("条");
+                    progressMsg.append(" ").append(t.prefixesDone).append("/").append(t.prefixesTotal);
+                    progressMsg.append(" 耗时").append(responseTimeMs / 1000.0).append("s");
+                    progressMsg.append(" ").append(t.reconnects).append("重连");
+                }
                 t.progressMessage = progressMsg.toString();
 
                 // 节流保存：每 5 次上报保存一次，或在关键节点保存
@@ -775,6 +800,13 @@ public class DiscordMemberService {
         st.maxRequests = progress.getMaxRequests() != null ? progress.getMaxRequests() : 1000;
         st.maxMembers = progress.getMaxMembers() != null ? progress.getMaxMembers() : 2000000;
 
+        // 计算总耗时
+        if (st.startedAt != null && st.completedAt != null) {
+            st.elapsedMs = st.completedAt - st.startedAt;
+        } else if (st.startedAt != null) {
+            st.elapsedMs = System.currentTimeMillis() - st.startedAt;
+        }
+
         return st;
     }
 
@@ -788,8 +820,10 @@ public class DiscordMemberService {
         } else {
             sb.append("请求 ").append(progress.getRequestCount() != null ? progress.getRequestCount() : 0);
             sb.append(" 去重 ").append(progress.getRawMemberCount() != null ? progress.getRawMemberCount() : 0);
+            sb.append(" 响应 ").append(progress.getTotalRespondedMembers() != null ? progress.getTotalRespondedMembers() : 0);
             sb.append(" 完成 ").append(progress.getCompletedPages() != null ? progress.getCompletedPages() : 0);
             sb.append("/").append(progress.getTotalPages() != null ? progress.getTotalPages() : 0);
+            sb.append(" 耗时 ").append(progress.getTotalResponseTimeMs() != null ? progress.getTotalResponseTimeMs() / 1000.0 : 0).append("s");
         }
         return sb.toString();
     }

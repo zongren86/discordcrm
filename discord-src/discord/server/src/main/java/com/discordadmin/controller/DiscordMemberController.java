@@ -142,6 +142,17 @@ public class DiscordMemberController {
         r.put("lastBatchId", st.lastBatchId);
         r.put("completedPrefixCount", st.completedPrefixes.size());
         r.put("newlyCompletedCount", st.newlyCompletedPrefixes.size());
+        // 新增统计字段
+        r.put("totalRespondedMembers", st.totalRespondedMembers);
+        r.put("totalResponseTimeMs", st.totalResponseTimeMs);
+        r.put("lastResponded", st.lastResponded);
+        r.put("lastDeduped", st.lastDeduped);
+        r.put("lastRequestTimeMs", st.lastRequestTimeMs);
+        r.put("elapsedMs", st.elapsedMs);
+        r.put("startedAt", st.startedAt);
+        r.put("completedAt", st.completedAt);
+        r.put("lastPrefix", st.lastPrefix);
+        r.put("failureReason", st.failureReason);
         return r;
     }
 
@@ -207,6 +218,11 @@ public class DiscordMemberController {
         r.put("failureReason", st.failureReason);
         r.put("startedAt", st.startedAt);
         r.put("completedAt", st.completedAt);
+        // 新增本次统计字段
+        r.put("lastResponded", st.lastResponded);
+        r.put("lastDeduped", st.lastDeduped);
+        r.put("lastRequestTimeMs", st.lastRequestTimeMs);
+        r.put("elapsedMs", st.elapsedMs);
         return r;
     }
 

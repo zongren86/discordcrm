@@ -17,6 +17,9 @@ public interface AgentAccountNumberRelRepository extends JpaRepository<AgentAcco
     /** 根据编号ID查询所有关联 */
     List<AgentAccountNumberRel> findByAccountNumberId(Long accountNumberId);
 
+    /** 根据编号ID列表批量查询所有关联 */
+    List<AgentAccountNumberRel> findByAccountNumberIdIn(List<Long> accountNumberIds);
+
     /** 根据用户ID和编号ID查询 */
     Optional<AgentAccountNumberRel> findByAgentIdAndAccountNumberId(Long agentId, Long accountNumberId);
 

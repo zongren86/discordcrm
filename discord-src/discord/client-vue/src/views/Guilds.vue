@@ -75,30 +75,32 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="310" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" link type="primary" @click="openMemberDialog(row)">
-              <el-icon><User /></el-icon> 成员明细
-            </el-button>
-            <el-button size="small" link type="primary" @click="openEditDialog(row)">
-              <el-icon><Edit /></el-icon> 编辑
-            </el-button>
-            <el-button 
-              size="small" 
-              link 
-              :type="isServerSyncing(row.id) ? 'warning' : 'success'" 
-              :loading="isServerSyncing(row.id)"
-              @click="isServerSyncing(row.id) ? openProgressDialog(row, getServerTaskId(row.id)) : openSyncDialog(row)"
-            >
-              <el-icon v-if="!isServerSyncing(row.id)"><Download /></el-icon>
-              {{ isServerSyncing(row.id) ? '同步中' : '同步' }}
-            </el-button>
-            <el-button size="small" link @click="openProgressDialog(row)">
-              <el-icon><DataLine /></el-icon> 进度
-            </el-button>
-            <el-button size="small" link type="danger" @click="confirmDelete(row)">
-              <el-icon><Delete /></el-icon>
-            </el-button>
+            <div class="action-cell">
+              <el-button size="small" link type="primary" @click="openMemberDialog(row)">
+                <el-icon><User /></el-icon> 成员明细
+              </el-button>
+              <el-button size="small" link type="primary" @click="openEditDialog(row)">
+                <el-icon><Edit /></el-icon> 编辑
+              </el-button>
+              <el-button 
+                size="small" 
+                link 
+                :type="isServerSyncing(row.id) ? 'primary' : 'primary'" 
+                :loading="isServerSyncing(row.id)"
+                @click="isServerSyncing(row.id) ? openProgressDialog(row, getServerTaskId(row.id)) : openSyncDialog(row)"
+              >
+                <el-icon v-if="!isServerSyncing(row.id)"><Download /></el-icon>
+                {{ isServerSyncing(row.id) ? '同步中' : '同步' }}
+              </el-button>
+              <el-button size="small" link type="primary" @click="openProgressDialog(row)">
+                <el-icon><DataLine /></el-icon> 进度
+              </el-button>
+              <el-button size="small" link type="primary" @click="confirmDelete(row)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
           </template>
         </el-table-column>
 
@@ -195,7 +197,7 @@
     </el-dialog>
 
     <!-- 进度 Dialog -->
-    <el-dialog v-model="progressDialog.visible" title="数据采集进度" width="600px" @close="stopProgressPolling">
+    <el-dialog v-model="progressDialog.visible" title="数据采集进度" width="600px" @close="stopProgressPolling" class="progress-dialog">
       <div v-if="progressDialog.server" class="progress-content">
         <!-- 状态头部 -->
         <div class="progress-header">
@@ -250,6 +252,46 @@
               <div class="stat-label">已采集 / 总采集数</div>
             </div>
           </div>
+
+          <div class="stat-card">
+            <div class="stat-icon dedup-icon">
+              <el-icon><DataLine /></el-icon>
+            </div>
+            <div class="stat-info">
+              <div class="stat-values">
+                <span class="stat-current">{{ currentProgressTask.membersUnique || 0 }}</span>
+                <span class="stat-sep">/</span>
+                <span class="stat-total">{{ currentProgressTask.totalRespondedMembers || 0 }}</span>
+              </div>
+              <div class="stat-label">去重数 / 总响应数</div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon time-icon">
+              <el-icon><Timer /></el-icon>
+            </div>
+            <div class="stat-info">
+              <div class="stat-values">
+                <span class="stat-current">{{ formatMs(currentProgressTask.lastRequestTimeMs || 0) }}</span>
+                <span class="stat-sep">/</span>
+                <span class="stat-total">{{ formatMs(currentProgressTask.totalResponseTimeMs || 0) }}</span>
+              </div>
+              <div class="stat-label">本次耗时 / 总耗时（秒）</div>
+            </div>
+          </div>
+
+          <div class="stat-card">
+            <div class="stat-icon reconnect-icon">
+              <el-icon><Refresh /></el-icon>
+            </div>
+            <div class="stat-info">
+              <div class="stat-values">
+                <span class="stat-current">{{ currentProgressTask.reconnects || 0 }}</span>
+              </div>
+              <div class="stat-label">重连数</div>
+            </div>
+          </div>
         </div>
         <div class="progress-stats-enhanced" v-else>
           <div class="stat-card">
@@ -297,8 +339,8 @@
               <div class="result-sub">完成率: {{ getRequestRate(currentProgressTask) }}%</div>
             </div>
             <div class="result-item">
-              <div class="result-label">响应总量 / 去重量</div>
-              <div class="result-value">{{ currentProgressTask.totalRespondedMembers || 0 }} / {{ currentProgressTask.membersUnique || 0 }}</div>
+              <div class="result-label">去重数 / 总响应数</div>
+              <div class="result-value">{{ currentProgressTask.membersUnique || 0 }} / {{ currentProgressTask.totalRespondedMembers || 0 }}</div>
               <div class="result-sub">去重率: {{ getDedupRate(currentProgressTask) }}%</div>
             </div>
             <div class="result-item">
@@ -307,9 +349,9 @@
               <div class="result-sub">完成率: {{ getCollectRate(currentProgressTask) }}%</div>
             </div>
             <div class="result-item">
-              <div class="result-label">总耗时</div>
-              <div class="result-value">{{ formatElapsedTime(currentProgressTask) }}</div>
-              <div class="result-sub">开始: {{ formatStartTime(currentProgressTask) }}</div>
+              <div class="result-label">本次耗时 / 总耗时（秒）</div>
+              <div class="result-value">{{ formatMs(currentProgressTask.lastRequestTimeMs || 0) }} / {{ formatMs(currentProgressTask.totalResponseTimeMs || 0) }}</div>
+              <div class="result-sub">总耗时: {{ formatElapsedTime(currentProgressTask) }}</div>
             </div>
             <div class="result-item">
               <div class="result-label">最后请求前缀</div>
@@ -319,7 +361,7 @@
             <div class="result-item">
               <div class="result-label">重连次数</div>
               <div class="result-value">{{ currentProgressTask.reconnects || 0 }}</div>
-              <div class="result-sub">响应累计: {{ formatResponseTime(currentProgressTask) }}</div>
+              <div class="result-sub">累计响应: {{ formatResponseTime(currentProgressTask) }}</div>
             </div>
           </div>
 
@@ -350,8 +392,26 @@
         </div>
 
         <!-- 进度消息（仅采集中显示） -->
-        <div class="progress-message" v-if="currentProgressTask && !isTerminalStatus && (currentProgressTask.progressMessage || currentProgressTask.progress)">
+        <div class="progress-message" v-if="currentProgressTask && !isTerminalStatus">
+          <!-- fetching 状态：显示精简进度信息 -->
+          <div v-if="currentProgressTask.progressMessage && currentProgressTask.progressMessage.includes('[fetching]')" class="fetching-message">
+            <div class="fetching-message-header">
+              <el-icon class="is-loading" style="color: var(--color-primary)"><Loading /></el-icon>
+              <span class="fetching-stage">[{{ currentProgressTask.status === 'RUNNING' ? 'fetching' : currentProgressTask.status.toLowerCase() }}]</span>
+            </div>
+            <div class="fetching-message-body">
+              <span class="fetching-item"><strong>{{ currentProgressTask.requestsSent || 0 }}</strong></span>
+              <span class="fetching-sep">·</span>
+              <span class="fetching-item mono-text">{{ currentProgressTask.currentPrefix || '-' }}</span>
+              <span class="fetching-sep">·</span>
+              <span class="fetching-item">本次响应 <strong>{{ currentProgressTask.lastResponded || 0 }}</strong></span>
+              <span class="fetching-sep">·</span>
+              <span class="fetching-item">本次去重 <strong>{{ currentProgressTask.lastDeduped || 0 }}</strong></span>
+            </div>
+          </div>
+          <!-- 其他状态：显示原格式 -->
           <el-alert
+            v-else-if="currentProgressTask.progressMessage || currentProgressTask.progress"
             :title="currentProgressTask.progressMessage || currentProgressTask.progress"
             :type="currentProgressTask.status === 'FAILED' ? 'error' : 'info'"
             show-icon
@@ -453,7 +513,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Edit, Delete, Download, DataLine, MagicStick,
   Loading, CircleCheck, Warning, Close, Monitor, Connection, User, Search,
-  CopyDocument, InfoFilled
+  CopyDocument, InfoFilled, Timer, Refresh
 } from '@element-plus/icons-vue'
 import { useAccountsStore } from '@/stores/accounts'
 import { useGuildServersStore } from '@/stores/guildServers'
@@ -609,6 +669,9 @@ function getCollectRate(task) {
 
 function formatElapsedTime(task) {
   if (!task) return '-'
+  if (task.elapsedMs && task.elapsedMs > 0) {
+    return formatMs(task.elapsedMs)
+  }
   if (task.startedAt && task.completedAt) {
     const elapsed = task.completedAt - task.startedAt
     return formatMs(elapsed)
@@ -797,7 +860,13 @@ async function startFetch() {
         prefixesDone: 0,
         prefixesTotal: 0,
         reconnects: 0,
-        completedPrefixCount: 0
+        completedPrefixCount: 0,
+        totalRespondedMembers: 0,
+        totalResponseTimeMs: 0,
+        lastResponded: 0,
+        lastDeduped: 0,
+        lastRequestTimeMs: 0,
+        elapsedMs: 0
       })
       // 自动打开进度对话框
       progressDialog.server = syncDialog.server
@@ -1233,6 +1302,39 @@ onUnmounted(() => {
 .stat-label { font-size: 11px; color: var(--color-text-3); margin-top: 4px; }
 
 .progress-message { margin-bottom: 12px; }
+
+.fetching-message {
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(64,158,255,0.08), rgba(64,158,255,0.02));
+  border: 1px solid rgba(64,158,255,0.2);
+  border-radius: 10px;
+}
+.fetching-message-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.fetching-stage {
+  font-weight: 600;
+  color: var(--color-primary);
+  font-size: 13px;
+}
+.fetching-message-body {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.fetching-item strong {
+  color: var(--color-primary);
+  font-size: 15px;
+}
+.fetching-sep {
+  color: var(--color-text-3);
+}
 .progress-tip {
   margin-top: 12px;
   padding: 10px;
@@ -1262,7 +1364,7 @@ onUnmounted(() => {
 
 .progress-stats-enhanced {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -1292,6 +1394,18 @@ onUnmounted(() => {
 .stat-icon.fetch-icon {
   background: linear-gradient(135deg, rgba(103,194,58,0.15), rgba(103,194,58,0.05));
   color: #67c23a;
+}
+.stat-icon.dedup-icon {
+  background: linear-gradient(135deg, rgba(230,162,60,0.15), rgba(230,162,60,0.05));
+  color: #e6a23c;
+}
+.stat-icon.time-icon {
+  background: linear-gradient(135deg, rgba(144,147,153,0.15), rgba(144,147,153,0.05));
+  color: #909399;
+}
+.stat-icon.reconnect-icon {
+  background: linear-gradient(135deg, rgba(245,108,108,0.15), rgba(245,108,108,0.05));
+  color: #f56c6c;
 }
 .stat-info { flex: 1; min-width: 0; }
 .stat-values {
@@ -1489,5 +1603,28 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
+
+/* Progress dialog scroll fix */
+.progress-dialog :deep(.el-dialog__body) {
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-top: 8px;
+}
+
+.progress-dialog :deep(.el-dialog) {
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.progress-dialog :deep(.el-dialog__header) {
+  flex-shrink: 0;
+}
+
+.progress-dialog :deep(.el-dialog__body) {
+  flex: 1;
+  overflow-y: auto;
 }
 </style>

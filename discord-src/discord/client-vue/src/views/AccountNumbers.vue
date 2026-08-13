@@ -36,27 +36,35 @@
       <el-table v-loading="loading" :data="tableData" stripe style="width: 100%;">
         <el-table-column label="操作" width="200" fixed="left">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="openBindDialog(row)">
-              绑定账号
-            </el-button>
-            <el-button size="small" type="info" link @click="openHistoryDialog(row)">
-              绑定历史
-            </el-button>
+            <div class="action-cell">
+              <el-button size="small" type="primary" link @click="openBindDialog(row)">
+                绑定账号
+              </el-button>
+              <el-button size="small" type="primary" link @click="handleUnbind(row)">
+                解绑账号
+              </el-button>
+              <el-button size="small" type="primary" link @click="openHistoryDialog(row)">
+                绑定历史
+              </el-button>
+              <el-button size="small" type="primary" link @click="handleDelete(row)">
+                删除
+              </el-button>
+            </div>
           </template>
         </el-table-column>
 
         <el-table-column prop="id" label="编号" width="100" align="center" />
 
-        <el-table-column prop="boundAccount" label="绑定账号" min-width="200">
+        <el-table-column prop="accountName" label="用户名" min-width="200">
           <template #default="{ row }">
-            <span v-if="row.boundAccount" class="bound-account">{{ row.boundAccount }}</span>
+            <span v-if="row.accountName" class="bound-account">{{ row.accountName }}</span>
             <el-tag v-else type="info" size="small">未绑定</el-tag>
           </template>
         </el-table-column>
 
-        <el-table-column prop="accountName" label="账号名称" min-width="160">
+        <el-table-column prop="accountEmail" label="账号邮箱" min-width="200">
           <template #default="{ row }">
-            <span v-if="row.accountName">{{ row.accountName }}</span>
+            <span v-if="row.accountEmail">{{ row.accountEmail }}</span>
             <span v-else style="color: var(--color-text-3);">-</span>
           </template>
         </el-table-column>
@@ -192,7 +200,9 @@ import {
   batchCreateAccountNumbers,
   bindAccountNumber,
   getAccountNumberHistory,
-  listUnboundAccounts
+  listUnboundAccounts,
+  unbindAccountNumber,
+  deleteAccountNumber
 } from '@/api'
 
 const loading = ref(false)
@@ -306,8 +316,8 @@ async function handleCreate() {
 
 async function openBindDialog(row) {
   bindDialog.visible = true
-  bindDialog.currentAccount = row.boundAccount
-  bindDialog.newAccount = row.boundAccount || ''
+  bindDialog.currentAccount = row.accountName || row.boundAccount
+  bindDialog.newAccount = row.boundAccount || row.accountName || ''
   bindDialog.discordAccountId = row.discordAccountId || null
   bindDialog.changeReason = ''
   bindDialog.currentRow = row
@@ -373,6 +383,32 @@ async function openHistoryDialog(row) {
   } catch (e) {
     historyList.value = []
     ElMessage.error('获取历史记录失败')
+  }
+}
+
+async function handleUnbind(row) {
+  try {
+    await ElMessageBox.confirm(`确定要解绑账号"${row.accountName || row.boundAccount || '-'}"吗？`, '提示', { type: 'warning' })
+    await unbindAccountNumber(row.id)
+    ElMessage.success('解绑成功')
+    fetchData()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('解绑失败')
+    }
+  }
+}
+
+async function handleDelete(row) {
+  try {
+    await ElMessageBox.confirm(`确定要删除账号编号"${row.id}"吗？此操作不可恢复。`, '提示', { type: 'error' })
+    await deleteAccountNumber(row.id)
+    ElMessage.success('删除成功')
+    fetchData()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('删除失败')
+    }
   }
 }
 
@@ -455,5 +491,17 @@ onMounted(() => {
 
 .bound-account {
   color: var(--color-primary);
+}
+
+.action-cell {
+  display: flex;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  align-items: center;
+  gap: 0;
+}
+
+.action-cell .el-button + .el-button {
+  margin-left: 0;
 }
 </style>

@@ -314,7 +314,7 @@ onMounted(async () => {
 }
 
 .sidebar-menu :deep(.el-menu-item) {
-  height: 44px;
+  height: 48px;
   border-radius: 8px;
   margin-bottom: 2px;
   display: flex;
@@ -324,26 +324,29 @@ onMounted(async () => {
 }
 
 .sidebar-menu :deep(.el-menu-item .el-icon) {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .sidebar-menu :deep(.el-menu-item span) {
   flex: 1;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .sidebar-menu :deep(.el-sub-menu__title) {
-  height: 44px;
+  height: 48px;
   border-radius: 8px;
   margin-bottom: 2px;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 0 16px !important;
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .sidebar-menu :deep(.el-sub-menu__title .el-icon) {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .unread-badge {
