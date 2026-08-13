@@ -113,6 +113,17 @@ public class ConversationService {
         if (conversation.getStatus() == Conversation.ConversationStatus.CLOSED) {
             conversation.setStatus(Conversation.ConversationStatus.PENDING);
         }
+
+        // 自动升级阶段：如果是PROSPECT阶段且双方都有消息，升级为NEW
+        if (conversation.getStage() == Conversation.Stage.PROSPECT) {
+            long outboundCount = messageRepository.countOutboundMessages(conversation);
+            if (outboundCount > 0) {
+                conversation.setStage(Conversation.Stage.NEW);
+                conversation.setStageChangedAt(Instant.now());
+                log.info("会话 [convId={}] 双方已互动，漏斗阶段升级为 NEW", conversation.getId());
+            }
+        }
+
         conversation = conversationRepository.save(conversation);
 
         Message message = new Message();
@@ -220,14 +231,28 @@ public class ConversationService {
         conv.setType(Conversation.ConversationType.DM);
         conv.setStatus(Conversation.ConversationStatus.OPEN);
         conv.setMerchantId(account.getMerchantId());
+        conv.setStage(Conversation.Stage.PROSPECT);
         conv = conversationRepository.save(conv);
         return ConversationDto.from(conv);
     }
 
     @Transactional(readOnly = true)
-    public List<ConversationDto> listConversations(Long accountId, String stage, String keyword, Boolean pinnedOnly) {
+    public List<ConversationDto> listConversations(Long accountId, String stage, String keyword, Boolean pinnedOnly,
+                                                    String dateFrom, String dateTo) {
         Long merchantId = SecurityUtils.currentMerchantId();
         Long currentAgentId = SecurityUtils.currentAgentId();
+
+        // Parse date filters
+        java.time.Instant fromInstant = null;
+        java.time.Instant toInstant = null;
+        if (dateFrom != null && !dateFrom.isBlank()) {
+            fromInstant = java.time.LocalDate.parse(dateFrom)
+                    .atStartOfDay(java.time.ZoneId.systemDefault()).toInstant();
+        }
+        if (dateTo != null && !dateTo.isBlank()) {
+            toInstant = java.time.LocalDate.parse(dateTo)
+                    .plusDays(1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant();
+        }
 
         if (keyword != null && !keyword.isBlank()) {
             String kw = keyword.trim().toLowerCase();
@@ -242,6 +267,9 @@ public class ConversationService {
                         merchantId, kw);
             }
             convs = filterByAgentAccess(convs, currentAgentId);
+            if (fromInstant != null || toInstant != null) {
+                convs = filterByDate(convs, fromInstant, toInstant);
+            }
             if (Boolean.TRUE.equals(pinnedOnly)) {
                 convs = convs.stream().filter(c -> Boolean.TRUE.equals(c.getPinned())).toList();
             }
@@ -250,10 +278,27 @@ public class ConversationService {
 
         List<Conversation> convs = queryConversations(accountId, stage, merchantId);
         convs = filterByAgentAccess(convs, currentAgentId);
+        if (fromInstant != null || toInstant != null) {
+            convs = filterByDate(convs, fromInstant, toInstant);
+        }
         if (Boolean.TRUE.equals(pinnedOnly)) {
             convs = convs.stream().filter(c -> Boolean.TRUE.equals(c.getPinned())).toList();
         }
         return buildConversationDtos(convs);
+    }
+
+    private List<Conversation> filterByDate(List<Conversation> convs, java.time.Instant from, java.time.Instant to) {
+        return convs.stream()
+                .filter(c -> {
+                    java.time.Instant lastMsg = c.getLastMessageAt() != null
+                            ? c.getLastMessageAt()
+                            : (c.getCreatedAt() != null ? c.getCreatedAt() : null);
+                    if (lastMsg == null) return false;
+                    if (from != null && lastMsg.isBefore(from)) return false;
+                    if (to != null && lastMsg.isAfter(to)) return false;
+                    return true;
+                })
+                .toList();
     }
 
     /**
@@ -445,6 +490,12 @@ public class ConversationService {
         Conversation conversation = loadOwnedConversation(id);
         conversation.setRemark(remark);
         return ConversationDto.from(conversationRepository.save(conversation));
+    }
+
+    public ConversationDto markAsRead(Long id) {
+        Conversation conversation = loadOwnedConversation(id);
+        conversation.setLastReadAt(java.time.Instant.now());
+        return ConversationDto.from(conversationRepository.save(conversation), 0);
     }
 
     public MessageDto translateMessage(Long messageId, String targetLang) {

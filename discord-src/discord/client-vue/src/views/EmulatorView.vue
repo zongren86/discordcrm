@@ -2,12 +2,12 @@
   <div class="emulator-view">
     <div v-if="loading" class="loading-wrap">
       <el-icon class="is-loading" :size="48"><Loading /></el-icon>
-      <p>正在加载模拟器管理界面...</p>
+      <p>正在加载好友管理界面...</p>
     </div>
 
     <div v-else-if="!backendAvailable" class="error-wrap">
       <el-icon :size="48" color="#f56c6c"><WarningFilled /></el-icon>
-      <h3>模拟器服务未运行</h3>
+      <h3>好友管理服务未运行</h3>
       <p>无法连接到模拟器后端服务（{{ config.EMU_API_URL }}）。</p>
       <p class="hint">请先启动模拟器管理器后端：</p>
       <pre>cd /Users/ren/CodeBuddy/20260807093456/backend && mvn spring-boot:run</pre>

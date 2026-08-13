@@ -156,6 +156,16 @@ public class DiscordMemberController {
         return r;
     }
 
+    @PostMapping("/task/{taskId}/stop")
+    public Object stopTask(@PathVariable String taskId) {
+        boolean stopped = service.stopFetch(taskId);
+        if (stopped) {
+            return Map.of("success", true, "message", "已请求停止，当前请求完成后将自动保存并停止");
+        } else {
+            return Map.of("success", false, "message", "任务不存在或已结束");
+        }
+    }
+
     @GetMapping("/tasks")
     public Object tasks() {
         Map<String, DiscordMemberService.TaskState> allTasks = service.getTasks();

@@ -20,6 +20,7 @@
         v-loading="menuLoading"
         class="sidebar-menu"
         :default-active="activeMenu"
+        :default-openeds="defaultOpeneds"
         :router="true"
         @select="handleSelect"
       >
@@ -35,12 +36,14 @@
             <template v-for="child in item.children" :key="child.path || child.code">
               <el-menu-item v-if="!child.children || child.children.length === 0" :index="child.path || child.code">
                 <el-icon v-if="child.icon"><component :is="resolveIcon(child.icon)" /></el-icon>
-                <span>{{ child.title }}</span>
-                <el-badge
-                  v-if="child.path === '/chat' && totalUnread > 0"
-                  :value="totalUnread > 99 ? '99+' : totalUnread"
-                  class="unread-badge"
-                />
+                <span class="menu-title">
+                  {{ child.title }}
+                  <el-badge
+                    v-if="child.path === '/chat' && totalUnread > 0"
+                    :value="totalUnread > 99 ? '99+' : totalUnread"
+                    class="unread-badge"
+                  />
+                </span>
               </el-menu-item>
               <el-sub-menu v-else :index="child.path || child.code">
                 <template #title>
@@ -50,12 +53,14 @@
                 <!-- 三级菜单 -->
                 <el-menu-item v-for="grandchild in child.children" :key="grandchild.path || grandchild.code" :index="grandchild.path || grandchild.code">
                   <el-icon v-if="grandchild.icon"><component :is="resolveIcon(grandchild.icon)" /></el-icon>
-                  <span>{{ grandchild.title }}</span>
-                  <el-badge
-                    v-if="grandchild.path === '/chat' && totalUnread > 0"
-                    :value="totalUnread > 99 ? '99+' : totalUnread"
-                    class="unread-badge"
-                  />
+                  <span class="menu-title">
+                    {{ grandchild.title }}
+                    <el-badge
+                      v-if="grandchild.path === '/chat' && totalUnread > 0"
+                      :value="totalUnread > 99 ? '99+' : totalUnread"
+                      class="unread-badge"
+                    />
+                  </span>
                 </el-menu-item>
               </el-sub-menu>
             </template>
@@ -63,12 +68,14 @@
           <!-- 没有子菜单的项 -->
           <el-menu-item v-else :index="item.path || item.code">
             <el-icon v-if="item.icon"><component :is="resolveIcon(item.icon)" /></el-icon>
-            <span>{{ item.title }}</span>
-            <el-badge
-              v-if="item.path === '/chat' && totalUnread > 0"
-              :value="totalUnread > 99 ? '99+' : totalUnread"
-              class="unread-badge"
-            />
+            <span class="menu-title">
+              {{ item.title }}
+              <el-badge
+                v-if="item.path === '/chat' && totalUnread > 0"
+                :value="totalUnread > 99 ? '99+' : totalUnread"
+                class="unread-badge"
+              />
+            </span>
           </el-menu-item>
         </template>
       </el-menu>
@@ -107,12 +114,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ChatDotRound, User, UserFilled, OfficeBuilding, DataAnalysis, SwitchButton, Shop, Setting,
-  Lock, Document, Bell, Cpu, Monitor, Grid, Menu, Tools, Key
+  Lock, Document, Bell, Cpu, Monitor, Grid, Menu, Tools, Key, Tickets
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
@@ -150,7 +157,8 @@ const iconMap = {
   'Grid': Grid,
   'Menu': Menu,
   'Tools': Tools,
-  'Key': Key
+  'Key': Key,
+  'Tickets': Tickets
 }
 
 function resolveIcon(iconName) {
@@ -180,9 +188,144 @@ async function loadMenuTree() {
 
 const activeMenu = computed(() => route.path)
 
+const defaultOpeneds = computed(() => {
+  const paths = []
+  function collect(items) {
+    for (const item of items) {
+      if (item.children && item.children.length > 0) {
+        paths.push(item.path || item.code)
+        collect(item.children)
+      }
+    }
+  }
+  collect(menuTree.value)
+  return paths
+})
+
+const defaultRoute = computed(() => {
+  const findFirstPath = (items) => {
+    for (const item of items) {
+      if (item.path && !item.children) return item.path
+      if (item.children) {
+        const found = findFirstPath(item.children)
+        if (found) return found
+      }
+    }
+    return null
+  }
+  // 优先查找消息中心
+  const chatPath = findFirstPath(menuTree.value.filter(item => item.code === 'chat'))
+  if (chatPath) return chatPath
+  // 否则查找第一个有路径的菜单项
+  return findFirstPath(menuTree.value) || '/stats'
+})
+
 const totalUnread = computed(() =>
   conversations.conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0)
 )
+
+const prospectCount = computed(() =>
+  conversations.conversations.filter(c => c.stage === 'PROSPECT').length
+)
+
+const baseTitle = 'D-CRM聚合'
+const baseFaviconUrl = '/favicon.ico'
+
+// 动态生成带徽章的favicon
+function updateFavicon() {
+  const size = 64
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')
+
+  // 先绘制base64的D-CRM图标（简化版：深色圆形+字母）
+  // 绘制渐变背景
+  const gradient = ctx.createLinearGradient(0, 0, size, size)
+  gradient.addColorStop(0, '#5865F2')
+  gradient.addColorStop(1, '#EB459E')
+  ctx.fillStyle = gradient
+  ctx.beginPath()
+  ctx.arc(size / 2, size / 2, size / 2 - 4, 0, Math.PI * 2)
+  ctx.fill()
+
+  // 绘制D字母
+  ctx.fillStyle = '#fff'
+  ctx.font = 'bold 36px Arial'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('D', size / 2, size / 2)
+
+  // 根据状态绘制徽章
+  if (totalUnread.value > 0) {
+    // 右上角绘制红色圆形徽章
+    const badgeSize = 28
+    const badgeX = size - 4
+    const badgeY = 4
+
+    ctx.fillStyle = '#ED4245'
+    ctx.beginPath()
+    ctx.arc(badgeX, badgeY, badgeSize / 2, 0, Math.PI * 2)
+    ctx.fill()
+
+    // 绘制数字
+    ctx.fillStyle = '#fff'
+    ctx.font = 'bold 18px Arial'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    const displayNum = totalUnread.value > 99 ? '99+' : totalUnread.value.toString()
+    // 数字较多时缩小字号
+    if (totalUnread.value > 99) {
+      ctx.font = 'bold 12px Arial'
+    }
+    ctx.fillText(displayNum, badgeX, badgeY)
+  } else if (prospectCount.value > 0) {
+    // 右上角绘制红点
+    const dotSize = 16
+    const dotX = size - 2
+    const dotY = 2
+
+    ctx.fillStyle = '#ED4245'
+    ctx.beginPath()
+    ctx.arc(dotX, dotY, dotSize / 2, 0, Math.PI * 2)
+    ctx.fill()
+
+    // 白色边框
+    ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  }
+
+  // 更新favicon
+  const link = document.querySelector("link[rel~='icon']")
+  if (!link) {
+    const newLink = document.createElement('link')
+    newLink.rel = 'icon'
+    newLink.href = canvas.toDataURL('image/png')
+    document.head.appendChild(newLink)
+  } else {
+    link.href = canvas.toDataURL('image/png')
+  }
+}
+
+function updateTitle() {
+  // 标签页标题保持简洁
+  document.title = baseTitle
+}
+
+watch([totalUnread, prospectCount], () => {
+  updateTitle()
+  updateFavicon()
+}, { immediate: true })
+
+onBeforeUnmount(() => {
+  document.title = baseTitle
+  // 恢复原始favicon
+  const link = document.querySelector("link[rel~='icon']")
+  if (link) {
+    link.href = baseFaviconUrl
+  }
+})
 
 const agentInitial = computed(() => {
   const name = auth.agent?.displayName || auth.agent?.username || 'A'
@@ -244,6 +387,11 @@ onMounted(async () => {
   // 加载菜单树
   await loadMenuTree()
   
+  // 设置默认路由：优先消息中心，否则第一个有权限的菜单
+  if (route.path === '/' || route.path === '/login') {
+    router.push(defaultRoute.value)
+  }
+  
   // 拉取基础数据
   try {
     await Promise.allSettled([
@@ -295,14 +443,14 @@ onMounted(async () => {
 }
 
 .brand-name {
-  font-size: 16px;
-  font-weight: 700;
+  font-size: var(--font-lg);
+  font-weight: var(--weight-bold);
   color: var(--color-text);
   line-height: 1.2;
 }
 
 .brand-sub {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--color-text-3);
   margin-top: 2px;
 }
@@ -313,36 +461,77 @@ onMounted(async () => {
   overflow-y: auto;
 }
 
+/* 菜单项布局 — 字体由 global.css 控制 */
 .sidebar-menu :deep(.el-menu-item) {
-  height: 48px;
+  height: 46px;
   border-radius: 8px;
   margin-bottom: 2px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px !important;
+  gap: 10px;
+  padding: 0 14px !important;
 }
 
+/* 二级菜单项：缩进 + 更轻颜色 */
+.sidebar-menu :deep(.el-sub-menu .el-menu-item) {
+  height: 38px;
+  margin-left: 8px;
+  padding: 0 14px 0 28px !important;
+  color: var(--color-text-2);
+  border-radius: 6px;
+  position: relative;
+}
+
+.sidebar-menu :deep(.el-sub-menu .el-menu-item::before) {
+  content: '';
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-text-3);
+}
+
+.sidebar-menu :deep(.el-sub-menu .el-menu-item:hover) {
+  color: var(--color-text);
+}
+
+.sidebar-menu :deep(.el-sub-menu .el-menu-item.is-active) {
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.sidebar-menu :deep(.el-sub-menu .el-menu-item.is-active::before) {
+  background: var(--color-primary);
+}
+
+/* 图标尺寸 — 不在字体规范范围内，保留独立控制 */
 .sidebar-menu :deep(.el-menu-item .el-icon) {
+  font-size: 18px;
+}
+
+.sidebar-menu :deep(.el-menu-item:not(.el-sub-menu .el-menu-item) .el-icon) {
   font-size: 20px;
 }
 
-.sidebar-menu :deep(.el-menu-item span) {
-  flex: 1;
-  font-size: 15px;
-  font-weight: 500;
+.sidebar-menu :deep(.el-menu-item .menu-title) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
+/* 子菜单标题布局 — 字体由 global.css 控制 */
 .sidebar-menu :deep(.el-sub-menu__title) {
-  height: 48px;
+  height: 46px;
   border-radius: 8px;
   margin-bottom: 2px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px !important;
-  font-size: 15px;
-  font-weight: 500;
+  gap: 10px;
+  padding: 0 14px !important;
+  color: var(--color-text);
 }
 
 .sidebar-menu :deep(.el-sub-menu__title .el-icon) {
@@ -350,7 +539,7 @@ onMounted(async () => {
 }
 
 .unread-badge {
-  margin-left: 4px;
+  flex-shrink: 0;
 }
 
 /* 底部用户信息 */
@@ -375,8 +564,8 @@ onMounted(async () => {
 }
 
 .user-name {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -384,7 +573,7 @@ onMounted(async () => {
 }
 
 .user-role {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--color-text-3);
   margin-top: 2px;
 }

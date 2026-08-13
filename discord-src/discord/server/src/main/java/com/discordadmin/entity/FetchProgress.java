@@ -10,7 +10,8 @@ import java.time.Instant;
 @Table(name = "fetch_progress", indexes = {
         @Index(name = "idx_fp_guild_server_id", columnList = "guild_server_id"),
         @Index(name = "idx_fp_status", columnList = "status"),
-        @Index(name = "idx_fp_guild_server_status", columnList = "guild_server_id, status")
+        @Index(name = "idx_fp_guild_server_status", columnList = "guild_server_id, status"),
+        @Index(name = "idx_fp_discord_account_id", columnList = "discord_account_id")
 })
 @Getter
 @Setter

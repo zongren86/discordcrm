@@ -122,11 +122,12 @@ public class GuildService {
             throw new IllegalArgumentException("商户ID不能为空");
         }
         MerchantConfig existing = getOrCreateConfig(merchantId);
-        existing.setFetchLimit(config.getFetchLimit());
-        existing.setRequestInterval(config.getRequestInterval());
-        existing.setRequestCount(config.getRequestCount());
-        existing.setMaxDepth(config.getMaxDepth());
-        existing.setMaxRequests(config.getMaxRequests());
+        if (config.getFetchLimit() != null) existing.setFetchLimit(config.getFetchLimit());
+        if (config.getRequestInterval() != null) existing.setRequestInterval(config.getRequestInterval());
+        if (config.getRequestCount() != null) existing.setRequestCount(config.getRequestCount());
+        if (config.getMaxDepth() != null) existing.setMaxDepth(config.getMaxDepth());
+        if (config.getMaxRequests() != null) existing.setMaxRequests(config.getMaxRequests());
+        if (config.getArchiveDays() != null) existing.setArchiveDays(config.getArchiveDays());
         existing.setUpdatedAt(Instant.now());
         return merchantConfigRepository.save(existing);
     }

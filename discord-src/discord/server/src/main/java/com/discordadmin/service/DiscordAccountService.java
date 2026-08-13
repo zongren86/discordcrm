@@ -126,10 +126,52 @@ public class DiscordAccountService {
             accountRepository.saveAll(accounts);
         }
 
+        // 批量查询 counts，避免 N+1 问题
+        Map<Long, Long> friendCountMap = batchCountFriends(accounts);
+        Map<Long, Long> conversationCountMap = batchCountConversations(accounts);
+        Map<Long, Long> messageCountMap = batchCountMessages(accounts);
+
         Map<Long, Boolean> finalTokenValidMap = tokenValidMap;
         return accounts.stream()
-                .map(a -> buildAccountDto(a, finalTokenValidMap.getOrDefault(a.getId(), true)))
+                .map(a -> buildAccountDto(a,
+                        finalTokenValidMap.getOrDefault(a.getId(), true),
+                        friendCountMap.getOrDefault(a.getId(), 0L),
+                        conversationCountMap.getOrDefault(a.getId(), 0L),
+                        messageCountMap.getOrDefault(a.getId(), 0L)))
                 .toList();
+    }
+
+    private Map<Long, Long> batchCountFriends(List<DiscordAccount> accounts) {
+        if (accounts.isEmpty()) return Map.of();
+        List<Long> ids = accounts.stream().map(DiscordAccount::getId).toList();
+        List<Object[]> results = accountRepository.countFriendsByAccountIds(ids);
+        Map<Long, Long> map = new HashMap<>();
+        for (Object[] row : results) {
+            map.put((Long) row[0], (Long) row[1]);
+        }
+        return map;
+    }
+
+    private Map<Long, Long> batchCountConversations(List<DiscordAccount> accounts) {
+        if (accounts.isEmpty()) return Map.of();
+        List<Long> ids = accounts.stream().map(DiscordAccount::getId).toList();
+        List<Object[]> results = accountRepository.countConversationsByAccountIds(ids);
+        Map<Long, Long> map = new HashMap<>();
+        for (Object[] row : results) {
+            map.put((Long) row[0], (Long) row[1]);
+        }
+        return map;
+    }
+
+    private Map<Long, Long> batchCountMessages(List<DiscordAccount> accounts) {
+        if (accounts.isEmpty()) return Map.of();
+        List<Long> ids = accounts.stream().map(DiscordAccount::getId).toList();
+        List<Object[]> results = accountRepository.countMessagesByAccountIds(ids);
+        Map<Long, Long> map = new HashMap<>();
+        for (Object[] row : results) {
+            map.put((Long) row[0], (Long) row[1]);
+        }
+        return map;
     }
 
     private List<DiscordAccount> queryAccounts(String keyword, String status,
@@ -153,25 +195,40 @@ public class DiscordAccountService {
         }
 
         // Non-platform admin: see own merchant's accounts + null merchantId accounts
+        // Split OR queries into two separate queries to enable index usage
+        List<DiscordAccount> result = new ArrayList<>();
+        DiscordAccount.AccountStatus statusEnum = hasStatus
+                ? DiscordAccount.AccountStatus.valueOf(status.toUpperCase()) : null;
+        String kw = hasKeyword ? keyword.trim() : null;
+
+        // Query 1: accounts with matching merchantId
         if (hasKeyword && hasStatus) {
-            return accountRepository.searchWithAgentsByMerchantOrNullAndKeywordAndStatus(
-                    merchantId, keyword.trim(),
-                    DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
+            result.addAll(accountRepository.searchWithAgentsByMerchantIdAndKeywordAndStatus(
+                    merchantId, kw, statusEnum));
+        } else if (hasKeyword) {
+            result.addAll(accountRepository.searchWithAgentsByMerchantId(merchantId, kw));
+        } else if (hasStatus) {
+            result.addAll(accountRepository.findWithAgentsByMerchantIdAndStatus(merchantId, statusEnum));
+        } else {
+            result.addAll(accountRepository.findWithAgentsByMerchantId(merchantId));
         }
-        if (hasKeyword) {
-            return accountRepository.searchWithAgentsByMerchantOrNullAndKeyword(merchantId, keyword.trim());
+
+        // Query 2: accounts with null merchantId
+        if (hasKeyword && hasStatus) {
+            result.addAll(accountRepository.searchWithAgentsByNullMerchantIdAndKeywordAndStatus(kw, statusEnum));
+        } else if (hasKeyword) {
+            result.addAll(accountRepository.searchWithAgentsByNullMerchantId(kw));
+        } else if (hasStatus) {
+            result.addAll(accountRepository.findWithAgentsByNullMerchantIdAndStatus(statusEnum));
+        } else {
+            result.addAll(accountRepository.findWithAgentsByNullMerchantId());
         }
-        if (hasStatus) {
-            return accountRepository.findWithAgentsByMerchantIdOrNullAndStatus(
-                    merchantId, DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
-        }
-        return accountRepository.findWithAgentsByMerchantIdOrNull(merchantId);
+
+        return result;
     }
 
-    private AccountDto buildAccountDto(DiscordAccount a, boolean tokenValid) {
-        Long friendCount = friendRepository.countByDiscordAccount(a);
-        Long conversationCount = conversationRepository.countByDiscordAccount(a);
-        Long messageCount = messageRepository.countByDiscordAccount(a);
+    private AccountDto buildAccountDto(DiscordAccount a, boolean tokenValid,
+                                       Long friendCount, Long conversationCount, Long messageCount) {
         String agentName = null;
         String agentUsername = null;
         Long agentId = null;

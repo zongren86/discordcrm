@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import {
   listConversations, listConversationsByAccount, listMessages, loadMoreMessages,
   sendMessage, openConversation, updateConversationStage, updateConversationPin,
-  updateConversationRemark
+  updateConversationRemark, markConversationAsRead
 } from '@/api'
 
 export const useConversationsStore = defineStore('conversations', {
@@ -48,6 +48,7 @@ export const useConversationsStore = defineStore('conversations', {
     },
     selectConversation(id) {
       this.currentConversationId = id
+      this.markAsRead(id)
     },
     async fetchMessages(convId) {
       this.loadingMessagesMap[convId] = true
@@ -167,11 +168,15 @@ export const useConversationsStore = defineStore('conversations', {
     markAsRead(convId) {
       const conv = this.conversations.find(c => c.id === convId)
       if (conv) conv.unreadCount = 0
+      if (convId) {
+        markConversationAsRead(convId).catch(() => {})
+      }
     },
     markCurrentAsRead() {
       if (!this.currentConversationId) return
       const conv = this.conversations.find(c => c.id === this.currentConversationId)
       if (conv) conv.unreadCount = 0
+      markConversationAsRead(this.currentConversationId).catch(() => {})
     },
     reset() {
       this.conversations = []

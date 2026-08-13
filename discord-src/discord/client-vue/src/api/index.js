@@ -192,14 +192,20 @@ export function markAllNotificationsRead() {
 }
 
 // === AI配置 ===
-export function listAISettings() {
-  return http.get('/ai-settings')
+export function listAISettings(merchantId) {
+  const config = {}
+  if (merchantId != null) config.headers = { 'X-Merchant-Id': merchantId }
+  return http.get('/ai-settings', config)
 }
-export function getAISettingByFeature(feature) {
-  return http.get('/ai-settings/feature/' + feature)
+export function getAISettingByFeature(feature, merchantId) {
+  const config = {}
+  if (merchantId != null) config.headers = { 'X-Merchant-Id': merchantId }
+  return http.get('/ai-settings/feature/' + feature, config)
 }
-export function saveAISetting(payload) {
-  return http.post('/ai-settings', payload)
+export function saveAISetting(payload, merchantId) {
+  const config = {}
+  if (merchantId != null) config.headers = { 'X-Merchant-Id': merchantId }
+  return http.post('/ai-settings', payload, config)
 }
 export function deleteAISetting(id) {
   return http.delete('/ai-settings/' + id)
@@ -242,6 +248,9 @@ export function updateConversationPin(id, pinned) {
 }
 export function updateConversationRemark(id, remark) {
   return http.put('/conversations/' + id + '/remark', { remark })
+}
+export function markConversationAsRead(id) {
+  return http.post('/conversations/' + id + '/mark-read')
 }
 
 // === 消息编辑/删除/Reaction/回复 ===
@@ -404,6 +413,9 @@ export function getMemberFetchTasks() {
 }
 export function getLatestServerTask(serverId) {
   return http.get('/discord/members/server/' + serverId + '/latest-task')
+}
+export function stopMemberFetchTask(taskId) {
+  return http.post('/discord/members/task/' + taskId + '/stop')
 }
 export function getGuildMerchantConfig() {
   return http.get('/guild-servers/merchant-config')

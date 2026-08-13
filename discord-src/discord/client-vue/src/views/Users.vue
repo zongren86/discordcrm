@@ -492,11 +492,29 @@ const assignRolesDialog = reactive({
   userId: null,
   username: '',
   selectedRoleIds: [],
-  saving: false
+  saving: false,
+  targetRole: '',
+  targetMerchantId: null
 })
 
 const availableRoles = computed(() => {
-  return customRoles.value.filter(role => !assignRolesDialog.selectedRoleIds.includes(role.id))
+  const targetRole = assignRolesDialog.targetRole
+  const targetMerchantId = assignRolesDialog.targetMerchantId
+  
+  return customRoles.value.filter(role => {
+    if (assignRolesDialog.selectedRoleIds.includes(role.id)) return false
+    
+    if (targetRole === 'PLATFORM_ADMIN') {
+      return role.roleType === 'PLATFORM'
+    } else {
+      if (role.roleType === 'PLATFORM') return false
+      if (role.roleType === 'MERCHANT') {
+        if (!role.merchantIds || role.merchantIds.length === 0) return true
+        return role.merchantIds.includes(targetMerchantId) || role.merchantId === targetMerchantId
+      }
+      return true
+    }
+  })
 })
 
 function openAssignRoles(row) {
@@ -504,6 +522,8 @@ function openAssignRoles(row) {
   assignRolesDialog.userId = row.id
   assignRolesDialog.username = row.username || row.displayName || ''
   assignRolesDialog.selectedRoleIds = [...(row.roleIds || [])]
+  assignRolesDialog.targetRole = row.role || ''
+  assignRolesDialog.targetMerchantId = row.merchantId || null
 }
 
 function resetAssignRolesDialog() {
@@ -511,6 +531,8 @@ function resetAssignRolesDialog() {
   assignRolesDialog.username = ''
   assignRolesDialog.selectedRoleIds = []
   assignRolesDialog.saving = false
+  assignRolesDialog.targetRole = ''
+  assignRolesDialog.targetMerchantId = null
 }
 
 function addRole(roleId) {

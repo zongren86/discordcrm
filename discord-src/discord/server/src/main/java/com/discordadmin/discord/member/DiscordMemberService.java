@@ -39,6 +39,8 @@ public class DiscordMemberService {
     private final Map<String, TaskState> tasks = new ConcurrentHashMap<>();
     // 服务器锁：防止同一服务器并发同步
     private final Map<Long, String> serverLocks = new ConcurrentHashMap<>();
+    // 活跃 fetcher 引用，用于暂停/停止
+    private final Map<String, GatewayMemberFetcher> activeFetchers = new ConcurrentHashMap<>();
 
     private final GuildMemberRepository guildMemberRepository;
     private final GuildServerRepository guildServerRepository;
@@ -192,7 +194,7 @@ public class DiscordMemberService {
         }
 
         // 检查是否有上次的抓取进度，支持断点续抓 + 增量续采
-        if (st.guildServerId > 0) {
+        if (st.guildServerId > 0 && req.isResumeSync()) {
             fetchProgressRepository.findTopByGuildServerIdOrderByCreatedAtDesc(st.guildServerId)
                 .ifPresent(prev -> {
                     st.lastBatchId = prev.getLastBatchId() != null ? prev.getLastBatchId() : "";
@@ -357,6 +359,9 @@ public class DiscordMemberService {
                     req.getToken(), guildId, proxyHost, proxyPort,
                     listener, batchListener, req.getMaxRequests(), req.getMaxMembers(), pageDelayMs);
 
+            // 注册 fetcher 引用，用于后续停止
+            activeFetchers.put(taskId, fetcher);
+
             // 设置前缀树 BFS 最大下钻深度
             fetcher.setMaxPrefixDepth(req.getMaxDepth());
 
@@ -393,6 +398,9 @@ public class DiscordMemberService {
             st.totalFetched = res.members().size();
             st.status = "COMPLETED";
             st.completedAt = System.currentTimeMillis();
+            if (st.startedAt != null) {
+                st.elapsedMs = st.completedAt - st.startedAt;
+            }
             st.progressMessage = "完成，有效成员 " + recs.size() + " 条（原始 " + res.members().size() + " 条）";
             st.failureReason = "";  // 成功无失败原因
 
@@ -468,6 +476,9 @@ public class DiscordMemberService {
             st.error = msg;
             st.progressMessage = "异常: " + msg;
             st.completedAt = System.currentTimeMillis();
+            if (st.startedAt != null) {
+                st.elapsedMs = st.completedAt - st.startedAt;
+            }
             st.failureReason = msg;
 
             if (progress != null) {
@@ -489,6 +500,9 @@ public class DiscordMemberService {
             }
             log.error("成员抓取异常", e);
         } finally {
+            // 清理 fetcher 引用
+            activeFetchers.remove(taskId);
+            
             if (st.guildServerId > 0) {
                 String lockedTaskId = serverLocks.get(st.guildServerId);
                 if (taskId.equals(lockedTaskId)) {
@@ -763,6 +777,28 @@ public class DiscordMemberService {
 
     public Map<String, TaskState> getTasks() {
         return tasks;
+    }
+
+    /**
+     * 请求任务在当前请求完成后停止（暂停同步）。
+     * 停止后任务状态标记为 COMPLETED，保留已采集数据。
+     * @return true 表示已发送停止请求，false 表示任务不存在或已结束
+     */
+    public boolean stopFetch(String taskId) {
+        TaskState st = tasks.get(taskId);
+        if (st == null) {
+            return false;
+        }
+        if (!"RUNNING".equals(st.status) && !"PENDING".equals(st.status)) {
+            return false;
+        }
+        GatewayMemberFetcher fetcher = activeFetchers.get(taskId);
+        if (fetcher != null) {
+            fetcher.stop();
+            log.info("已请求停止任务 {}, 将在当前请求完成后停止", taskId);
+            return true;
+        }
+        return false;
     }
 
     /**

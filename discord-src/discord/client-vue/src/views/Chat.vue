@@ -23,20 +23,46 @@
             <el-option v-for="s in stageOptions" :key="s.value" :value="s.value" :label="s.label" />
           </el-select>
 
-          <div class="sort-buttons">
-            <el-tooltip content="未读优先">
-              <el-button :type="sortMode === 'unread' ? 'primary' : 'default'" size="small" circle
-                @click="sortMode = sortMode === 'unread' ? 'latest' : 'unread'">
-                <el-icon><Top /></el-icon>
+          <el-popover placement="bottom-start" :width="440" trigger="click" v-model:visible="datePopoverVisible" popper-class="date-popover-popper" :close-on-click-modal="false" :teleported="false">
+            <template #reference>
+              <el-button size="small" class="date-filter-trigger" :type="dateRange || dateQuick ? 'primary' : 'default'">
+                <el-icon style="margin-right:3px;"><Calendar /></el-icon>日期
+                <span v-if="dateQuick" class="date-filter-label">{{ dateQuickLabel }}</span>
+                <span v-else-if="dateRange && dateRange.length === 2" class="date-filter-label">
+                  {{ dateRange[0].slice(5) }} ~ {{ dateRange[1].slice(5) }}
+                </span>
               </el-button>
-            </el-tooltip>
-            <el-tooltip content="最新消息">
-              <el-button :type="sortMode === 'latest' ? 'primary' : 'default'" size="small" circle
-                @click="sortMode = sortMode === 'latest' ? 'unread' : 'latest'">
-                <el-icon><ArrowDown /></el-icon>
-              </el-button>
-            </el-tooltip>
-          </div>
+            </template>
+            <div class="date-popover">
+              <div class="date-section-title">快捷选择</div>
+              <div class="date-quick-row">
+                <el-button v-for="opt in dateQuickOptions" :key="opt.value" size="small"
+                  :type="dateQuick === opt.value ? 'primary' : 'default'"
+                  :plain="dateQuick !== opt.value"
+                  @click="setDateRange(opt.value)">{{ opt.label }}</el-button>
+              </div>
+              <div class="date-section-title">自定义范围</div>
+              <el-date-picker
+                v-model="tempDateRange"
+                type="daterange"
+                range-separator="-"
+                start-placeholder="开始日期"
+                end-placeholder="结束日期"
+                value-format="YYYY-MM-DD"
+                size="small"
+                class="date-range-picker"
+                :teleported="false"
+              />
+              <div class="date-popover-footer">
+                <el-button v-if="dateRange || dateQuick" size="small" type="danger" link @click="clearDateFilter">清除筛选</el-button>
+                <span v-else class="date-filter-hint">选择日期范围筛选会话</span>
+                <div class="date-popover-actions">
+                  <el-button size="small" @click="cancelDateRange">取消</el-button>
+                  <el-button size="small" type="primary" :disabled="!tempDateRange || tempDateRange.length !== 2" @click="confirmDateRange">确定</el-button>
+                </div>
+              </div>
+            </div>
+          </el-popover>
         </div>
       </div>
 
@@ -47,44 +73,97 @@
           </div>
           <el-empty v-else-if="getFilteredSortedConversations().length === 0" description="暂无会话" :image-size="80" />
           <div v-else class="conv-list">
-            <div v-for="c in getFilteredSortedConversations()" :key="c.id"
-              :class="['conv-item', { active: c.id === conversations.currentConversationId }]"
-              @click="selectConversation(c)">
-              <div v-if="c.agentName" class="conv-agent-name" :title="c.agentName">
-                <span v-for="(line, i) in splitAgentName(c.agentName)" :key="i">{{ line }}</span>
+            <template v-if="getPinnedConversations().length > 0">
+              <div class="conv-section-header">
+                <el-icon><Top /></el-icon>
+                <span>置顶会话</span>
+                <span class="section-count">{{ getPinnedConversations().length }}</span>
               </div>
-              <div class="conv-avatar-wrap">
-                <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
-                  {{ initialOf(c) }}
-                </el-avatar>
-                <span v-if="c.unreadCount > 0" class="unread-badge">
-                  {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
-                </span>
-                <el-avatar v-if="c.agentName" :size="18" class="agent-badge" :title="c.agentName">
-                  {{ (c.agentName || '?').charAt(0).toUpperCase() }}
-                </el-avatar>
-                <span class="account-dot"></span>
-              </div>
-              <div class="conv-main">
-                <div class="conv-line-1">
-                  <span class="conv-name">{{ truncateText(c.remark || c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
-                  <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-mini">
-                    {{ stageLabel(c.stage) }}
-                  </el-tag>
+              <div v-for="c in getPinnedConversations()" :key="'pinned-' + c.id"
+                :class="['conv-item', 'pinned-item', { active: c.id === conversations.currentConversationId }]"
+                @click="selectConversation(c)">
+                <div v-if="c.agentName" class="conv-agent-name" :title="c.agentName">
+                  <span v-for="(line, i) in splitAgentName(c.agentName)" :key="i">{{ line }}</span>
                 </div>
-                <div class="conv-line-2">
-                  <span class="conv-nickname">{{ c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}</span>
+                <div class="conv-avatar-wrap">
+                  <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
+                    {{ initialOf(c) }}
+                  </el-avatar>
+                  <span v-if="c.stage === 'PROSPECT' && (!c.lastMessageAt || c.unreadCount === 0)" class="unread-dot"></span>
+                  <span v-else-if="c.unreadCount > 0" class="unread-badge">
+                    {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
+                  </span>
+                  <el-avatar v-if="c.agentName" :size="18" class="agent-badge" :title="c.agentName">
+                    {{ (c.agentName || '?').charAt(0).toUpperCase() }}
+                  </el-avatar>
+                  <span class="account-dot"></span>
+                </div>
+                <div class="conv-main">
+                  <div class="conv-line-1">
+                    <el-icon class="pin-icon" :size="12"><Top /></el-icon>
+                    <span class="conv-name">{{ truncateText(c.remark || c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
+                    <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-mini">
+                      {{ stageLabel(c.stage) }}
+                    </el-tag>
+                  </div>
+                  <div class="conv-line-2">
+                    <span class="conv-nickname">{{ c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}</span>
+                  </div>
+                </div>
+                <div class="conv-actions">
+                  <el-tooltip content="取消置顶">
+                    <el-button type="warning" size="small" circle @click.stop="togglePin(c)">
+                      <el-icon><Top /></el-icon>
+                    </el-button>
+                  </el-tooltip>
                 </div>
               </div>
-              <div class="conv-actions">
-                <el-tooltip :content="c.pinned ? '取消置顶' : '置顶'">
-                  <el-button :type="c.pinned ? 'warning' : 'default'" size="small" circle
-                    @click.stop="togglePin(c)">
-                    <el-icon><Top /></el-icon>
-                  </el-button>
-                </el-tooltip>
+            </template>
+
+            <template v-if="getNormalConversations().length > 0">
+              <div v-if="getPinnedConversations().length > 0" class="conv-section-header subtle">
+                <span>其他会话</span>
               </div>
-            </div>
+              <div v-for="c in getNormalConversations()" :key="'normal-' + c.id"
+                :class="['conv-item', { active: c.id === conversations.currentConversationId }]"
+                @click="selectConversation(c)">
+                <div v-if="c.agentName" class="conv-agent-name" :title="c.agentName">
+                  <span v-for="(line, i) in splitAgentName(c.agentName)" :key="i">{{ line }}</span>
+                </div>
+                <div class="conv-avatar-wrap">
+                  <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
+                    {{ initialOf(c) }}
+                  </el-avatar>
+                  <span v-if="c.stage === 'PROSPECT' && (!c.lastMessageAt || c.unreadCount === 0)" class="unread-dot"></span>
+                  <span v-else-if="c.unreadCount > 0" class="unread-badge">
+                    {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
+                  </span>
+                  <el-avatar v-if="c.agentName" :size="18" class="agent-badge" :title="c.agentName">
+                    {{ (c.agentName || '?').charAt(0).toUpperCase() }}
+                  </el-avatar>
+                  <span class="account-dot"></span>
+                </div>
+                <div class="conv-main">
+                  <div class="conv-line-1">
+                    <span class="conv-name">{{ truncateText(c.remark || c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
+                    <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-mini">
+                      {{ stageLabel(c.stage) }}
+                    </el-tag>
+                  </div>
+                  <div class="conv-line-2">
+                    <span class="conv-nickname">{{ c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}</span>
+                  </div>
+                </div>
+                <div class="conv-actions">
+                  <el-tooltip content="置顶">
+                    <el-button :type="c.pinned ? 'warning' : 'default'" size="small" circle
+                      @click.stop="togglePin(c)">
+                      <el-icon><Top /></el-icon>
+                    </el-button>
+                  </el-tooltip>
+                </div>
+              </div>
+            </template>
           </div>
         </el-scrollbar>
       </div>
@@ -576,7 +655,7 @@
         <div class="profile-section">
           <div class="profile-section-title">快速状态</div>
           <div class="status-grid">
-            <el-button v-for="s in stageOptions.filter(s => ['ACTIVE','CONVERTED','PAYING','ARCHIVED'].includes(s.value))" :key="s.value"
+            <el-button v-for="s in quickStageOptions" :key="s.value"
               size="small" :type="currentStage === s.value ? s.type : 'default'"
               :effect="currentStage === s.value ? 'dark' : 'plain'"
               class="status-btn"
@@ -619,7 +698,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Loading, ChatDotRound, Refresh, ArrowUp, ArrowDown, InfoFilled, Promotion,
   Location, User, Top, Stamp, Plus, Close, Document, CopyDocument, Delete,
-  ChatLineSquare, Edit, MoreFilled, Switch, PriceTag, UploadFilled
+  ChatLineSquare, Edit, MoreFilled, Switch, PriceTag, UploadFilled, Calendar
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAccountsStore } from '@/stores/accounts'
@@ -647,6 +726,31 @@ const convSearch = ref('')
 const selectedAccountId = ref(null)
 const selectedStage = ref(null)
 const pinnedOnly = ref(false)
+const dateRange = ref(null)
+const tempDateRange = ref(null)
+const dateQuick = ref('')
+const datePopoverVisible = ref(false)
+
+// 监听弹窗打开/关闭，初始化tempDateRange
+watch(datePopoverVisible, (visible) => {
+  if (visible) {
+    tempDateRange.value = dateRange.value ? [...dateRange.value] : null
+  }
+})
+
+const dateQuickOptions = [
+  { value: 'today',  label: '当天' },
+  { value: '3d',     label: '近3天' },
+  { value: '7d',     label: '近7天' },
+  { value: '10d',    label: '近10天' },
+  { value: '15d',    label: '近15天' },
+  { value: '30d',    label: '近30天' }
+]
+
+const dateQuickLabel = computed(() => {
+  const found = dateQuickOptions.find(o => o.value === dateQuick.value)
+  return found ? found.label : ''
+})
 const inputText = ref('')
 const sending = ref(false)
 const loadingMore = ref(false)
@@ -670,7 +774,6 @@ const aiLoading = ref(false)
 const originalExpandedSet = reactive(new Set())
 const translatingSet = reactive(new Set())
 
-const sortMode = ref('latest')
 const targetLang = ref('zh')
 const detectedLang = ref('未知')
 const isEditing = ref(false)
@@ -711,11 +814,14 @@ const templateEditForm = reactive({ title: '', category: '', content: '' })
 const stageOptions = [
   { value: 'PROSPECT',   label: '通过客户',   type: 'info' },
   { value: 'NEW',        label: '回复客户',   type: 'primary' },
-  { value: 'ACTIVE',     label: '换包客户',   type: 'warning' },
   { value: 'CONVERTED',  label: '注册客户',   type: 'success' },
-  { value: 'PAYING',     label: '付费客户',   type: 'danger' },
-  { value: 'DORMANT',    label: '休眠客户',   type: 'info' },
   { value: 'CHURNED',    label: '流失客户',   type: 'danger' },
+  { value: 'ARCHIVED',   label: '归档客户',   type: 'info' }
+]
+
+// 客户资料快速状态只保留注册客户和归档客户
+const quickStageOptions = [
+  { value: 'CONVERTED',  label: '注册客户',   type: 'success' },
   { value: 'ARCHIVED',   label: '归档客户',   type: 'info' }
 ]
 
@@ -740,6 +846,10 @@ const tagList = computed(() => {
 
 const filteredConversations = computed(() => {
   let list = conversations.conversations
+  // 默认过滤掉流失客户，除非用户明确选择了流失阶段
+  if (selectedStage.value !== 'CHURNED') {
+    list = list.filter(c => c.stage !== 'CHURNED')
+  }
   if (selectedAccountId.value) {
     list = list.filter(c => (c.discordAccountId || c.accountId) === selectedAccountId.value)
   }
@@ -748,6 +858,15 @@ const filteredConversations = computed(() => {
   }
   if (pinnedOnly.value) {
     list = list.filter(c => c.pinned)
+  }
+  if (dateRange.value && dateRange.value.length === 2) {
+    const [start, end] = dateRange.value
+    const startTs = new Date(start + 'T00:00:00').getTime()
+    const endTs = new Date(end + 'T23:59:59').getTime()
+    list = list.filter(c => {
+      const ts = c.lastMessageAt ? new Date(c.lastMessageAt).getTime() : (c.createdAt ? new Date(c.createdAt).getTime() : 0)
+      return ts >= startTs && ts <= endTs
+    })
   }
   const kw = convSearch.value.trim().toLowerCase()
   if (!kw) return list
@@ -759,6 +878,65 @@ const filteredConversations = computed(() => {
     return name.includes(kw) || id.includes(kw) || snippet.includes(kw) || remark.includes(kw)
   })
 })
+
+function setDateRange(type) {
+  dateQuick.value = type
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const end = new Date(today)
+  let start = new Date(today)
+
+  switch (type) {
+    case 'today':
+      start = new Date(today)
+      break
+    case '3d':
+      start = new Date(today.getTime() - 2 * 86400000)
+      break
+    case '7d':
+      start = new Date(today.getTime() - 6 * 86400000)
+      break
+    case '10d':
+      start = new Date(today.getTime() - 9 * 86400000)
+      break
+    case '15d':
+      start = new Date(today.getTime() - 14 * 86400000)
+      break
+    case '30d':
+      start = new Date(today.getTime() - 29 * 86400000)
+      break
+  }
+
+  const fmt = d => {
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${y}-${m}-${day}`
+  }
+  dateRange.value = [fmt(start), fmt(end)]
+  tempDateRange.value = [fmt(start), fmt(end)]
+  datePopoverVisible.value = false
+}
+
+function confirmDateRange() {
+  if (tempDateRange.value && tempDateRange.value.length === 2) {
+    dateQuick.value = ''
+    dateRange.value = [...tempDateRange.value]
+    datePopoverVisible.value = false
+  }
+}
+
+function cancelDateRange() {
+  tempDateRange.value = dateRange.value ? [...dateRange.value] : null
+  datePopoverVisible.value = false
+}
+
+function clearDateFilter() {
+  dateRange.value = null
+  tempDateRange.value = null
+  dateQuick.value = ''
+  datePopoverVisible.value = false
+}
 
 const currentLoading = computed(() =>
   conversations.currentConversationId
@@ -1119,11 +1297,13 @@ async function updateStageSilently(stage) {
   } catch (e) {}
 }
 
-async function togglePin() {
-  if (!conversations.currentConversation) return
-  const newPinned = !conversations.currentConversation.pinned
+async function togglePin(conv) {
+  const target = conv || conversations.currentConversation
+  if (!target) return
+  const newPinned = !target.pinned
   try {
-    await conversations.updatePin(conversations.currentConversation.id, newPinned)
+    await conversations.updatePin(target.id, newPinned)
+    target.pinned = newPinned
     ElMessage.success(newPinned ? '已置顶' : '已取消置顶')
   } catch (e) {
     ElMessage.error('操作失败')
@@ -1191,7 +1371,7 @@ function onInputKeydown(e) {
     }
   } else if (e.altKey && e.key.toLowerCase() === 'e') {
     e.preventDefault()
-    ElMessageBox.prompt('输入漏斗阶段 (PROSPECT/NEW/ACTIVE/CONVERTED/PAYING/DORMANT/CHURNED/ARCHIVED)',
+    ElMessageBox.prompt('输入漏斗阶段 (PROSPECT/NEW/CONVERTED/CHURNED/ARCHIVED)',
       '快速修改漏斗', { inputValue: currentStage.value || '' }).then(({ value }) => {
       if (value) updateStageSilently(value.toUpperCase())
     }).catch(() => {})
@@ -1499,15 +1679,39 @@ async function deleteTemplateItem(tpl) {
 function getFilteredSortedConversations() {
   let list = filteredConversations.value
   return [...list].sort((a, b) => {
+    // 归档客户始终排最下面
+    if (a.stage === 'ARCHIVED' && b.stage !== 'ARCHIVED') return 1
+    if (a.stage !== 'ARCHIVED' && b.stage === 'ARCHIVED') return -1
+    // 置顶优先
     if (a.pinned && !b.pinned) return -1
     if (!a.pinned && b.pinned) return 1
+    // PROSPECT（通过客户）排在前面
+    const aProspect = a.stage === 'PROSPECT'
+    const bProspect = b.stage === 'PROSPECT'
+    if (aProspect && !bProspect) return -1
+    if (!aProspect && bProspect) return 1
+    // 有最新消息的排前面
+    const aHasMsg = !!a.lastMessageAt
+    const bHasMsg = !!b.lastMessageAt
+    if (aHasMsg && !bHasMsg) return -1
+    if (!aHasMsg && bHasMsg) return 1
+    // 有未读消息的排前面
     const unreadA = a.unreadCount || 0
     const unreadB = b.unreadCount || 0
     if (unreadA !== unreadB) return unreadB - unreadA
-    const timeA = a.lastMessageTime || a.updatedAt || a.createdAt || 0
-    const timeB = b.lastMessageTime || b.updatedAt || b.createdAt || 0
+    // 按最后消息时间排序
+    const timeA = a.lastMessageTime || a.lastMessageAt || a.updatedAt || a.createdAt || 0
+    const timeB = b.lastMessageTime || b.lastMessageAt || b.updatedAt || b.createdAt || 0
     return new Date(timeB).getTime() - new Date(timeA).getTime()
   })
+}
+
+function getPinnedConversations() {
+  return getFilteredSortedConversations().filter(c => c.pinned)
+}
+
+function getNormalConversations() {
+  return getFilteredSortedConversations().filter(c => !c.pinned)
 }
 
 function detectLanguage(text) {
@@ -1694,7 +1898,7 @@ onUnmounted(() => {
 
 .filter-bar {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
 }
 
@@ -1718,19 +1922,160 @@ onUnmounted(() => {
   color: var(--color-text-3);
 }
 
-.sort-buttons {
-  display: flex;
-  gap: 4px;
+.date-filter-trigger {
   flex-shrink: 0;
-}
-.sort-buttons .el-button {
+  padding: 6px 10px;
+  font-size: 12px;
   background: var(--color-bg-3);
-  border-color: transparent;
+  border-color: var(--color-border);
   color: var(--color-text-2);
 }
-.sort-buttons .el-button:hover {
+.date-filter-trigger:hover {
   background: var(--color-bg-hover);
   color: var(--color-text);
+}
+.date-filter-label {
+  margin-left: 3px;
+  font-size: 11px;
+  opacity: 0.9;
+}
+
+.date-popover {
+  padding: 10px 12px;
+  position: relative;
+  z-index: 9999;
+}
+.date-popover :deep(.el-date-editor-tdate__popper) {
+  position: absolute !important;
+  top: 100% !important;
+  left: 0 !important;
+  margin-top: 4px;
+  z-index: 10000;
+}
+.date-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.date-section-title:not(:first-child) {
+  margin-top: 12px;
+}
+.date-quick-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.date-quick-row .el-button {
+  font-size: 12px;
+  padding: 5px 0;
+  background: var(--color-bg-3);
+  border-color: var(--color-border);
+  color: var(--color-text-2);
+  border-radius: 6px;
+}
+.date-quick-row .el-button:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text);
+}
+.date-quick-row .el-button.is-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+.date-quick-row .el-button.is-plain {
+  background: transparent;
+}
+.date-range-picker {
+  width: 100%;
+  display: block;
+}
+.date-range-picker :deep(.el-input__wrapper) {
+  padding: 4px 10px;
+  background: var(--color-bg-3);
+  box-shadow: none !important;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+}
+.date-range-picker :deep(.el-input__inner) {
+  color: var(--color-text);
+  font-size: 12px;
+}
+.date-range-picker :deep(.el-range-separator),
+.date-range-picker :deep(.el-input__prefix),
+.date-range-picker :deep(.el-input__suffix) {
+  color: var(--color-text-3);
+  font-size: 12px;
+}
+.date-range-picker :deep(.el-range-input) {
+  font-size: 12px;
+  color: var(--color-text);
+}
+.date-range-picker :deep(.el-range-separator) {
+  padding: 0 6px;
+}
+.date-popover-footer {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 32px;
+}
+.date-filter-hint {
+  font-size: 11px;
+  color: var(--color-text-3);
+}
+.date-popover-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.conv-section-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 10px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.conv-section-header .el-icon {
+  font-size: 12px;
+}
+.conv-section-header .section-count {
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+.conv-section-header.subtle {
+  color: var(--color-text-3);
+  border-top: 1px solid var(--color-border);
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
+.pin-icon {
+  color: #e6a23c;
+  flex-shrink: 0;
+}
+
+.pinned-item {
+  background: linear-gradient(90deg, rgba(230, 162, 60, 0.08) 0%, transparent 100%);
+  border-left: 2px solid #e6a23c;
+  padding-left: 8px !important;
+}
+.pinned-item.active {
+  background: linear-gradient(90deg, rgba(230, 162, 60, 0.12) 0%, rgba(88, 101, 242, 0.08) 100%);
+  border-left: 3px solid var(--color-primary) !important;
 }
 
 .conv-list-wrap {
@@ -1828,6 +2173,19 @@ onUnmounted(() => {
   padding: 0 5px;
   line-height: 1;
   border: 2px solid var(--color-bg-2);
+}
+
+.unread-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 12px;
+  height: 12px;
+  background: #ed4245;
+  border-radius: 50%;
+  border: 2px solid var(--color-bg);
+  z-index: 10;
+  box-shadow: 0 0 0 2px rgba(237, 66, 69, 0.25);
 }
 
 .account-dot {
@@ -3058,5 +3416,17 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+</style>
+
+<style>
+.date-popover-popper {
+  border-radius: 12px !important;
+  border: 1px solid var(--color-border, #e4e7ed) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12) !important;
+  padding: 0 !important;
+}
+.date-popover-popper .el-popover__content {
+  padding: 0 !important;
 }
 </style>

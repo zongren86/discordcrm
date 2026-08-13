@@ -151,7 +151,7 @@
     </el-dialog>
 
     <!-- 同步 Dialog -->
-    <el-dialog v-model="syncDialog.visible" title="同步服务器成员" width="620px" :close-on-click-modal="false">
+    <el-dialog v-model="syncDialog.visible" title="同步服务器成员" width="620px" :close-on-click-modal="false" class="sync-dialog">
       <div v-if="syncDialog.server" class="sync-info">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="所属账号">
@@ -186,6 +186,14 @@
           <el-form-item label="最大请求数">
             <el-input-number v-model="syncDialog.config.maxRequests" :min="1" :max="10000" :step="100" />
           </el-form-item>
+          <el-form-item label="续传同步">
+            <el-switch 
+              v-model="syncDialog.resumeSync" 
+              active-text="开启（从上次断点继续）" 
+              inactive-text="关闭（全量重新同步）"
+              style="--el-switch-on-color: #409eff;"
+            />
+          </el-form-item>
         </el-form>
       </div>
       <template #footer>
@@ -197,7 +205,17 @@
     </el-dialog>
 
     <!-- 进度 Dialog -->
-    <el-dialog v-model="progressDialog.visible" title="数据采集进度" width="600px" @close="stopProgressPolling" class="progress-dialog">
+    <el-dialog 
+      v-model="progressDialog.visible" 
+      title="数据采集进度" 
+      width="900px" 
+      @close="stopProgressPolling" 
+      class="progress-dialog"
+      center
+      align-center
+      :close-on-click-modal="false"
+      top="0"
+    >
       <div v-if="progressDialog.server" class="progress-content">
         <!-- 状态头部 -->
         <div class="progress-header">
@@ -275,9 +293,9 @@
               <div class="stat-values">
                 <span class="stat-current">{{ formatMs(currentProgressTask.lastRequestTimeMs || 0) }}</span>
                 <span class="stat-sep">/</span>
-                <span class="stat-total">{{ formatMs(currentProgressTask.totalResponseTimeMs || 0) }}</span>
+                <span class="stat-total">{{ formatMs(currentProgressTask.elapsedMs || 0) }}</span>
               </div>
-              <div class="stat-label">本次耗时 / 总耗时（秒）</div>
+              <div class="stat-label">本次耗时 / 总耗时</div>
             </div>
           </div>
 
@@ -349,8 +367,8 @@
               <div class="result-sub">完成率: {{ getCollectRate(currentProgressTask) }}%</div>
             </div>
             <div class="result-item">
-              <div class="result-label">本次耗时 / 总耗时（秒）</div>
-              <div class="result-value">{{ formatMs(currentProgressTask.lastRequestTimeMs || 0) }} / {{ formatMs(currentProgressTask.totalResponseTimeMs || 0) }}</div>
+              <div class="result-label">本次耗时 / 总耗时</div>
+              <div class="result-value">{{ formatMs(currentProgressTask.lastRequestTimeMs || 0) }} / {{ formatMs(currentProgressTask.elapsedMs || 0) }}</div>
               <div class="result-sub">总耗时: {{ formatElapsedTime(currentProgressTask) }}</div>
             </div>
             <div class="result-item">
@@ -386,9 +404,7 @@
             />
           </div>
 
-          <div class="result-actions">
-            <el-button type="primary" size="small" @click="progressDialog.visible = false">关闭</el-button>
-          </div>
+          
         </div>
 
         <!-- 进度消息（仅采集中显示） -->
@@ -424,10 +440,22 @@
           <el-icon class="is-loading"><Loading /></el-icon> 数据采集中，进度每 2 秒自动刷新...
         </div>
       </div>
+
+      <template #footer>
+        <div v-if="currentProgressTask && !isTerminalStatus && isRunningTask" style="display:flex;justify-content:flex-end;gap:8px;">
+          <el-button type="warning" :disabled="progressDialog.stopping" @click="handlePauseSync">
+            <el-icon><VideoPause /></el-icon> {{ progressDialog.stopping ? '正在停止...' : '暂停同步' }}
+          </el-button>
+          <el-button @click="progressDialog.visible = false">关闭</el-button>
+        </div>
+        <div v-else style="display:flex;justify-content:flex-end;gap:8px;">
+          <el-button @click="progressDialog.visible = false">关闭</el-button>
+        </div>
+      </template>
     </el-dialog>
 
     <!-- 成员明细 Dialog -->
-    <el-dialog v-model="memberDialog.visible" :title="memberDialogTitle" width="720px" :close-on-click-modal="false" @close="stopMemberAutoRefresh">
+    <el-dialog v-model="memberDialog.visible" :title="memberDialogTitle" width="720px" :close-on-click-modal="false" @close="stopMemberAutoRefresh" class="member-dialog">
       <div class="member-dialog-toolbar">
         <el-input
           v-model="memberDialog.search"
@@ -513,7 +541,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Edit, Delete, Download, DataLine, MagicStick,
   Loading, CircleCheck, Warning, Close, Monitor, Connection, User, Search,
-  CopyDocument, InfoFilled, Timer, Refresh
+  CopyDocument, InfoFilled, Timer, Refresh, VideoPause
 } from '@element-plus/icons-vue'
 import { useAccountsStore } from '@/stores/accounts'
 import { useGuildServersStore } from '@/stores/guildServers'
@@ -553,6 +581,7 @@ const syncDialog = reactive({
   fetching: false,
   server: null,
   token: '', 
+  resumeSync: true,
   config: {
     fetchLimit: 2000000,
     requestInterval: 3,
@@ -566,7 +595,8 @@ const syncDialog = reactive({
 const progressDialog = reactive({
   visible: false,
   server: null,
-  taskId: null
+  taskId: null,
+  stopping: false
 })
 
 // 成员明细 Dialog
@@ -645,6 +675,13 @@ const isTerminalStatus = computed(() => {
   return status === 'COMPLETED' || status === 'DONE' || status === 'FAILED' || status === 'ERROR'
 })
 
+// 是否有正在运行的任务
+const isRunningTask = computed(() => {
+  if (!currentProgressTask.value) return false
+  const status = currentProgressTask.value.status
+  return status === 'RUNNING' || status === 'PENDING'
+})
+
 // 结果详情辅助函数
 function getRequestRate(task) {
   if (!task) return 0
@@ -703,7 +740,7 @@ function formatMs(ms) {
   if (minutes < 60) return minutes + 'm ' + remainSeconds + 's'
   const hours = Math.floor(minutes / 60)
   const remainMinutes = minutes % 60
-  return hours + 'h ' + remainMinutes + 'm'
+  return hours + 'h ' + remainMinutes + 'm ' + remainSeconds + 's'
 }
 
 // 方法
@@ -796,6 +833,7 @@ async function confirmDelete(server) {
 
 function openSyncDialog(server) {
   syncDialog.server = server
+  syncDialog.resumeSync = true
   // 回填完整 token（非脱敏），供展示与编辑
   syncDialog.token = server.accountBotToken || server.botToken || ""
   // 加载商户配置作为默认值
@@ -839,7 +877,8 @@ async function startFetch() {
       maxMembers: syncDialog.config.fetchLimit,
       pageDelay: syncDialog.config.requestInterval,
       maxDepth: syncDialog.config.maxDepth,
-      maxRequests: syncDialog.config.maxRequests
+      maxRequests: syncDialog.config.maxRequests,
+      resumeSync: syncDialog.resumeSync
     })
 
     if (result.success) {
@@ -888,6 +927,7 @@ async function startFetch() {
 async function openProgressDialog(server, taskId = null) {
   progressDialog.server = server
   progressDialog.visible = true
+  progressDialog.stopping = false
 
   // 如果没传 taskId，尝试从 Map 或后端获取
   if (!taskId) {
@@ -984,6 +1024,11 @@ function startTaskPolling(taskId, serverId) {
         progressTasksMap.set(taskId, task)
         if (task.status === 'COMPLETED' || task.status === 'FAILED' || task.status === 'DONE' || task.status === 'ERROR') {
           stopTaskPolling(taskId, serverId)
+          progressDialog.stopping = false
+          // 清理 syncTasksMap，使后续点击"进度"按钮走已完成的历史数据分支
+          if (serverId) {
+            syncTasksMap.delete(serverId)
+          }
           await loadServers()
           // 如果成员明细对话框正在显示该服务器，刷新成员列表
           if (memberDialog.visible && memberDialog.server?.id === serverId) {
@@ -1019,7 +1064,8 @@ function stopTaskPolling(taskId, serverId) {
     syncTimersMap.delete(taskId)
   }
   syncTasksMap.delete(serverId)
-  progressTasksMap.delete(taskId)
+  // 保留 progressTasksMap 中的任务数据，供完成后展示
+  // 仅在任务不存在时清理
 }
 
 async function loadLatestTaskStatus(serverId) {
@@ -1146,6 +1192,24 @@ function stopProgressPolling() {
   // 进度对话框关闭时，任务继续在后台轮询
   // 因为我们使用了每个任务独立的定时器，所以这里不需要停止轮询
   // startTaskPolling 会继续在后台运行
+}
+
+async function handlePauseSync() {
+  if (!progressDialog.taskId || progressDialog.stopping) return
+  progressDialog.stopping = true
+  try {
+    const result = await guildServers.stopTask(progressDialog.taskId)
+    if (result && result.success) {
+      ElMessage.success(result.message || '已请求停止，当前请求完成后将自动保存并停止')
+      // 轮询会继续检测任务状态变化，完成后自动切换到完成视图
+    } else {
+      ElMessage.error(result?.message || '停止失败')
+      progressDialog.stopping = false
+    }
+  } catch (e) {
+    ElMessage.error('停止请求失败: ' + (e.message || '未知错误'))
+    progressDialog.stopping = false
+  }
 }
 
 function formatTime(t) {
@@ -1606,25 +1670,64 @@ onUnmounted(() => {
 }
 .action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 
-/* Progress dialog scroll fix */
-.progress-dialog :deep(.el-dialog__body) {
-  max-height: 70vh;
-  overflow-y: auto;
-  padding-top: 8px;
-}
-
+/* Progress dialog - centered, full-height, scrollable body */
 .progress-dialog :deep(.el-dialog) {
-  max-height: 85vh;
+  margin: 0 !important;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-height: 90vh;
+  max-width: 95vw;
   display: flex;
   flex-direction: column;
 }
 
 .progress-dialog :deep(.el-dialog__header) {
   flex-shrink: 0;
+  padding: 16px 20px;
 }
 
 .progress-dialog :deep(.el-dialog__body) {
   flex: 1;
   overflow-y: auto;
+  padding: 12px 20px;
+}
+
+.progress-dialog :deep(.el-dialog__footer) {
+  flex-shrink: 0;
+  padding: 12px 20px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+/* Responsive: on smaller screens */
+@media screen and (max-width: 1200px) {
+  .progress-dialog :deep(.el-dialog) {
+    width: 95vw !important;
+    max-height: 95vh;
+  }
+  .progress-stats-enhanced {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .progress-dialog :deep(.el-dialog) {
+    width: 98vw !important;
+    max-height: 98vh;
+  }
+  .progress-stats-enhanced {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Sync dialog centering */
+.sync-dialog :deep(.el-dialog) {
+  margin-top: 8vh !important;
+}
+
+/* Member dialog centering */
+.member-dialog :deep(.el-dialog) {
+  margin-top: 6vh !important;
 }
 </style>

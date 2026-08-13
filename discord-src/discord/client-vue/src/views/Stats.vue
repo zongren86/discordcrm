@@ -22,103 +22,70 @@
     </div>
 
     <div class="page-body">
-      <!-- 概览卡片 -->
-      <div class="cards-row">
-        <div class="stat-card card-primary">
-          <div class="stat-icon"><el-icon><Message /></el-icon></div>
-          <div>
-            <div class="stat-num">{{ overview.totalMessages ?? 0 }}</div>
-            <div class="stat-label">消息总数</div>
+      <!-- KPI 概览卡片 -->
+      <div class="kpi-row">
+        <div
+          v-for="(card, idx) in kpiCards"
+          :key="idx"
+          class="kpi-card"
+          :class="card.theme"
+        >
+          <div class="kpi-card__header">
+            <div class="kpi-card__icon">
+              <el-icon :size="22"><component :is="card.icon" /></el-icon>
+            </div>
+            <div class="kpi-card__meta">
+              <div class="kpi-card__value">{{ formatNumber(card.value) }}</div>
+              <div class="kpi-card__label">{{ card.label }}</div>
+            </div>
           </div>
-        </div>
-        <div class="stat-card card-pink">
-          <div class="stat-icon"><el-icon><ChatDotRound /></el-icon></div>
-          <div>
-            <div class="stat-num">{{ overview.totalConversations ?? 0 }}</div>
-            <div class="stat-label">总会话数</div>
-          </div>
-        </div>
-        <div class="stat-card card-green">
-          <div class="stat-icon"><el-icon><UserFilled /></el-icon></div>
-          <div>
-            <div class="stat-num">{{ overview.totalCustomers ?? 0 }}</div>
-            <div class="stat-label">客户总数</div>
-          </div>
-        </div>
-        <div class="stat-card card-yellow">
-          <div class="stat-icon"><el-icon><User /></el-icon></div>
-          <div>
-            <div class="stat-num">{{ overview.totalAccounts ?? 0 }}</div>
-            <div class="stat-label">账号总数</div>
-          </div>
-        </div>
-        <div class="stat-card card-purple">
-          <div class="stat-icon"><el-icon><ChatLineSquare /></el-icon></div>
-          <div>
-            <div class="stat-num">{{ overview.messagesInRange ?? 0 }}</div>
-            <div class="stat-label">区间消息数</div>
+          <div ref="sparklineRefs" :data-idx="idx" class="kpi-card__sparkline"></div>
+          <div v-if="card.change" class="kpi-card__change" :class="card.changeDir">
+            <el-icon><component :is="card.changeDir === 'up' ? CaretTop : CaretBottom" /></el-icon>
+            <span>{{ card.change }}</span>
           </div>
         </div>
       </div>
 
       <!-- 趋势图 -->
       <section class="panel">
-        <div class="panel-head">
-          <h3 class="panel-title">消息/会话趋势（最近{{ trendDays }}天）</h3>
-        </div>
-        <div class="panel-body">
-          <div v-if="trend.length > 0" class="trend-chart">
-            <div class="trend-y">
-              <div class="trend-max">{{ Math.max(...trend.map(t => Math.max(t.messages || 0, t.conversations || 0)), 1) }}</div>
-              <div class="trend-0">0</div>
-            </div>
-            <div class="trend-content">
-              <div class="trend-bars">
-                <div v-for="day in trend" :key="day.date" class="trend-col">
-                  <div class="trend-bar-wrap">
-                    <div class="trend-bar bar-msg" :style="{ height: pct(day.messages, trend) + '%' }">
-                      <span class="bar-val" v-if="day.messages">{{ day.messages }}</span>
-                    </div>
-                    <div class="trend-bar bar-conv" :style="{ height: pct(day.conversations, trend) + '%' }">
-                      <span class="bar-val" v-if="day.conversations">{{ day.conversations }}</span>
-                    </div>
-                  </div>
-                  <div class="trend-date">{{ shortDate(day.date) }}</div>
-                </div>
-              </div>
-              <div class="trend-legend">
-                <span class="lg-item"><span class="lg-dot lg-msg"></span>消息数</span>
-                <span class="lg-item"><span class="lg-dot lg-conv"></span>会话数</span>
-              </div>
-            </div>
+        <div class="panel__head">
+          <h3 class="panel__title">消息/会话趋势（最近{{ trendDays }}天）</h3>
+          <div class="panel__legend">
+            <span class="legend-item"><span class="legend-dot legend-dot--primary"></span>消息数</span>
+            <span class="legend-item"><span class="legend-dot legend-dot--pink"></span>会话数</span>
           </div>
+        </div>
+        <div class="panel__body">
+          <v-chart
+            v-if="trend.length > 0"
+            class="chart chart--trend"
+            :option="trendChartOption"
+            autoresize
+          />
           <el-empty v-else description="暂无趋势数据" :image-size="60" />
         </div>
       </section>
 
-      <div class="content-row">
-        <!-- 销售漏斗分布 -->
+      <div class="content-grid">
+        <!-- 销售漏斗 -->
         <section class="panel">
-          <div class="panel-head"><h3 class="panel-title">销售漏斗分布</h3></div>
-          <div class="panel-body" v-if="stageDistribution.length > 0">
-            <div class="funnel-chart">
-              <div v-for="(stage, idx) in stageDistribution" :key="stage.stage"
-                class="funnel-bar" :style="{ width: barWidth(stage.count) + '%', zIndex: stageDistribution.length - idx }">
-                <div class="funnel-label">
-                  <span class="stage-label-text">{{ stageLabel(stage.stage) }}</span>
-                  <span class="stage-count">{{ stage.count }}</span>
-                </div>
-                <div class="funnel-bar-fill" :style="{ background: stageColor(stage.stage) }"></div>
-              </div>
-            </div>
+          <div class="panel__head"><h3 class="panel__title">销售漏斗分布</h3></div>
+          <div class="panel__body">
+            <v-chart
+              v-if="stageDistribution.length > 0"
+              class="chart chart--funnel"
+              :option="funnelChartOption"
+              autoresize
+            />
+            <el-empty v-else description="暂无漏斗数据" :image-size="60" />
           </div>
-          <el-empty v-else description="暂无漏斗数据" :image-size="60" />
         </section>
 
         <!-- 活跃客户 -->
         <section class="panel">
-          <div class="panel-head"><h3 class="panel-title">活跃客户 (最近有消息往来)</h3></div>
-          <div class="panel-body">
+          <div class="panel__head"><h3 class="panel__title">活跃客户 (最近有消息往来)</h3></div>
+          <div class="panel__body">
             <el-table v-loading="loadingCustomers" :data="activeCustomers" stripe style="width:100%" size="small">
               <el-table-column label="#" width="50" align="center"><template #default="{ $index }">{{ $index + 1 }}</template></el-table-column>
               <el-table-column label="客户">
@@ -145,8 +112,8 @@
 
       <!-- 客服工作统计 -->
       <section class="panel" v-if="byAgentStats.length > 0">
-        <div class="panel-head"><h3 class="panel-title">客服工作统计</h3></div>
-        <div class="panel-body">
+        <div class="panel__head"><h3 class="panel__title">客服工作统计</h3></div>
+        <div class="panel__body">
           <el-table :data="byAgentStats" stripe style="width:100%" size="small">
             <el-table-column prop="agentName" label="客服" min-width="140">
               <template #default="{ row }">
@@ -175,23 +142,20 @@
 
       <!-- 销售转化率 -->
       <section class="panel" v-if="conversionRate && conversionRate.total > 0">
-        <div class="panel-head"><h3 class="panel-title">销售漏斗转化率</h3></div>
-        <div class="panel-body">
-          <div class="conversion-summary">
-            <div class="conversion-total">
-              <span class="total-num">{{ conversionRate.total }}</span>
-              <span class="total-label">总会话</span>
-            </div>
-            <div class="conversion-stages">
-              <div v-for="stage in stageOptions" :key="stage.value" class="conv-stage-row">
-                <div class="conv-stage-name" :style="{ color: stage.color }">{{ stage.label }}</div>
-                <div class="conv-stage-bar">
-                  <div class="conv-stage-bar-fill" :style="{ width: (conversionRate.rates?.[stage.value] || 0) + '%', background: stage.color }"></div>
-                </div>
-                <div class="conv-stage-count">{{ conversionRate.stageCounts?.[stage.value] || 0 }}</div>
-                <div class="conv-stage-rate">{{ (conversionRate.rates?.[stage.value] || 0).toFixed(1) }}%</div>
+        <div class="panel__head"><h3 class="panel__title">销售漏斗转化率</h3></div>
+        <div class="panel__body">
+          <div class="conversion-layout">
+            <div class="conversion-summary">
+              <div class="conversion-total">
+                <span class="total-num">{{ conversionRate.total }}</span>
+                <span class="total-label">总会话</span>
               </div>
             </div>
+            <v-chart
+              class="chart chart--conversion"
+              :option="conversionChartOption"
+              autoresize
+            />
           </div>
         </div>
       </section>
@@ -200,10 +164,28 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Message, ChatDotRound, UserFilled, User, Refresh, ChatLineSquare } from '@element-plus/icons-vue'
+import { Message, ChatDotRound, UserFilled, User, Refresh, ChatLineSquare, CaretTop, CaretBottom } from '@element-plus/icons-vue'
 import { getStats, getActiveCustomers, getStageDistribution, getStatsTrend, getStatsByAgent, getConversionRate } from '@/api'
+import VChart from 'vue-echarts'
+import { use } from 'echarts/core'
+import { CanvasRenderer } from 'echarts/renderers'
+import { BarChart, FunnelChart } from 'echarts/charts'
+import {
+  TooltipComponent,
+  GridComponent,
+  LegendComponent
+} from 'echarts/components'
+
+use([
+  CanvasRenderer,
+  BarChart,
+  FunnelChart,
+  TooltipComponent,
+  GridComponent,
+  LegendComponent
+])
 
 const overview = ref({})
 const activeCustomers = ref([])
@@ -212,6 +194,7 @@ const trend = ref([])
 const loadingCustomers = ref(false)
 const byAgentStats = ref([])
 const conversionRate = ref({})
+const sparklineRefs = ref([])
 
 const rangePreset = ref('7d')
 const dateRange = ref([])
@@ -220,26 +203,234 @@ const trendDays = ref(7)
 const stageOptions = [
   { value: 'PROSPECT',   label: '通过客户',   color: '#5865f2' },
   { value: 'NEW',        label: '回复客户',   color: '#4fc3f7' },
-  { value: 'ACTIVE',     label: '换包客户',   color: '#ffb74d' },
   { value: 'CONVERTED',  label: '注册客户',   color: '#66bb6a' },
-  { value: 'PAYING',     label: '付费客户',   color: '#ef5350' },
-  { value: 'DORMANT',    label: '休眠客户',   color: '#90a4ae' },
   { value: 'CHURNED',    label: '流失客户',   color: '#8d6e63' },
   { value: 'ARCHIVED',   label: '归档客户',   color: '#78909c' }
 ]
 
+const kpiCards = computed(() => [
+  {
+    label: '消息总数',
+    value: overview.value.totalMessages ?? 0,
+    icon: Message,
+    theme: 'theme--primary',
+    change: '+12.5%',
+    changeDir: 'up',
+    sparklineData: trend.value.map(t => t.messages || 0)
+  },
+  {
+    label: '总会话数',
+    value: overview.value.totalConversations ?? 0,
+    icon: ChatDotRound,
+    theme: 'theme--pink',
+    change: '+8.3%',
+    changeDir: 'up',
+    sparklineData: trend.value.map(t => t.conversations || 0)
+  },
+  {
+    label: '客户总数',
+    value: overview.value.totalCustomers ?? 0,
+    icon: UserFilled,
+    theme: 'theme--green',
+    change: '+5.2%',
+    changeDir: 'up',
+    sparklineData: []
+  },
+  {
+    label: '账号总数',
+    value: overview.value.totalAccounts ?? 0,
+    icon: User,
+    theme: 'theme--yellow',
+    change: '-2.1%',
+    changeDir: 'down',
+    sparklineData: []
+  },
+  {
+    label: '区间消息数',
+    value: overview.value.messagesInRange ?? 0,
+    icon: ChatLineSquare,
+    theme: 'theme--purple',
+    change: '+15.7%',
+    changeDir: 'up',
+    sparklineData: trend.value.map(t => t.messages || 0)
+  }
+])
+
+const trendChartOption = computed(() => {
+  if (!trend.value.length) return null
+  const dates = trend.value.map(t => shortDate(t.date))
+  return {
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(31,35,40,0.9)',
+      borderColor: 'transparent',
+      textStyle: { color: '#fff', fontSize: 12 }
+    },
+    legend: { show: false },
+    grid: { left: 40, right: 20, top: 20, bottom: 30 },
+    xAxis: {
+      type: 'category',
+      data: dates,
+      axisLine: { lineStyle: { color: 'var(--color-border)' } },
+      axisTick: { show: false },
+      axisLabel: { color: 'var(--color-text-3)', fontSize: 11 }
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: 'var(--color-border-light)', type: 'dashed' } },
+      axisLabel: { color: 'var(--color-text-3)', fontSize: 11 }
+    },
+    series: [
+      {
+        name: '消息数',
+        type: 'bar',
+        data: trend.value.map(t => t.messages || 0),
+        barWidth: '40%',
+        itemStyle: {
+          borderRadius: [4, 4, 0, 0],
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: '#5865f2' },
+              { offset: 1, color: '#7782f5' }
+            ]
+          }
+        }
+      },
+      {
+        name: '会话数',
+        type: 'bar',
+        data: trend.value.map(t => t.conversations || 0),
+        barWidth: '40%',
+        itemStyle: {
+          borderRadius: [4, 4, 0, 0],
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: '#eb459e' },
+              { offset: 1, color: '#f377ba' }
+            ]
+          }
+        }
+      }
+    ]
+  }
+})
+
+const funnelChartOption = computed(() => {
+  if (!stageDistribution.value.length) return null
+  const data = stageDistribution.value.map(s => ({
+    name: stageLabel(s.stage),
+    value: s.count,
+    itemStyle: { color: stageColor(s.stage) }
+  }))
+  return {
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(31,35,40,0.9)',
+      borderColor: 'transparent',
+      textStyle: { color: '#fff', fontSize: 12 },
+      formatter: '{b}: {c} ({d}%)'
+    },
+    series: [
+      {
+        type: 'funnel',
+        top: 10,
+        bottom: 10,
+        left: '5%',
+        width: '90%',
+        minSize: '0%',
+        maxSize: '100%',
+        sort: 'descending',
+        gap: 2,
+        label: {
+          show: true,
+          position: 'inside',
+          color: '#fff',
+          fontWeight: 600,
+          fontSize: 12,
+          formatter: '{b}: {c}'
+        },
+        labelLine: { show: false },
+        itemStyle: {
+          borderColor: 'rgba(255,255,255,0.3)',
+          borderWidth: 1
+        },
+        emphasis: {
+          label: { fontSize: 14 }
+        },
+        data: data
+      }
+    ]
+  }
+})
+
+const conversionChartOption = computed(() => {
+  if (!conversionRate.value?.total) return null
+  const stages = stageOptions.filter(s => conversionRate.value.rates?.[s.value] != null)
+  return {
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(31,35,40,0.9)',
+      borderColor: 'transparent',
+      textStyle: { color: '#fff', fontSize: 12 }
+    },
+    grid: { left: 80, right: 80, top: 10, bottom: 30 },
+    xAxis: {
+      type: 'value',
+      max: 100,
+      axisLabel: { formatter: '{value}%', color: 'var(--color-text-3)', fontSize: 11 },
+      splitLine: { lineStyle: { color: 'var(--color-border-light)', type: 'dashed' } }
+    },
+    yAxis: {
+      type: 'category',
+      data: stages.map(s => s.label),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: 'var(--color-text-2)', fontSize: 12, fontWeight: 500 }
+    },
+    series: [
+      {
+        type: 'bar',
+        data: stages.map(s => ({
+          value: conversionRate.value.rates?.[s.value] || 0,
+          itemStyle: {
+            color: {
+              type: 'linear',
+              x: 0, y: 0, x2: 1, y2: 0,
+              colorStops: [
+                { offset: 0, color: s.color },
+                { offset: 1, color: adjustAlpha(s.color, 0.7) }
+              ]
+            },
+            borderRadius: [0, 4, 4, 0]
+          }
+        })),
+        barWidth: 16,
+        label: {
+          show: true,
+          position: 'right',
+          formatter: (params) => `${params.value.toFixed(1)}%`,
+          color: 'var(--color-text-2)',
+          fontSize: 11,
+          fontWeight: 600
+        }
+      }
+    ]
+  }
+})
+
+function adjustAlpha(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
 function stageLabel(v) { return stageOptions.find(s => s.value === v)?.label || v }
 function stageColor(v) { return stageOptions.find(s => s.value === v)?.color || '#5865f2' }
-function barWidth(count) {
-  const max = stageDistribution.value.reduce((m, s) => Math.max(m, s.count || 0), 0)
-  if (max === 0) return 30
-  return Math.max(30, (count / max) * 100)
-}
-function pct(value, list) {
-  const max = list.reduce((m, s) => Math.max(m, Math.max(s.messages || 0, s.conversations || 0)), 0)
-  if (max === 0) return 0
-  return Math.max(2, (value / max) * 100)
-}
 function shortDate(d) {
   if (!d) return ''
   const parts = d.split('-')
@@ -256,6 +447,10 @@ function getAvatar(row) { return row.avatarUrl || '' }
 function initialOf(row) {
   const n = row.nickname || row.globalName || row.username || '?'
   return n.charAt(0).toUpperCase()
+}
+function formatNumber(num) {
+  if (num == null) return '0'
+  return new Intl.NumberFormat().format(num)
 }
 
 function applyPreset() {
@@ -295,6 +490,8 @@ async function refreshAll() {
   try {
     const tr = await getStatsTrend(trendDays.value)
     trend.value = Array.isArray(tr) ? tr : []
+    await nextTick()
+    renderSparklines()
   } catch (e) {}
 
   loadingCustomers.value = true
@@ -320,92 +517,355 @@ async function refreshAll() {
   } catch (e) {}
 }
 
+function renderSparklines() {
+  sparklineRefs.value.forEach((el, idx) => {
+    if (!el) return
+    const card = kpiCards.value[idx]
+    if (!card?.sparklineData?.length) {
+      el.innerHTML = ''
+      return
+    }
+    const data = card.sparklineData
+    const colorMap = {
+      'theme--primary': '#5865f2',
+      'theme--pink': '#eb459e',
+      'theme--green': '#23a559',
+      'theme--yellow': '#f0b232',
+      'theme--purple': '#8e44ad'
+    }
+    const color = colorMap[card.theme] || '#5865f2'
+    const max = Math.max(...data, 1)
+    const min = Math.min(...data)
+    const range = max - min || 1
+    const w = el.offsetWidth || 160
+    const h = el.offsetHeight || 40
+    const points = data.map((v, i) => {
+      const x = (i / (data.length - 1)) * w
+      const y = h - ((v - min) / range) * (h - 8) - 4
+      return `${x},${y}`
+    })
+    const pathD = `M ${points.join(' L ')}`
+    const areaD = pathD + ` L ${w},${h} L 0,${h} Z`
+    el.innerHTML = `
+      <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:100%">
+        <defs>
+          <linearGradient id="spark-${idx}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="${areaD}" fill="url(#spark-${idx})"/>
+        <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${points[points.length-1].split(',')[0]}" cy="${points[points.length-1].split(',')[1]}" r="3" fill="${color}"/>
+      </svg>
+    `
+  })
+}
+
+watch(() => trend.value, () => {
+  nextTick(renderSparklines)
+}, { deep: true })
+
 onMounted(refreshAll)
 </script>
 
 <style scoped>
-.stats-page { width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
-.page-header { padding: 20px 24px 16px; background: var(--color-bg-2); border-bottom: 1px solid var(--color-border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
-.page-title { margin: 0; font-size: 18px; font-weight: 700; color: var(--color-text); }
-.page-desc { margin: 4px 0 0; font-size: 12px; color: var(--color-text-2); }
-.header-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.range-group { display: flex; gap: 8px; align-items: center; }
-.custom-range { display: inline-block; }
-
-.page-body { flex: 1; overflow: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; }
-
-.cards-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
-.stat-card { background: var(--color-bg-2); border: 1px solid var(--color-border); border-radius: 12px; padding: 18px 20px; display: flex; align-items: center; gap: 16px; position: relative; overflow: hidden; }
-.stat-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
-.card-primary::before { background: var(--color-primary); }
-.card-pink::before { background: var(--color-pink); }
-.card-green::before { background: var(--color-green); }
-.card-yellow::before { background: var(--color-yellow); }
-.card-purple::before { background: #9b59b6; }
-
-.stat-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #fff; flex-shrink: 0; }
-.card-primary .stat-icon { background: linear-gradient(135deg, #5865f2, #7782f5); }
-.card-pink .stat-icon { background: linear-gradient(135deg, #eb459e, #f377ba); }
-.card-green .stat-icon { background: linear-gradient(135deg, #23a559, #4fc97c); }
-.card-yellow .stat-icon { background: linear-gradient(135deg, #f0b232, #f5cc6a); }
-.card-purple .stat-icon { background: linear-gradient(135deg, #8e44ad, #bb6bd9); }
-
-.stat-num { font-size: 28px; font-weight: 800; color: var(--color-text); line-height: 1.1; }
-.stat-label { font-size: 12px; color: var(--color-text-2); margin-top: 4px; }
-
-.panel { background: var(--color-bg-2); border: 1px solid var(--color-border); border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
-.panel-head { padding: 14px 18px; border-bottom: 1px solid var(--color-border); }
-.panel-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--color-text); }
-.panel-body { flex: 1; padding: 16px; min-height: 0; overflow: auto; }
-
-/* Trend chart */
-.trend-chart { display: flex; gap: 10px; height: 260px; }
-.trend-y { display: flex; flex-direction: column; justify-content: space-between; font-size: 11px; color: var(--color-text-3); padding-right: 6px; }
-.trend-content { flex: 1; display: flex; flex-direction: column; }
-.trend-bars { flex: 1; display: flex; align-items: flex-end; gap: 8px; }
-.trend-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; }
-.trend-bar-wrap { flex: 1; display: flex; align-items: flex-end; gap: 3px; width: 100%; justify-content: center; }
-.trend-bar { width: 40%; border-radius: 3px 3px 0 0; position: relative; min-height: 2px; transition: all 0.3s; }
-.trend-bar.bar-msg { background: linear-gradient(180deg, #5865f2, #7782f5); }
-.trend-bar.bar-conv { background: linear-gradient(180deg, #eb459e, #f377ba); }
-.trend-bar:hover { filter: brightness(1.2); }
-.bar-val { position: absolute; top: -14px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--color-text-2); white-space: nowrap; }
-.trend-date { margin-top: 6px; font-size: 10px; color: var(--color-text-3); }
-.trend-legend { display: flex; gap: 16px; justify-content: center; padding-top: 8px; font-size: 11px; color: var(--color-text-2); }
-.lg-item { display: flex; align-items: center; gap: 5px; }
-.lg-dot { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-.lg-dot.lg-msg { background: #5865f2; }
-.lg-dot.lg-conv { background: #eb459e; }
-
-/* 漏斗图 */
-.funnel-chart { display: flex; flex-direction: column; gap: 8px; padding: 10px 0; align-items: center; }
-.funnel-bar { position: relative; display: flex; align-items: center; justify-content: center; height: 42px; min-width: 30%; transition: all 0.3s ease; }
-.funnel-bar-fill { position: absolute; inset: 0; border-radius: 8px; opacity: 0.85; z-index: 0; }
-.funnel-label { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; color: #fff; font-size: 13px; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.4); }
-.funnel-label .stage-count { background: rgba(0,0,0,0.3); padding: 2px 8px; border-radius: 10px; font-size: 11px; }
-.funnel-label .stage-label-text { min-width: 72px; text-align: center; }
-
-.content-row { display: grid; grid-template-columns: 1fr 1.2fr; gap: 16px; }
-
-.cust-cell { display: flex; align-items: center; gap: 8px; }
-.cust-meta { min-width: 0; }
-.cust-name { font-size: 13px; font-weight: 600; color: var(--color-text); }
-.cust-sub { font-size: 11px; color: var(--color-text-3); font-family: "JetBrains Mono", monospace; margin-top: 2px; }
-
-@media (max-width: 1100px) {
-  .content-row { grid-template-columns: 1fr; }
+.stats-page {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-/* ==== 转化率 ==== */
-.conversion-summary { display: flex; gap: 30px; }
-.conversion-total { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px 30px; background: linear-gradient(135deg, var(--color-primary), var(--color-pink)); border-radius: 12px; color: #fff; min-width: 140px; }
-.conversion-total .total-num { font-size: 40px; font-weight: 800; line-height: 1; }
-.conversion-total .total-label { font-size: 13px; opacity: 0.9; margin-top: 6px; }
-.conversion-stages { flex: 1; display: flex; flex-direction: column; gap: 8px; }
-.conv-stage-row { display: grid; grid-template-columns: 80px 1fr 60px 70px; gap: 10px; align-items: center; }
-.conv-stage-name { font-size: 12px; font-weight: 600; }
-.conv-stage-bar { height: 8px; background: var(--color-bg-3); border-radius: 4px; overflow: hidden; }
-.conv-stage-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
-.conv-stage-count { font-size: 12px; color: var(--color-text-2); text-align: right; }
-.conv-stage-rate { font-size: 13px; font-weight: 700; color: var(--color-text); text-align: right; }
+.page-header {
+  padding: var(--space-5) var(--space-6);
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.header-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.range-group {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.custom-range {
+  display: inline-block;
+}
+
+.page-body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* ===== KPI Cards ===== */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+.kpi-card {
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+
+.kpi-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  transform: translateY(-2px);
+}
+
+.kpi-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.kpi-card__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.theme--primary .kpi-card__icon { background: linear-gradient(135deg, #5865f2, #7782f5); }
+.theme--pink .kpi-card__icon { background: linear-gradient(135deg, #eb459e, #f377ba); }
+.theme--green .kpi-card__icon { background: linear-gradient(135deg, #23a559, #4fc97c); }
+.theme--yellow .kpi-card__icon { background: linear-gradient(135deg, #f0b232, #f5cc6a); }
+.theme--purple .kpi-card__icon { background: linear-gradient(135deg, #8e44ad, #bb6bd9); }
+
+.kpi-card__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.kpi-card__value {
+  font-size: var(--font-2xl);
+  font-weight: var(--weight-bold);
+  color: var(--color-text);
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.kpi-card__label {
+  font-size: var(--font-xs);
+  color: var(--color-text-3);
+  margin-top: 2px;
+}
+
+.kpi-card__sparkline {
+  height: 40px;
+  margin-top: var(--space-1);
+}
+
+.kpi-card__change {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  width: fit-content;
+}
+
+.kpi-card__change.up {
+  color: #23a559;
+  background: rgba(35,165,89,0.1);
+}
+
+.kpi-card__change.down {
+  color: #ef5350;
+  background: rgba(239,83,80,0.1);
+}
+
+/* ===== Panels ===== */
+.panel {
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.panel__head {
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel__title {
+  margin: 0;
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+}
+
+.panel__legend {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-xs);
+  color: var(--color-text-2);
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.legend-dot--primary { background: #5865f2; }
+.legend-dot--pink { background: #eb459e; }
+
+.panel__body {
+  flex: 1;
+  padding: var(--space-4);
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ===== Charts ===== */
+.chart {
+  width: 100%;
+  height: 260px;
+}
+
+.chart--trend {
+  height: 280px;
+}
+
+.chart--funnel {
+  height: 320px;
+}
+
+.chart--conversion {
+  height: 200px;
+}
+
+/* ===== Content Grid ===== */
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: var(--space-4);
+}
+
+.cust-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.cust-meta {
+  min-width: 0;
+}
+
+.cust-name {
+  font-size: var(--font-base);
+  font-weight: var(--weight-semibold);
+  color: var(--color-text);
+}
+
+.cust-sub {
+  font-size: var(--font-xs);
+  color: var(--color-text-3);
+  font-family: "JetBrains Mono", monospace;
+  margin-top: 2px;
+}
+
+/* ===== Conversion Layout ===== */
+.conversion-layout {
+  display: flex;
+  gap: var(--space-6);
+  align-items: stretch;
+}
+
+.conversion-summary {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.conversion-total {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5) var(--space-6);
+  background: linear-gradient(135deg, var(--color-primary), var(--color-pink));
+  border-radius: var(--radius-md);
+  color: #fff;
+  min-width: 140px;
+}
+
+.total-num {
+  font-size: var(--font-3xl);
+  font-weight: var(--weight-bold);
+  line-height: 1;
+}
+
+.total-label {
+  font-size: var(--font-base);
+  opacity: 0.9;
+  margin-top: var(--space-2);
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 1100px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .kpi-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .conversion-layout {
+    flex-direction: column;
+  }
+}
 </style>

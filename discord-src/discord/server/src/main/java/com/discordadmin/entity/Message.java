@@ -8,7 +8,14 @@ import java.time.Instant;
 
 @Entity
 @Table(name = "messages", indexes = {
-        @Index(name = "idx_messages_conversation", columnList = "conversation_id")
+        @Index(name = "idx_messages_conversation", columnList = "conversation_id"),
+        @Index(name = "idx_messages_merchant_id", columnList = "merchant_id"),
+        @Index(name = "idx_messages_conversation_created", columnList = "conversation_id, created_at"),
+        @Index(name = "idx_messages_conversation_direction", columnList = "conversation_id, direction, discord_created_at"),
+        @Index(name = "idx_messages_created_at", columnList = "created_at"),
+        @Index(name = "idx_messages_direction", columnList = "direction"),
+        @Index(name = "idx_messages_sender_id", columnList = "sender_discord_user_id"),
+        @Index(name = "idx_messages_merchant_created", columnList = "merchant_id, created_at")
     },
     uniqueConstraints = @UniqueConstraint(name = "uk_conversation_discord_msg",
             columnNames = {"conversation_id", "discord_message_id"}))

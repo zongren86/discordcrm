@@ -67,7 +67,7 @@
               <el-button size="small" type="primary" link @click="openPerm(row)">
                 <el-icon><Lock /></el-icon> 分配权限
               </el-button>
-              <el-button size="small" type="primary" link :disabled="row.builtin" @click="remove(row)">
+              <el-button size="small" type="primary" link @click="remove(row)">
                 <el-icon><Delete /></el-icon> 删除
               </el-button>
             </div>

@@ -10,7 +10,8 @@ import {
   getMemberFetchTasks,
   getLatestServerTask,
   resolveMemberLink,
-  getGuildMerchantConfig
+  getGuildMerchantConfig,
+  stopMemberFetchTask
 } from '@/api'
 
 export const useGuildServersStore = defineStore('guildServers', {
@@ -109,6 +110,14 @@ export const useGuildServersStore = defineStore('guildServers', {
         return await getLatestServerTask(serverId)
       } catch (e) {
         return null
+      }
+    },
+    // 停止正在进行的采集任务
+    async stopTask(taskId) {
+      try {
+        return await stopMemberFetchTask(taskId)
+      } catch (e) {
+        return { success: false, message: e.message }
       }
     },
     async loadMerchantConfig() {

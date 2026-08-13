@@ -53,6 +53,9 @@ public class MerchantConfigController {
         if (payload.containsKey("maxRequests")) {
             config.setMaxRequests(Integer.valueOf(payload.get("maxRequests").toString()));
         }
+        if (payload.containsKey("archiveDays")) {
+            config.setArchiveDays(Integer.valueOf(payload.get("archiveDays").toString()));
+        }
 
         MerchantConfig updated = guildService.updateConfig(merchantId, config);
         return toMap(updated);
@@ -67,6 +70,7 @@ public class MerchantConfigController {
         map.put("requestCount", config.getRequestCount());
         map.put("maxDepth", config.getMaxDepth());
         map.put("maxRequests", config.getMaxRequests());
+        map.put("archiveDays", config.getArchiveDays());
         map.put("updatedAt", config.getUpdatedAt());
         return map;
     }
@@ -80,6 +84,7 @@ public class MerchantConfigController {
         map.put("requestCount", 100);
         map.put("maxDepth", 5);
         map.put("maxRequests", 1000);
+        map.put("archiveDays", 30);
         return map;
     }
 }

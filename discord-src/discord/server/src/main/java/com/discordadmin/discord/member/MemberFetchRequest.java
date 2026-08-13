@@ -27,4 +27,6 @@ public class MemberFetchRequest {
     private int maxRequests = 1000;
     /** Channel ID */
     private String channelId;
+    /** 是否续传（true=从上次断点继续，false=全量重新同步） */
+    private boolean resumeSync = true;
 }

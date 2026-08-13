@@ -124,4 +124,69 @@ public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, 
 
     /** 批量获取账号，避免 N+1 查询 */
     List<DiscordAccount> findByIdIn(List<Long> ids);
+
+    /** 按商户ID查询（不包含 null merchantId）- 替代 OR 条件 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId = :merchantId")
+    List<DiscordAccount> findWithAgentsByMerchantId(@Param("merchantId") Long merchantId);
+
+    /** 查询 null merchantId 的账号 - 替代 OR 条件 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId IS NULL")
+    List<DiscordAccount> findWithAgentsByNullMerchantId();
+
+    /** 按商户ID+状态查询（不包含 null merchantId） */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId = :merchantId AND a.status = :status")
+    List<DiscordAccount> findWithAgentsByMerchantIdAndStatus(@Param("merchantId") Long merchantId,
+                                                              @Param("status") DiscordAccount.AccountStatus status);
+
+    /** null merchantId + 状态查询 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId IS NULL AND a.status = :status")
+    List<DiscordAccount> findWithAgentsByNullMerchantIdAndStatus(@Param("status") DiscordAccount.AccountStatus status);
+
+    /** 按商户ID+关键词搜索（不包含 null merchantId） */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId = :merchantId AND " +
+           "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.email) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.remark) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(a.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    List<DiscordAccount> searchWithAgentsByMerchantId(@Param("merchantId") Long merchantId,
+                                                       @Param("keyword") String keyword);
+
+    /** null merchantId + 关键词搜索 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId IS NULL AND " +
+           "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.email) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.remark) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(a.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    List<DiscordAccount> searchWithAgentsByNullMerchantId(@Param("keyword") String keyword);
+
+    /** 按商户ID+关键词+状态搜索（不包含 null merchantId） */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId = :merchantId AND a.status = :status AND " +
+           "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.email) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.remark) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(a.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    List<DiscordAccount> searchWithAgentsByMerchantIdAndKeywordAndStatus(@Param("merchantId") Long merchantId,
+                                                                          @Param("keyword") String keyword,
+                                                                          @Param("status") DiscordAccount.AccountStatus status);
+
+    /** null merchantId + 关键词 + 状态搜索 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.merchantId IS NULL AND a.status = :status AND " +
+           "(LOWER(a.name) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.email) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "LOWER(a.remark) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(a.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    List<DiscordAccount> searchWithAgentsByNullMerchantIdAndKeywordAndStatus(@Param("keyword") String keyword,
+                                                                             @Param("status") DiscordAccount.AccountStatus status);
+
+    /** 按 ID 列表批量统计好友数 */
+    @Query("SELECT a.id, COUNT(f) FROM DiscordAccount a LEFT JOIN Friend f ON f.discordAccount = a WHERE a.id IN :ids GROUP BY a.id")
+    List<Object[]> countFriendsByAccountIds(@Param("ids") List<Long> ids);
+
+    /** 按 ID 列表批量统计会话数 */
+    @Query("SELECT a.id, COUNT(c) FROM DiscordAccount a LEFT JOIN Conversation c ON c.discordAccount = a WHERE a.id IN :ids GROUP BY a.id")
+    List<Object[]> countConversationsByAccountIds(@Param("ids") List<Long> ids);
+
+    /** 按 ID 列表批量统计消息数 */
+    @Query("SELECT a.id, COUNT(m) FROM DiscordAccount a LEFT JOIN Conversation c ON c.discordAccount = a LEFT JOIN Message m ON m.conversation = c WHERE a.id IN :ids GROUP BY a.id")
+    List<Object[]> countMessagesByAccountIds(@Param("ids") List<Long> ids);
 }

@@ -7,7 +7,18 @@ import lombok.Setter;
 import java.time.Instant;
 
 @Entity
-@Table(name = "conversations")
+@Table(name = "conversations", indexes = {
+        @Index(name = "idx_conv_merchant_id", columnList = "merchant_id"),
+        @Index(name = "idx_conv_status", columnList = "status"),
+        @Index(name = "idx_conv_last_message_at", columnList = "last_message_at"),
+        @Index(name = "idx_conv_merchant_status", columnList = "merchant_id, status"),
+        @Index(name = "idx_conv_merchant_last_msg", columnList = "merchant_id, last_message_at"),
+        @Index(name = "idx_conv_merchant_status_last_msg", columnList = "merchant_id, status, last_message_at"),
+        @Index(name = "idx_conv_merchant_account", columnList = "merchant_id, discord_account_id"),
+        @Index(name = "idx_conv_merchant_stage", columnList = "merchant_id, stage"),
+        @Index(name = "idx_conv_channel_id", columnList = "channel_id"),
+        @Index(name = "idx_conv_discord_user_id", columnList = "discord_user_id")
+})
 @Getter
 @Setter
 public class Conversation {
@@ -80,6 +91,10 @@ public class Conversation {
     @Column(name = "remark", length = 256)
     private String remark;
 
+    /** 客服最后查看该会话的时间，用于计算未读消息数 */
+    @Column(name = "last_read_at")
+    private Instant lastReadAt;
+
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 
@@ -93,13 +108,10 @@ public class Conversation {
 
     /** 销售漏斗阶段 */
     public enum Stage {
-        PROSPECT,    // 通过客户
-        NEW,         // 回复客户
-        ACTIVE,      // 换包客户
-        CONVERTED,   // 注册客户
-        PAYING,      // 付费客户
-        DORMANT,     // 休眠客户
-        CHURNED,     // 流失客户
-        ARCHIVED     // 归档客户
+        PROSPECT,    // 通过客户：添加后双方都没发消息，或一方发了另一方没回复
+        NEW,         // 回复客户：双方都有发消息
+        CONVERTED,   // 注册客户：手工在客户资料里点击注册
+        CHURNED,     // 流失客户：被好友删除
+        ARCHIVED     // 归档客户：超过配置的天数
     }
 }

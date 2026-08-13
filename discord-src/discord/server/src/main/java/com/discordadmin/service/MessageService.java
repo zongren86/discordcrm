@@ -228,6 +228,17 @@ public class MessageService {
         conversation.setLastMessagePreview(content.length() > 200 ? content.substring(0, 200) : content);
         conversation.setLastMessageDirection("OUTBOUND");
         conversation.setLastMessageAt(Instant.now());
+
+        // 自动升级阶段：如果是PROSPECT阶段且双方都有消息，升级为NEW
+        if (conversation.getStage() == Conversation.Stage.PROSPECT) {
+            long inboundCount = messageRepository.countInboundMessages(conversation);
+            if (inboundCount > 0) {
+                conversation.setStage(Conversation.Stage.NEW);
+                conversation.setStageChangedAt(Instant.now());
+                log.info("会话 [convId={}] 双方已互动，漏斗阶段升级为 NEW", conversation.getId());
+            }
+        }
+
         conversationRepository.save(conversation);
 
         messagingTemplate.convertAndSend(

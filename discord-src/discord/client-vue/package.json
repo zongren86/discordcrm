@@ -9,14 +9,16 @@
     "preview": "vite preview --port 5173"
   },
   "dependencies": {
-    "vue": "^3.4.0",
-    "vue-router": "^4.3.0",
-    "pinia": "^2.1.7",
-    "axios": "^1.6.0",
-    "element-plus": "^2.6.0",
     "@element-plus/icons-vue": "^2.3.1",
     "@stomp/stompjs": "^7.0.0",
-    "sockjs-client": "^1.6.1"
+    "axios": "^1.6.0",
+    "echarts": "^6.1.0",
+    "element-plus": "^2.6.0",
+    "pinia": "^2.1.7",
+    "sockjs-client": "^1.6.1",
+    "vue": "^3.4.0",
+    "vue-echarts": "^8.1.0",
+    "vue-router": "^4.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",

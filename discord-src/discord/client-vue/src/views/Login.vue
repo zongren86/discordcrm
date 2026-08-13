@@ -82,9 +82,9 @@ function getFirstAllowedPath() {
   }
   
   const pathList = [
-    '/chat', '/customers', '/accounts', '/guilds', '/stats',
-    '/reminders', '/roles', '/features', '/users', '/merchants',
-    '/audit', '/ai-settings', '/emulator'
+    '/stats', '/chat', '/account-numbers', '/accounts', '/customers',
+    '/guilds', '/guild-members', '/emulator', '/ai-settings',
+    '/users', '/roles', '/features', '/audit'
   ]
   
   for (const path of pathList) {

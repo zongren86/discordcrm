@@ -14,7 +14,10 @@ import java.util.Set;
         @Index(name = "idx_merchant_id", columnList = "merchant_id"),
         @Index(name = "idx_status", columnList = "status"),
         @Index(name = "idx_merchant_status", columnList = "merchant_id, status"),
-        @Index(name = "idx_account_type", columnList = "account_type")
+        @Index(name = "idx_account_type", columnList = "account_type"),
+        @Index(name = "idx_discord_bot_id", columnList = "discord_bot_id"),
+        @Index(name = "idx_email", columnList = "email"),
+        @Index(name = "idx_merchant_status_type", columnList = "merchant_id, status, account_type")
 })
 @Getter
 @Setter

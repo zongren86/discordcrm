@@ -45,6 +45,7 @@ public class ConversationDtos {
             Instant stageChangedAt,
             Boolean pinned,
             String remark,
+            Instant lastReadAt,
             List<MessageDtos.MessageDto> messages,
             String agentName,
             String agentUsername,
@@ -94,6 +95,7 @@ public class ConversationDtos {
                     c.getStageChangedAt(),
                     c.getPinned(),
                     c.getRemark(),
+                    c.getLastReadAt(),
                     emptyMessages,
                     agentName,
                     agentUsername,
@@ -107,7 +109,7 @@ public class ConversationDtos {
                     id, channelId, discordUserId, friendDiscordUserId, username, globalName, avatarUrl,
                     discordAccountId, discordAccountName, type, status,
                     lastMessagePreview, lastMessageAt, lastMessageDirection,
-                    stage, stageChangedAt, pinned, remark, messages,
+                    stage, stageChangedAt, pinned, remark, lastReadAt, messages,
                     agentName, agentUsername, agentId, unreadCount
             );
         }
@@ -117,7 +119,7 @@ public class ConversationDtos {
                     id, channelId, discordUserId, friendDiscordUserId, username, globalName, avatarUrl,
                     discordAccountId, discordAccountName, type, status,
                     lastMessagePreview, lastMessageAt, lastMessageDirection,
-                    stage, stageChangedAt, pinned, remark, messages,
+                    stage, stageChangedAt, pinned, remark, lastReadAt, messages,
                     agentName, agentUsername, agentId, unread
             );
         }

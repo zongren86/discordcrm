@@ -2,6 +2,7 @@ package com.discordadmin.controller;
 
 import com.discordadmin.entity.AISetting;
 import com.discordadmin.repository.AISettingRepository;
+import com.discordadmin.repository.MerchantRepository;
 import com.discordadmin.security.SecurityUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -14,50 +15,42 @@ import java.util.Map;
 public class AISettingController {
 
     private final AISettingRepository aiSettingRepository;
+    private final MerchantRepository merchantRepository;
 
-    public AISettingController(AISettingRepository aiSettingRepository) {
+    public AISettingController(AISettingRepository aiSettingRepository, MerchantRepository merchantRepository) {
         this.aiSettingRepository = aiSettingRepository;
+        this.merchantRepository = merchantRepository;
     }
 
     @GetMapping
-    public List<AISetting> list() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        if (SecurityUtils.isPlatformAdmin()) {
-            return aiSettingRepository.findByMerchantIdIsNullOrderByFeatureAsc();
-        }
+    public List<AISetting> list(@RequestHeader(value = "X-Merchant-Id", required = false) Long merchantIdHeader) {
+        Long merchantId = resolveMerchantId(merchantIdHeader);
         return aiSettingRepository.findByMerchantIdOrderByFeatureAsc(merchantId);
     }
 
     @GetMapping("/feature/{feature}")
-    public AISetting getByFeature(@PathVariable String feature) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        AISetting setting;
-        if (SecurityUtils.isPlatformAdmin()) {
-            setting = aiSettingRepository.findByMerchantIdIsNullAndFeature(feature).orElse(null);
-        } else {
-            setting = aiSettingRepository.findByMerchantIdAndFeature(merchantId, feature).orElse(null);
-        }
+    public AISetting getByFeature(@PathVariable String feature,
+                                   @RequestHeader(value = "X-Merchant-Id", required = false) Long merchantIdHeader) {
+        Long merchantId = resolveMerchantId(merchantIdHeader);
+        AISetting setting = aiSettingRepository.findByMerchantIdAndFeature(merchantId, feature).orElse(null);
         if (setting == null) {
             setting = new AISetting();
             setting.setFeature(feature);
-            setting.setMerchantId(SecurityUtils.isPlatformAdmin() ? null : merchantId);
+            setting.setMerchantId(merchantId);
             setting.setEnabled(false);
         }
         return setting;
     }
 
     @PostMapping
-    public AISetting createOrUpdate(@RequestBody AISettingRequest req) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        AISetting setting;
-        if (SecurityUtils.isPlatformAdmin()) {
-            setting = aiSettingRepository.findByMerchantIdIsNullAndFeature(req.feature()).orElseGet(AISetting::new);
-        } else {
-            setting = aiSettingRepository.findByMerchantIdAndFeature(merchantId, req.feature()).orElseGet(AISetting::new);
-        }
+    public AISetting createOrUpdate(@RequestBody AISettingRequest req,
+                                     @RequestHeader(value = "X-Merchant-Id", required = false) Long merchantIdHeader) {
+        Long merchantId = resolveMerchantId(merchantIdHeader);
+        AISetting setting = aiSettingRepository.findByMerchantIdAndFeature(merchantId, req.feature())
+                .orElseGet(AISetting::new);
         if (setting.getId() == null) {
             setting.setFeature(req.feature());
-            setting.setMerchantId(SecurityUtils.isPlatformAdmin() ? null : merchantId);
+            setting.setMerchantId(merchantId);
         }
         setting.setEnabled(req.enabled() != null ? req.enabled() : false);
         setting.setProvider(req.provider());
@@ -77,6 +70,16 @@ public class AISettingController {
     public Map<String, Object> delete(@PathVariable Long id) {
         aiSettingRepository.deleteById(id);
         return Map.of("success", true);
+    }
+
+    private Long resolveMerchantId(Long merchantIdHeader) {
+        if (SecurityUtils.isPlatformAdmin()) {
+            if (merchantIdHeader != null) {
+                return merchantIdHeader;
+            }
+            return null;
+        }
+        return SecurityUtils.currentMerchantId();
     }
 
     public record AISettingRequest(String feature, Boolean enabled, String provider, String model,

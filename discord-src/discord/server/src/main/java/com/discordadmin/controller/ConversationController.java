@@ -37,8 +37,10 @@ public class ConversationController {
             @RequestParam(required = false) Long accountId,
             @RequestParam(required = false) String stage,
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) Boolean pinnedOnly) {
-        return conversationService.listConversations(accountId, stage, keyword, pinnedOnly);
+            @RequestParam(required = false) Boolean pinnedOnly,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo) {
+        return conversationService.listConversations(accountId, stage, keyword, pinnedOnly, dateFrom, dateTo);
     }
 
     @GetMapping("/{id}/messages")
@@ -100,6 +102,11 @@ public class ConversationController {
     @PutMapping("/{id}/remark")
     public ConversationDto updateRemark(@PathVariable Long id, @RequestBody UpdateRemarkRequest request) {
         return conversationService.updateRemark(id, request.remark());
+    }
+
+    @PostMapping("/{id}/mark-read")
+    public ConversationDto markAsRead(@PathVariable Long id) {
+        return conversationService.markAsRead(id);
     }
 
     @PostMapping("/{id}/messages/{messageId}/translate")

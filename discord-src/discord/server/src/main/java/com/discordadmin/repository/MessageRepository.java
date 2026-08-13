@@ -106,17 +106,33 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     @Query("SELECT COUNT(m) FROM Message m JOIN m.conversation c WHERE c.merchantId = :merchantId")
     long countByMerchantId(@Param("merchantId") Long merchantId);
 
-    /** 批量统计会话的未读消息数（最后一条消息为INBOUND的会话） */
+    /** 批量统计会话的未读消息数（基于lastReadAt或最后一条OUTBOUND消息时间） */
     @Query("""
         SELECT c.id, COUNT(m) FROM Message m JOIN m.conversation c
         WHERE c.id IN :convIds AND m.direction = 'INBOUND'
-        AND m.id > (
-            SELECT COALESCE(MAX(m2.id), 0) FROM Message m2
+        AND m.createdAt > COALESCE(c.lastReadAt, (
+            SELECT COALESCE(MAX(m2.createdAt), '1970-01-01T00:00:00Z') FROM Message m2
             WHERE m2.conversation = c AND m2.direction = 'OUTBOUND'
-        )
+        ))
         GROUP BY c.id
         """)
     List<Object[]> countUnreadByConversationIds(@Param("convIds") List<Long> convIds);
+
+    /** 检查会话是否双方都有消息（既有INBOUND又有OUTBOUND） */
+    @Query("""
+        SELECT COUNT(m) > 0 FROM Message m
+        WHERE m.conversation = :conversation AND m.direction = 'INBOUND'
+        AND EXISTS (SELECT 1 FROM Message m2 WHERE m2.conversation = :conversation AND m2.direction = 'OUTBOUND')
+        """)
+    boolean hasBothDirectionsMessages(@Param("conversation") Conversation conversation);
+
+    /** 统计会话中INBOUND消息数量 */
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.conversation = :conversation AND m.direction = 'INBOUND'")
+    long countInboundMessages(@Param("conversation") Conversation conversation);
+
+    /** 统计会话中OUTBOUND消息数量 */
+    @Query("SELECT COUNT(m) FROM Message m WHERE m.conversation = :conversation AND m.direction = 'OUTBOUND'")
+    long countOutboundMessages(@Param("conversation") Conversation conversation);
 
     /** 平台级：统计账号所属商户为null的会话中的活跃客户数 */
     @Query("SELECT COUNT(DISTINCT c.discordUser.id) FROM Message m JOIN m.conversation c WHERE m.createdAt >= :start AND c.merchantId IS NULL")

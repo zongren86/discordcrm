@@ -51,4 +51,7 @@ public interface FriendRepository extends JpaRepository<Friend, Long> {
 
     /** 通过好友的Discord用户ID批量查询好友记录 */
     List<Friend> findByFriendDiscordUserIdIn(List<String> friendDiscordUserIds);
+
+    /** 按服务器ID+好友Discord用户ID批量查询好友 */
+    List<Friend> findByGuildServerIdAndFriendDiscordUserIdIn(Long guildServerId, List<String> friendDiscordUserIds);
 }

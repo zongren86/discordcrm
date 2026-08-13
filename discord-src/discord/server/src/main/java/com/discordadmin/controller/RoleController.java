@@ -106,9 +106,6 @@ public class RoleController {
     public Map<String, Object> delete(@PathVariable Long id) {
         Role role = roleRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("角色不存在"));
-        if (Boolean.TRUE.equals(role.getBuiltin())) {
-            throw new IllegalArgumentException("系统预置角色不可删除");
-        }
         roleRepository.delete(role);
         auditService.log("role", "DELETE", "Role", String.valueOf(id), "name=" + role.getName());
         return Map.of("success", true);

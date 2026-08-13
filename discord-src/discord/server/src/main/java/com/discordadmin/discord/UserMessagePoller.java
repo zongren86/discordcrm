@@ -122,15 +122,17 @@ public class UserMessagePoller {
         List<Message> existingMessages = messageRepository.findByConversationOrderByCreatedAtAsc(conv);
         log.info("会话 [convId={}, channelId={}] 已有 {} 条历史消息", conv.getId(), channelId, existingMessages.size());
 
-        // 如果已有好友回复消息（INBOUND），且当前漏斗阶段是 PROSPECT，则更新为 NEW
+        // 如果已有双方消息，且当前漏斗阶段是 PROSPECT，则更新为 NEW
         if (conv.getStage() == Conversation.Stage.PROSPECT) {
             boolean hasInbound = existingMessages.stream()
                     .anyMatch(m -> m.getDirection() == Message.Direction.INBOUND);
-            if (hasInbound) {
+            boolean hasOutbound = existingMessages.stream()
+                    .anyMatch(m -> m.getDirection() == Message.Direction.OUTBOUND);
+            if (hasInbound && hasOutbound) {
                 conv.setStage(Conversation.Stage.NEW);
                 conv.setStageChangedAt(java.time.Instant.now());
                 conversationRepository.save(conv);
-                log.info("会话 [convId={}] 已有好友回复，漏斗阶段更新为 NEW", conv.getId());
+                log.info("会话 [convId={}] 双方已互动，漏斗阶段升级为 NEW", conv.getId());
             }
         }
 
@@ -229,11 +231,21 @@ public class UserMessagePoller {
             conv.setLastMessageDirection(isOutbound ? "OUTBOUND" : "INBOUND");
             conv.setLastMessageAt(Instant.now());
 
-            // 好友回复消息时，自动更新漏斗阶段为"回复客户"
-            if (!isOutbound && conv.getStage() == Conversation.Stage.PROSPECT) {
-                conv.setStage(Conversation.Stage.NEW);
-                conv.setStageChangedAt(Instant.now());
-                log.info("会话 [convId={}] 好友已回复，漏斗阶段更新为 NEW", conv.getId());
+            // 双方都有消息时，自动升级漏斗阶段为"回复客户"
+            if (conv.getStage() == Conversation.Stage.PROSPECT) {
+                boolean hasInbound = existingMessages.stream().anyMatch(m -> m.getDirection() == Message.Direction.INBOUND);
+                boolean hasOutbound = existingMessages.stream().anyMatch(m -> m.getDirection() == Message.Direction.OUTBOUND);
+                // 加上当前这条消息后检查双方是否都有消息
+                if (isOutbound) {
+                    hasOutbound = true;
+                } else {
+                    hasInbound = true;
+                }
+                if (hasInbound && hasOutbound) {
+                    conv.setStage(Conversation.Stage.NEW);
+                    conv.setStageChangedAt(Instant.now());
+                    log.info("会话 [convId={}] 双方已互动，漏斗阶段升级为 NEW", conv.getId());
+                }
             }
 
             conversationRepository.save(conv);

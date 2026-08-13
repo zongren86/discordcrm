@@ -35,6 +35,10 @@ public class MerchantConfig {
     @Column(name = "max_requests")
     private Integer maxRequests = 1000;
 
+    /** 归档配置：超过N天无消息往来则自动归档 */
+    @Column(name = "archive_days")
+    private Integer archiveDays = 30;
+
     @Column(name = "updated_at")
     private Instant updatedAt = Instant.now();
 

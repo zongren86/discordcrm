@@ -214,12 +214,13 @@ public class AuthController {
 
     /**
      * 获取用户权限列表
-     * 只能使用自定义角色权限，无自定义角色则无权限
+     * 优先使用自定义角色权限，无自定义角色或自定义角色无权限时根据内置角色类型返回默认权限
      */
     private List<String> getAgentPermissions(Agent agent) {
         java.util.Set<String> permissions = new java.util.HashSet<>();
         
         boolean hasCustomRoles = agent.getRoleIds() != null && !agent.getRoleIds().isEmpty();
+        boolean hasPermissions = false;
         
         if (hasCustomRoles) {
             // 有自定义角色：使用自定义角色的权限
@@ -227,7 +228,35 @@ public class AuthController {
             for (Role customRole : customRoles) {
                 for (SysFeature feature : customRole.getFeatures()) {
                     permissions.add(feature.getCode());
+                    hasPermissions = true;
                 }
+            }
+        }
+        
+        // 如果没有自定义角色或自定义角色没有分配权限，则根据内置角色类型返回默认权限
+        if (!hasPermissions) {
+            Agent.AgentRole agentRole = agent.getRole();
+            if (agentRole == null) {
+                agentRole = Agent.AgentRole.SALES;
+            }
+            switch (agentRole) {
+                case PLATFORM_ADMIN:
+                    permissions.addAll(getPlatformAdminPermissions());
+                    break;
+                case MERCHANT_ADMIN:
+                    permissions.addAll(getMerchantAdminPermissions());
+                    break;
+                case MANAGER:
+                    permissions.addAll(getManagerPermissions());
+                    break;
+                case SALES:
+                    permissions.addAll(getSalesPermissions());
+                    break;
+                case SERVICE:
+                    permissions.addAll(getServicePermissions());
+                    break;
+                default:
+                    permissions.addAll(getSalesPermissions());
             }
         }
         
@@ -240,64 +269,41 @@ public class AuthController {
             .collect(Collectors.toSet());
     }
 
+    private List<String> getPlatformAdminPermissions() {
+        return List.of(
+            "dashboard", "chat", "customer", "service", "config", "system", "log",
+            "account-numbers", "accounts", "customers", "guilds", "guild-members",
+            "friend-manage", "ai-settings", "users", "roles", "features", "audit"
+        );
+    }
+
     private List<String> getMerchantAdminPermissions() {
         return List.of(
-            // 一级菜单权限（用于菜单显示）
-            "chat", "conversation", "customer", "account", "guild", "stats", "reminder", "ai", "user", "role", "audit",
-            // 按钮级权限
-            "chat.view", "chat.send", "chat.edit", "chat.delete", "chat.reaction", "chat.translate",
-            "conversation.view", "conversation.manage", "conversation.assign",
-            "customer.view", "customer.manage", "customer.batch",
-            "account.view", "account.manage", "account.import",
-            "guild.view", "stats.view", "stats.export",
-            "reminder.view", "reminder.manage",
-            "ai.view", "ai.manage",
-            "user.manage", "role.manage", "audit.view"
+            "dashboard", "chat", "customer", "service", "config", "log",
+            "account-numbers", "accounts", "customers", "guilds", "guild-members",
+            "friend-manage", "ai-settings", "audit"
         );
     }
 
     private List<String> getManagerPermissions() {
         return List.of(
-            // 一级菜单权限
-            "chat", "conversation", "customer", "account", "guild", "stats", "reminder", "ai", "audit",
-            // 按钮级权限
-            "chat.view", "chat.send", "chat.edit", "chat.reaction",
-            "conversation.view", "conversation.manage", "conversation.assign",
-            "customer.view", "customer.manage", "customer.batch",
-            "account.view", "account.manage", "account.import",
-            "guild.view", "stats.view",
-            "reminder.view", "reminder.manage",
-            "ai.view", "audit.view"
+            "dashboard", "chat", "customer", "service", "config", "log",
+            "account-numbers", "accounts", "customers", "guilds", "guild-members",
+            "friend-manage", "ai-settings", "audit"
         );
     }
 
     private List<String> getSalesPermissions() {
         return List.of(
-            // 一级菜单权限
-            "chat", "conversation", "customer", "account", "guild", "stats", "reminder", "ai",
-            // 按钮级权限
-            "chat.view", "chat.send", "chat.edit", "chat.reaction",
-            "conversation.view",
-            "customer.view", "customer.manage",
-            "account.view",
-            "guild.view",
-            "stats.view",
-            "reminder.view",
-            "ai.view"
+            "dashboard", "chat", "customer", "service",
+            "accounts", "customers", "guild-members", "friend-manage", "account-numbers"
         );
     }
 
     private List<String> getServicePermissions() {
         return List.of(
-            // 一级菜单权限
-            "chat", "conversation", "customer", "account", "guild", "reminder",
-            // 按钮级权限
-            "chat.view", "chat.send", "chat.reaction",
-            "conversation.view",
-            "customer.view",
-            "account.view",
-            "guild.view",
-            "reminder.view"
+            "chat", "customer", "service",
+            "accounts", "customers", "friend-manage", "account-numbers"
         );
     }
 }

@@ -9,6 +9,9 @@ ALTER TABLE discord_accounts ADD INDEX idx_merchant_id (merchant_id);
 ALTER TABLE discord_accounts ADD INDEX idx_status (status);
 ALTER TABLE discord_accounts ADD INDEX idx_merchant_status (merchant_id, status);
 ALTER TABLE discord_accounts ADD INDEX idx_account_type (account_type);
+ALTER TABLE discord_accounts ADD INDEX idx_discord_bot_id (discord_bot_id);
+ALTER TABLE discord_accounts ADD INDEX idx_email (email);
+ALTER TABLE discord_accounts ADD INDEX idx_merchant_status_type (merchant_id, status, account_type);
 
 -- agents 表索引
 ALTER TABLE agents ADD INDEX idx_agent_merchant_id (merchant_id);
@@ -25,6 +28,29 @@ ALTER TABLE guild_servers ADD INDEX idx_guild_merchant_status (merchant_id, stat
 ALTER TABLE fetch_progress ADD INDEX idx_fp_guild_server_id (guild_server_id);
 ALTER TABLE fetch_progress ADD INDEX idx_fp_status (status);
 ALTER TABLE fetch_progress ADD INDEX idx_fp_guild_server_status (guild_server_id, status);
+ALTER TABLE fetch_progress ADD INDEX idx_fp_discord_account_id (discord_account_id);
+
+-- conversations 表索引
+ALTER TABLE conversations ADD INDEX idx_conv_merchant_id (merchant_id);
+ALTER TABLE conversations ADD INDEX idx_conv_status (status);
+ALTER TABLE conversations ADD INDEX idx_conv_last_message_at (last_message_at);
+ALTER TABLE conversations ADD INDEX idx_conv_merchant_status (merchant_id, status);
+ALTER TABLE conversations ADD INDEX idx_conv_merchant_last_msg (merchant_id, last_message_at);
+ALTER TABLE conversations ADD INDEX idx_conv_merchant_status_last_msg (merchant_id, status, last_message_at);
+ALTER TABLE conversations ADD INDEX idx_conv_merchant_account (merchant_id, discord_account_id);
+ALTER TABLE conversations ADD INDEX idx_conv_merchant_stage (merchant_id, stage);
+ALTER TABLE conversations ADD INDEX idx_conv_channel_id (channel_id);
+ALTER TABLE conversations ADD INDEX idx_conv_discord_user_id (discord_user_id);
+
+-- messages 表索引
+ALTER TABLE messages ADD INDEX idx_messages_conversation (conversation_id);
+ALTER TABLE messages ADD INDEX idx_messages_merchant_id (merchant_id);
+ALTER TABLE messages ADD INDEX idx_messages_conversation_created (conversation_id, created_at);
+ALTER TABLE messages ADD INDEX idx_messages_conversation_direction (conversation_id, direction, discord_created_at);
+ALTER TABLE messages ADD INDEX idx_messages_created_at (created_at);
+ALTER TABLE messages ADD INDEX idx_messages_direction (direction);
+ALTER TABLE messages ADD INDEX idx_messages_sender_id (sender_discord_user_id);
+ALTER TABLE messages ADD INDEX idx_messages_merchant_created (merchant_id, created_at);
 
 -- merchants 表索引
 ALTER TABLE merchants ADD INDEX idx_merchant_status (status);

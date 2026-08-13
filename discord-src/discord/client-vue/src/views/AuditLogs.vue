@@ -2,8 +2,8 @@
   <div class="audit-page">
     <div class="page-header">
       <div>
-        <h2 class="page-title">审计日志</h2>
-        <p class="page-desc">系统操作日志与安全告警</p>
+        <h2 class="page-title">操作日志</h2>
+        <p class="page-desc">系统操作记录与安全审计</p>
       </div>
       <div class="header-actions">
         <el-select v-model="filters.module" size="small" clearable placeholder="模块" style="width:130px">

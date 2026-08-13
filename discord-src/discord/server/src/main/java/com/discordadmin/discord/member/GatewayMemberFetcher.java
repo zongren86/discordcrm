@@ -51,6 +51,11 @@ public class GatewayMemberFetcher {
     private final AtomicInteger seq = new AtomicInteger(-1);
     private volatile WebSocket webSocket;
     private volatile boolean stop = false;
+
+    /** 请求在当前请求完成后停止抓取 */
+    public void stop() {
+        this.stop = true;
+    }
     private volatile long hbIntervalMs = 41250;
     private volatile String closeReason = null;
     private final AtomicBoolean reconnecting = new AtomicBoolean(false);
@@ -73,7 +78,7 @@ public class GatewayMemberFetcher {
 
     // 用于分批保存的缓冲区
     private final List<JsonNode> pendingMembers = Collections.synchronizedList(new ArrayList<>());
-    private static final int BATCH_SAVE_SIZE = 100;  // 每 100 条保存一次
+    private static final int BATCH_SAVE_SIZE = 1;  // 每次请求收到后立即保存
 
     private final AtomicInteger requestsSent = new AtomicInteger(0);
     private String currentPrefix = "";

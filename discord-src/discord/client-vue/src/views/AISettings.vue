@@ -3,15 +3,33 @@
     <div class="page-header">
       <div>
         <h2 class="page-title">AI 配置</h2>
-        <p class="page-desc">全局开关、模型与 Prompt 设定</p>
+        <p class="page-desc">每个商户独立的AI配置：模型、API、Prompt设定</p>
       </div>
       <div class="header-actions">
+        <el-select
+          v-if="isPlatformAdmin"
+          v-model="selectedMerchantId"
+          placeholder="选择商户"
+          filterable
+          style="width: 240px; margin-right: 12px;"
+          @change="fetchList"
+        >
+          <el-option
+            v-for="m in merchants"
+            :key="m.id"
+            :label="m.name"
+            :value="m.id"
+          />
+        </el-select>
         <el-button :icon="Refresh" :loading="loading" @click="fetchList">刷新</el-button>
       </div>
     </div>
 
     <div class="page-body">
-      <div class="feature-grid">
+      <div v-if="isPlatformAdmin && !selectedMerchantId" class="empty-state">
+        <el-empty description="请先选择一个商户" />
+      </div>
+      <div v-else class="feature-grid">
         <div v-for="f in features" :key="f.key" class="feature-card">
           <div class="feature-head">
             <div class="feature-title">
@@ -60,12 +78,23 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Refresh, ChatLineSquare, MagicStick, EditPen } from '@element-plus/icons-vue'
-import { listAISettings, getAISettingByFeature, saveAISetting } from '@/api'
+import { listAISettings, getAISettingByFeature, saveAISetting, listMerchants } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 
+const auth = useAuthStore()
 const loading = ref(false)
+const merchants = ref([])
+const selectedMerchantId = ref(null)
+
+const isPlatformAdmin = computed(() => auth.agent?.role === 'PLATFORM_ADMIN')
+
+const effectiveMerchantId = computed(() => {
+  if (isPlatformAdmin.value) return selectedMerchantId.value
+  return auth.agent?.merchantId || null
+})
 
 const featureDefs = [
   { key: 'translate', label: '翻译（入站英文→中文 / 出站中文→英文）', icon: ChatLineSquare, promptPlaceholder: '你是专业的翻译助手，将用户输入翻译为目标语言，只输出译文。' },
@@ -88,11 +117,25 @@ function initFeatures() {
   }
 }
 
+async function fetchMerchants() {
+  try {
+    const res = await listMerchants()
+    merchants.value = Array.isArray(res) ? res : []
+    if (merchants.value.length > 0 && !selectedMerchantId.value) {
+      selectedMerchantId.value = merchants.value[0].id
+    }
+  } catch (e) {}
+}
+
 async function fetchList() {
   loading.value = true
   try {
+    if (isPlatformAdmin.value && !selectedMerchantId.value) {
+      initFeatures()
+      return
+    }
     initFeatures()
-    const list = await listAISettings()
+    const list = await listAISettings(effectiveMerchantId.value)
     const map = {}
     for (const s of list) map[s.feature] = s
     for (const f of features) {
@@ -151,7 +194,7 @@ async function saveFeature(f) {
       systemPrompt: f.systemPrompt,
       thinking: f.thinking,
       webSearch: f.webSearch
-    })
+    }, effectiveMerchantId.value)
     ElMessage.success('已保存')
   } catch (e) {
     ElMessage.error('保存失败')
@@ -160,7 +203,12 @@ async function saveFeature(f) {
   }
 }
 
-onMounted(fetchList)
+onMounted(async () => {
+  if (isPlatformAdmin.value) {
+    await fetchMerchants()
+  }
+  await fetchList()
+})
 </script>
 
 <style scoped>

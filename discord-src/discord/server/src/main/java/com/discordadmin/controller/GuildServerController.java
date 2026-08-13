@@ -37,6 +37,10 @@ public class GuildServerController {
     public List<Map<String, Object>> listServers(
             @RequestParam(required = false) Long discordAccountId) {
         Long merchantId = SecurityUtils.currentMerchantId();
+        // 平台管理员可以查看所有商户的服务器，不按merchantId过滤
+        if (SecurityUtils.isPlatformAdmin()) {
+            merchantId = null;
+        }
         List<GuildServer> servers = guildService.listGuildServers(merchantId, discordAccountId);
         
         // 批量获取账号信息，避免 N+1 查询
@@ -198,6 +202,7 @@ public class GuildServerController {
             map.put("requestCount", config.getRequestCount());
             map.put("maxDepth", config.getMaxDepth());
             map.put("maxRequests", config.getMaxRequests());
+            map.put("archiveDays", config.getArchiveDays());
         } else {
             map.put("id", null);
             map.put("merchantId", null);
@@ -206,6 +211,7 @@ public class GuildServerController {
             map.put("requestCount", 100);
             map.put("maxDepth", 5);
             map.put("maxRequests", 1000);
+            map.put("archiveDays", 30);
         }
         return map;
     }

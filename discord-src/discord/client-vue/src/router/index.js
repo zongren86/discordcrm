@@ -14,20 +14,19 @@ const routes = [
     component: () => import('@/layout/DashboardLayout.vue'),
     meta: { requiresAuth: true },
     children: [
+      { path: 'stats', name: 'Stats', component: () => import('@/views/Stats.vue'), meta: { title: '仪表盘', icon: 'DataAnalysis', permissions: ['dashboard'] } },
       { path: 'chat', name: 'Chat', component: () => import('@/views/Chat.vue'), meta: { title: '消息中心', icon: 'ChatDotRound', permissions: ['chat'] } },
-      { path: 'customers', name: 'Customers', component: () => import('@/views/Customers.vue'), meta: { title: '客户管理', icon: 'UserFilled', permissions: ['customer'] } },
-      { path: 'accounts', name: 'Accounts', component: () => import('@/views/Accounts.vue'), meta: { title: 'Discord账号', icon: 'User', permissions: ['account'] } },
-      { path: 'guilds', name: 'Guilds', component: () => import('@/views/Guilds.vue'), meta: { title: '服务器成员', icon: 'OfficeBuilding', permissions: ['guild'] } },
-      { path: 'stats', name: 'Stats', component: () => import('@/views/Stats.vue'), meta: { title: '客户统计', icon: 'DataAnalysis', permissions: ['stats'] } },
-      { path: 'roles', name: 'Roles', component: () => import('@/views/Roles.vue'), meta: { title: '角色管理', icon: 'Lock', permissions: ['role'] } },
-      { path: 'features', name: 'Features', component: () => import('@/views/Features.vue'), meta: { title: '功能管理', icon: 'Grid', permissions: ['feature'] } },
-      { path: 'users', name: 'Users', component: () => import('@/views/Users.vue'), meta: { title: '用户管理', icon: 'Setting', permissions: ['user'] } },
-      { path: 'merchants', name: 'Merchants', component: () => import('@/views/Merchants.vue'), meta: { title: '商户管理', icon: 'Shop', permissions: ['merchant'] } },
-      { path: 'audit', name: 'AuditLogs', component: () => import('@/views/AuditLogs.vue'), meta: { title: '审计日志', icon: 'Document', permissions: ['audit'] } },
-      { path: 'reminders', name: 'Reminders', component: () => import('@/views/Reminders.vue'), meta: { title: '提醒中心', icon: 'Bell', permissions: ['reminder'] } },
-      { path: 'ai-settings', name: 'AISettings', component: () => import('@/views/AISettings.vue'), meta: { title: 'AI配置', icon: 'Cpu', permissions: ['ai'] } },
-      { path: 'emulator', name: 'Emulator', component: () => import('@/views/EmulatorView.vue'), meta: { title: '模拟器', icon: 'Monitor', permissions: ['emulator'] } },
-      { path: 'account-numbers', name: 'AccountNumbers', component: () => import('@/views/AccountNumbers.vue'), meta: { title: '账号编号管理', icon: 'Tickets', permissions: ['account-numbers'] } }
+      { path: 'account-numbers', name: 'AccountNumbers', component: () => import('@/views/AccountNumbers.vue'), meta: { title: '账号编号管理', icon: 'Tickets', permissions: ['account-numbers'] } },
+      { path: 'accounts', name: 'Accounts', component: () => import('@/views/Accounts.vue'), meta: { title: 'Discord账号管理', icon: 'User', permissions: ['accounts'] } },
+      { path: 'customers', name: 'Customers', component: () => import('@/views/Customers.vue'), meta: { title: '客户管理', icon: 'UserFilled', permissions: ['customers'] } },
+      { path: 'guilds', name: 'Guilds', component: () => import('@/views/Guilds.vue'), meta: { title: '服务器列表', icon: 'OfficeBuilding', permissions: ['guilds'] } },
+      { path: 'guild-members', name: 'GuildMembers', component: () => import('@/views/GuildMembers.vue'), meta: { title: '服务器成员', icon: 'User', permissions: ['guild-members'] } },
+      { path: 'emulator', name: 'Emulator', component: () => import('@/views/EmulatorView.vue'), meta: { title: '好友管理', icon: 'Monitor', permissions: ['emulator'] } },
+      { path: 'ai-settings', name: 'AISettings', component: () => import('@/views/AISettings.vue'), meta: { title: 'AI配置', icon: 'Cpu', permissions: ['ai-settings'] } },
+      { path: 'users', name: 'Users', component: () => import('@/views/Users.vue'), meta: { title: '用户管理', icon: 'User', permissions: ['users'] } },
+      { path: 'roles', name: 'Roles', component: () => import('@/views/Roles.vue'), meta: { title: '角色管理', icon: 'Lock', permissions: ['roles'] } },
+      { path: 'features', name: 'Features', component: () => import('@/views/Features.vue'), meta: { title: '功能管理', icon: 'Grid', permissions: ['features'] } },
+      { path: 'audit', name: 'AuditLogs', component: () => import('@/views/AuditLogs.vue'), meta: { title: '操作日志', icon: 'Document', permissions: ['audit'] } }
     ]
   }
 ]
@@ -40,9 +39,9 @@ const router = createRouter({
 // 获取用户有权限访问的第一个路径
 function getFirstAllowedPath(auth) {
   const pathList = [
-    '/chat', '/customers', '/accounts', '/guilds', '/stats',
-    '/reminders', '/roles', '/features', '/users', '/merchants',
-    '/audit', '/ai-settings', '/emulator', '/account-numbers'
+    '/stats', '/chat', '/account-numbers', '/accounts', '/customers',
+    '/guilds', '/guild-members', '/emulator', '/ai-settings',
+    '/users', '/roles', '/features', '/audit'
   ]
   
   for (const path of pathList) {

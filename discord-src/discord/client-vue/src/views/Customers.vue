@@ -163,10 +163,7 @@ const batchSending = ref(false)
 const stageOptions = [
   { value: 'PROSPECT',   label: '通过客户',   type: 'info' },
   { value: 'NEW',        label: '回复客户',   type: 'primary' },
-  { value: 'ACTIVE',     label: '换包客户',   type: 'warning' },
   { value: 'CONVERTED',  label: '注册客户',   type: 'success' },
-  { value: 'PAYING',     label: '付费客户',   type: 'danger' },
-  { value: 'DORMANT',    label: '休眠客户',   type: 'info' },
   { value: 'CHURNED',    label: '流失客户',   type: 'danger' },
   { value: 'ARCHIVED',   label: '归档客户',   type: 'info' }
 ]
