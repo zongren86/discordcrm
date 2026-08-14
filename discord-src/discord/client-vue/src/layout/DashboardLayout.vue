@@ -20,7 +20,7 @@
         v-loading="menuLoading"
         class="sidebar-menu"
         :default-active="activeMenu"
-        :default-openeds="defaultOpeneds"
+        v-model:openeds="openeds"
         :router="true"
         @select="handleSelect"
       >
@@ -138,6 +138,7 @@ const guildServers = useGuildServersStore()
 // 菜单加载状态
 const menuLoading = ref(false)
 const menuTree = ref([])
+const openeds = ref([])
 
 // 图标映射表
 const iconMap = {
@@ -166,6 +167,21 @@ function resolveIcon(iconName) {
   return iconMap[iconName] || Menu
 }
 
+// 收集所有需要展开的菜单路径
+function collectOpeneds(items) {
+  const paths = []
+  function collect(list) {
+    for (const item of list) {
+      if (item.children && item.children.length > 0) {
+        paths.push(item.path || item.code)
+        collect(item.children)
+      }
+    }
+  }
+  collect(items)
+  return paths
+}
+
 // 加载菜单树
 async function loadMenuTree() {
   menuLoading.value = true
@@ -173,6 +189,8 @@ async function loadMenuTree() {
     const data = await api.get('/auth/menu-tree')
     if (Array.isArray(data)) {
       menuTree.value = data
+      await nextTick()
+      openeds.value = collectOpeneds(data)
     } else {
       ElMessage.error('服务器繁忙，请稍后再试')
       menuTree.value = []
@@ -187,20 +205,6 @@ async function loadMenuTree() {
 }
 
 const activeMenu = computed(() => route.path)
-
-const defaultOpeneds = computed(() => {
-  const paths = []
-  function collect(items) {
-    for (const item of items) {
-      if (item.children && item.children.length > 0) {
-        paths.push(item.path || item.code)
-        collect(item.children)
-      }
-    }
-  }
-  collect(menuTree.value)
-  return paths
-})
 
 const defaultRoute = computed(() => {
   const findFirstPath = (items) => {

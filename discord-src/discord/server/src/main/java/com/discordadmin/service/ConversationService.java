@@ -203,7 +203,7 @@ public class ConversationService {
         String channelId;
         if (account.getAccountType() == DiscordAccount.AccountType.USER) {
             try {
-                channelId = discordUserClient.openDmChannel(account.getBotToken(), request.friendDiscordUserId());
+                channelId = discordUserClient.openDmChannel(account.getToken(), request.friendDiscordUserId());
             } catch (Exception e) {
                 throw new IllegalStateException("创建 DM 频道失败: " + e.getMessage(), e);
             }

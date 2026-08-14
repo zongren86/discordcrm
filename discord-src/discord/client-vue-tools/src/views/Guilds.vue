@@ -7,7 +7,7 @@
       </div>
       <div class="header-actions">
         <el-select v-model="filters.discordAccountId" placeholder="选择 Discord 账号" clearable style="width: 240px" @change="loadServers">
-          <el-option v-for="a in accountOptions" :key="a.id" :label="a.name || a.discordBotName || a.discordBotId || ('账号' + a.id)" :value="a.id" />
+          <el-option v-for="a in accountOptions" :key="a.id" :label="a.name || a.discordName || a.discordId || ('账号' + a.id)" :value="a.id" />
         </el-select>
         <el-button type="primary" @click="openEditDialog()"><el-icon><Plus /></el-icon> 新增服务器</el-button>
       </div>
@@ -28,7 +28,7 @@
           </template>
         </el-table-column>
         <el-table-column label="所属账号" width="180">
-          <template #default="{ row }"><el-tag size="small" type="info" effect="plain">{{ row.accountName || row.accountDiscordBotName || '-' }}</el-tag></template>
+          <template #default="{ row }"><el-tag size="small" type="info" effect="plain">{{ row.accountName || row.accountDiscordName || '-' }}</el-tag></template>
         </el-table-column>
         <el-table-column prop="channelId" label="Channel ID" width="180">
           <template #default="{ row }"><span v-if="row.channelId" class="mono">{{ row.channelId }}</span><span v-else class="text-muted">-</span></template>
@@ -58,7 +58,7 @@
       <el-form :model="editDialog.form" label-width="120px" label-position="left">
         <el-form-item label="所属账号" required>
           <el-select v-model="editDialog.form.discordAccountId" placeholder="选择 Discord 账号" style="width: 100%">
-            <el-option v-for="a in accountOptions" :key="a.id" :label="a.name || a.discordBotName || a.discordBotId || ('账号' + a.id)" :value="a.id" />
+            <el-option v-for="a in accountOptions" :key="a.id" :label="a.name || a.discordName || a.discordId || ('账号' + a.id)" :value="a.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="服务器 URL">
@@ -78,10 +78,12 @@
     <el-dialog v-model="syncDialog.visible" title="同步服务器成员" width="620px" :close-on-click-modal="false">
       <div v-if="syncDialog.server" class="sync-info">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="所属账号">{{ syncDialog.server.accountName || syncDialog.server.accountDiscordBotName }}</el-descriptions-item>
-          <el-descriptions-item label="Bot Token"><el-input v-model="syncDialog.token" placeholder="请输入完整的 Discord Token" size="small" clearable /></el-descriptions-item>
+          <el-descriptions-item label="所属账号">{{ syncDialog.server.accountName || syncDialog.server.accountDiscordName }}</el-descriptions-item>
           <el-descriptions-item label="Guild ID"><span class="mono">{{ syncDialog.server.guildId }}</span></el-descriptions-item>
-          <el-descriptions-item label="Channel ID"><span class="mono">{{ syncDialog.server.channelId || '-' }}</span></el-descriptions-item>
+          <el-descriptions-item label="Channel ID">
+            <span v-if="syncDialog.server.channelId" class="mono">{{ syncDialog.server.channelId }}</span>
+            <span v-else class="text-muted">-</span>
+          </el-descriptions-item>
         </el-descriptions>
         <el-divider content-position="left">抓取配置（商户配置）</el-divider>
         <el-form :model="syncDialog.config" label-width="140px">
@@ -250,7 +252,7 @@ async function confirmDelete(server) {
 
 function openSyncDialog(server) {
   syncDialog.server = server
-  syncDialog.token = server.accountBotToken || server.botToken || ""
+  syncDialog.token = server.accountToken || server.token || ""
   guildServers.loadMerchantConfig().then(config => { if (config) { syncDialog.config = { fetchLimit: config.fetchLimit || 10000, requestInterval: config.requestInterval || 3, requestCount: config.requestCount || 100, maxDepth: config.maxDepth || 5, maxRequests: config.maxRequests || 1000 } } }).catch(() => {})
   syncDialog.visible = true
 }
@@ -259,9 +261,9 @@ async function startFetch() {
   if (!syncDialog.server) return
   syncDialog.fetching = true
   try {
-    const botToken = (syncDialog.token || '').trim()
-    if (!botToken) { ElMessage.error('请输入完整的 Bot Token，无法同步'); syncDialog.fetching = false; return }
-    const result = await guildServers.startFetch({ token: botToken, link: syncDialog.server.guildId, guildServerId: syncDialog.server.id, discordAccountId: syncDialog.server.discordAccountId, channelId: syncDialog.server.channelId, maxMembers: syncDialog.config.fetchLimit, pageDelay: syncDialog.config.requestInterval, maxDepth: syncDialog.config.maxDepth, maxRequests: syncDialog.config.maxRequests })
+    const tokenValue = (syncDialog.token || '').trim()
+    if (!tokenValue) { ElMessage.error('请输入完整的 Token，无法同步'); syncDialog.fetching = false; return }
+    const result = await guildServers.startFetch({ token: tokenValue, link: syncDialog.server.guildId, guildServerId: syncDialog.server.id, discordAccountId: syncDialog.server.discordAccountId, channelId: syncDialog.server.channelId, maxMembers: syncDialog.config.fetchLimit, pageDelay: syncDialog.config.requestInterval, maxDepth: syncDialog.config.maxDepth, maxRequests: syncDialog.config.maxRequests })
     if (result.success) {
       ElMessage.success('同步任务已启动')
       if (progressDialog.timer) { clearInterval(progressDialog.timer); progressDialog.timer = null }

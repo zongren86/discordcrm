@@ -6,11 +6,11 @@ import java.util.List;
 
 public class DiscordAccountDtos {
 
-    public record CreateAccountRequest(String name, String botToken, String email, String remark,
+    public record CreateAccountRequest(String name, String token, String email, String remark,
                                        Long merchantId, String accountType) {
     }
 
-    public record UpdateAccountRequest(String name, String botToken, String status, String remark,
+    public record UpdateAccountRequest(String name, String token, String status, String remark,
                                        Long merchantId) {
     }
 
@@ -31,8 +31,8 @@ public class DiscordAccountDtos {
     public record BatchImportResponse(int total, int success, int failed, List<BatchImportResultItem> results) {
     }
 
-    public record AccountDto(Long id, String name, String botTokenMasked, String accountType,
-                              String discordBotId, String discordBotName, String avatarUrl,
+    public record AccountDto(Long id, String name, String tokenMasked, String accountType,
+                              String discordId, String discordName, String avatarUrl,
                               String status, boolean connected, boolean connecting,
                               String lastError, boolean tokenValid,
                               Long friendCount, Long conversationCount, Long messageCount,
@@ -60,9 +60,9 @@ public class DiscordAccountDtos {
                                       boolean tokenValid, Long friendCount, Long conversationCount, Long messageCount,
                                       String agentName, String agentUsername, Long agentId,
                                       Long accountNumberId) {
-            return new AccountDto(a.getId(), a.getName(), maskToken(a.getBotToken()),
+            return new AccountDto(a.getId(), a.getName(), maskToken(a.getToken()),
                     a.getAccountType() != null ? a.getAccountType().name() : "BOT",
-                    a.getDiscordBotId(), a.getDiscordBotName(), a.getAvatarUrl(),
+                    a.getDiscordId(), a.getDiscordName(), a.getAvatarUrl(),
                     a.getStatus() != null ? a.getStatus().name() : null,
                     connected, connecting, a.getLastError(), tokenValid,
                     friendCount != null ? friendCount : 0L,

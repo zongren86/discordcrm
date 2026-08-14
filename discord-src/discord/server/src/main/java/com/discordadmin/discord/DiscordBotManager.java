@@ -85,14 +85,14 @@ public class DiscordBotManager {
             return;
         }
 
-        if (acc.getBotToken() == null || acc.getBotToken().isBlank()) {
+        if (acc.getToken() == null || acc.getToken().isBlank()) {
             connecting.remove(accountId);
             throw new IllegalArgumentException("Bot Token 不能为空");
         }
 
         final Long accId = accountId;
         final String accountName = acc.getName();
-        final String token = acc.getBotToken();
+        final String token = acc.getToken();
         final DiscordMessageListener listener = new DiscordMessageListener(accountId, conversationService);
 
         connectExecutor.submit(() -> {
@@ -107,13 +107,13 @@ public class DiscordBotManager {
                         .addEventListeners(listener)
                         .build();
                 jda.awaitReady();
-                acc.setDiscordBotId(jda.getSelfUser().getId());
-                acc.setDiscordBotName(jda.getSelfUser().getName());
+                acc.setDiscordId(jda.getSelfUser().getId());
+                acc.setDiscordName(jda.getSelfUser().getName());
                 acc.setLastError(null);
                 accountRepository.save(acc);
                 jdaMap.put(accId, jda);
                 log.info("Discord 账号 [{}] 已连接 (botId={}, name={})",
-                        accountName, acc.getDiscordBotId(), acc.getDiscordBotName());
+                        accountName, acc.getDiscordId(), acc.getDiscordName());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 log.warn("等待 Discord 账号 [{}] 连接被中断", accountName);

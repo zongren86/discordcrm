@@ -9,8 +9,8 @@ import java.util.List;
 import java.util.Optional;
 
 public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, Long> {
-    Optional<DiscordAccount> findByBotToken(String botToken);
-    Optional<DiscordAccount> findByDiscordBotId(String discordBotId);
+    Optional<DiscordAccount> findByToken(String token);
+    Optional<DiscordAccount> findByDiscordId(String discordId);
     List<DiscordAccount> findByStatus(DiscordAccount.AccountStatus status);
     List<DiscordAccount> findByMerchantId(Long merchantId);
     List<DiscordAccount> findByAccountType(DiscordAccount.AccountType accountType);

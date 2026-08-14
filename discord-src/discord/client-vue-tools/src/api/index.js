@@ -10,7 +10,7 @@ export function listAccounts(params = {}) {
 export function createAccount(payload) {
   return http.post('/discord-accounts', {
     name: payload.nickname || payload.name,
-    botToken: payload.token || payload.botToken,
+    token: payload.token,
     email: payload.email,
     remark: payload.remark,
     merchantId: payload.merchantId,
@@ -20,7 +20,7 @@ export function createAccount(payload) {
 export function updateAccount(id, payload) {
   const body = {}
   if (payload.nickname !== undefined || payload.name !== undefined) body.name = payload.nickname || payload.name
-  if (payload.token !== undefined || payload.botToken !== undefined) body.botToken = payload.token || payload.botToken
+  if (payload.token !== undefined) body.token = payload.token
   if (payload.status !== undefined) body.status = payload.status
   if (payload.remark !== undefined) body.remark = payload.remark
   if (payload.merchantId !== undefined) body.merchantId = payload.merchantId

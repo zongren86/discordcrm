@@ -41,7 +41,7 @@ public class GuildController {
         if (account.getAccountType() != DiscordAccount.AccountType.USER) {
             throw new IllegalArgumentException("只有USER类型账号支持查看服务器列表");
         }
-        String token = account.getBotToken();
+        String token = account.getToken();
         if (token == null || token.isBlank()) {
             throw new IllegalArgumentException("该账号未配置Token");
         }
@@ -108,7 +108,7 @@ public class GuildController {
         if (account.getAccountType() != DiscordAccount.AccountType.USER) {
             throw new IllegalArgumentException("只有USER类型账号支持查看成员列表");
         }
-        String token = account.getBotToken();
+        String token = account.getToken();
         if (token == null || token.isBlank()) {
             throw new IllegalArgumentException("该账号未配置Token");
         }

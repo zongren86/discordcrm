@@ -16,7 +16,7 @@
           <el-option
             v-for="a in accountOptions"
             :key="a.id"
-            :label="a.name || a.discordBotName || a.discordBotId || ('账号' + a.id)"
+            :label="a.name || a.discordName || a.discordId || ('账号' + a.id)"
             :value="a.id"
           />
         </el-select>
@@ -51,7 +51,7 @@
 
         <el-table-column label="所属账号" width="180">
           <template #default="{ row }">
-            <el-tag size="small" type="info" effect="plain">{{ row.accountName || row.accountDiscordBotName || '-' }}</el-tag>
+            <el-tag size="small" type="info" effect="plain">{{ row.accountName || row.accountDiscordName || '-' }}</el-tag>
           </template>
         </el-table-column>
 
@@ -118,7 +118,7 @@
             <el-option
               v-for="a in accountOptions"
               :key="a.id"
-              :label="a.name || a.discordBotName || a.discordBotId || ('账号' + a.id)"
+              :label="a.name || a.discordName || a.discordId || ('账号' + a.id)"
               :value="a.id"
             />
           </el-select>
@@ -155,16 +155,14 @@
       <div v-if="syncDialog.server" class="sync-info">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="所属账号">
-            {{ syncDialog.server.accountName || syncDialog.server.accountDiscordBotName }}
-          </el-descriptions-item>
-          <el-descriptions-item label="Bot Token">
-            <el-input v-model="syncDialog.token" placeholder="请输入完整的 Discord Token（将用于抓取）" size="small" clearable />
+            {{ syncDialog.server.accountName || syncDialog.server.accountDiscordName }}
           </el-descriptions-item>
           <el-descriptions-item label="Guild ID">
             <span class="mono">{{ syncDialog.server.guildId }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="Channel ID">
-            <span class="mono">{{ syncDialog.server.channelId || '-' }}</span>
+            <span v-if="syncDialog.server.channelId" class="mono">{{ syncDialog.server.channelId }}</span>
+            <span v-else class="text-muted">-</span>
           </el-descriptions-item>
         </el-descriptions>
 
@@ -835,7 +833,7 @@ function openSyncDialog(server) {
   syncDialog.server = server
   syncDialog.resumeSync = true
   // 回填完整 token（非脱敏），供展示与编辑
-  syncDialog.token = server.accountBotToken || server.botToken || ""
+  syncDialog.token = server.accountToken || server.token || ""
   // 加载商户配置作为默认值
   guildServers.loadMerchantConfig().then(config => {
     if (config) {
@@ -861,15 +859,15 @@ async function startFetch() {
   if (!syncDialog.server) return
   syncDialog.fetching = true
   try {
-    const botToken = (syncDialog.token || '').trim()
-    if (!botToken) {
-      ElMessage.error('请输入完整的 Bot Token，无法同步')
+    const tokenValue = (syncDialog.token || '').trim()
+    if (!tokenValue) {
+      ElMessage.error('请输入完整的 Token，无法同步')
       syncDialog.fetching = false
       return
     }
 
     const result = await guildServers.startFetch({
-      token: botToken,
+      token: tokenValue,
       link: syncDialog.server.guildId,
       guildServerId: syncDialog.server.id,
       discordAccountId: syncDialog.server.discordAccountId,

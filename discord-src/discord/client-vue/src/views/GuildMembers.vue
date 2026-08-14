@@ -45,7 +45,7 @@
             <el-option
               v-for="a in accountOptions"
               :key="a.id"
-              :label="a.name || a.discordBotName || ('账号 ' + a.id)"
+              :label="a.name || a.discordName || ('账号 ' + a.id)"
               :value="a.id"
             />
           </el-select>

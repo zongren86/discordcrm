@@ -96,7 +96,7 @@ public class MessageService {
 
         JsonNode messages;
         try {
-            messages = discordUserClient.listMessagesBefore(account.getBotToken(), channelId, beforeMsgId, 50);
+            messages = discordUserClient.listMessagesBefore(account.getToken(), channelId, beforeMsgId, 50);
         } catch (Exception e) {
             log.warn("加载更多历史消息失败: convId={}, before={}, err={}", conversationId, beforeMsgId, e.getMessage());
             return List.of();
@@ -118,8 +118,8 @@ public class MessageService {
             String content = msgNode.path("content").asText("");
 
             boolean isOutbound = authorId != null
-                    && account.getDiscordBotId() != null
-                    && authorId.equals(account.getDiscordBotId());
+                    && account.getDiscordId() != null
+                    && authorId.equals(account.getDiscordId());
 
             Message msgEntity = new Message();
             msgEntity.setConversation(conv);
@@ -196,7 +196,7 @@ public class MessageService {
         String discordMessageId = null;
         if (account.getAccountType() == DiscordAccount.AccountType.USER) {
             try {
-                discordMessageId = discordUserClient.sendMessage(account.getBotToken(), conversation.getChannelId(), textToSend);
+                discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
             } catch (Exception e) {
                 // 检查是否是 token 失效错误
                 if (e.getMessage() != null && (e.getMessage().contains("401") || e.getMessage().contains("Unauthorized"))) {

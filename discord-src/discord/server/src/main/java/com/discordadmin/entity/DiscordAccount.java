@@ -15,7 +15,7 @@ import java.util.Set;
         @Index(name = "idx_status", columnList = "status"),
         @Index(name = "idx_merchant_status", columnList = "merchant_id, status"),
         @Index(name = "idx_account_type", columnList = "account_type"),
-        @Index(name = "idx_discord_bot_id", columnList = "discord_bot_id"),
+        @Index(name = "idx_discord_id", columnList = "discord_id"),
         @Index(name = "idx_email", columnList = "email"),
         @Index(name = "idx_merchant_status_type", columnList = "merchant_id, status, account_type")
 })
@@ -42,19 +42,19 @@ public class DiscordAccount {
     @Column(name = "remark", length = 256)
     private String remark;
 
-    @Column(name = "bot_token", nullable = false, unique = true, length = 256)
+    @Column(name = "token", nullable = false, unique = true, length = 256)
     @JsonIgnore
-    private String botToken;
+    private String token;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "account_type", length = 8)
     private AccountType accountType = AccountType.BOT;
 
-    @Column(name = "discord_bot_id", length = 32)
-    private String discordBotId;
+    @Column(name = "discord_id", length = 32)
+    private String discordId;
 
-    @Column(name = "discord_bot_name", length = 128)
-    private String discordBotName;
+    @Column(name = "discord_name", length = 128)
+    private String discordName;
 
     @Column(name = "avatar_url", length = 512)
     private String avatarUrl;

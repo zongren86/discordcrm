@@ -9,7 +9,7 @@ ALTER TABLE discord_accounts ADD INDEX idx_merchant_id (merchant_id);
 ALTER TABLE discord_accounts ADD INDEX idx_status (status);
 ALTER TABLE discord_accounts ADD INDEX idx_merchant_status (merchant_id, status);
 ALTER TABLE discord_accounts ADD INDEX idx_account_type (account_type);
-ALTER TABLE discord_accounts ADD INDEX idx_discord_bot_id (discord_bot_id);
+ALTER TABLE discord_accounts ADD INDEX idx_discord_id (discord_id);
 ALTER TABLE discord_accounts ADD INDEX idx_email (email);
 ALTER TABLE discord_accounts ADD INDEX idx_merchant_status_type (merchant_id, status, account_type);
 

@@ -15,7 +15,7 @@
           <el-select v-model="selectedAccountId" size="small" placeholder="账号" clearable class="filter-select">
             <el-option :value="null" label="全部账号" />
             <el-option v-for="acc in accounts.accounts" :key="acc.id" :value="acc.id"
-              :label="acc.name || acc.nickname || acc.discordBotName || ('账号#' + acc.id)" />
+              :label="acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id)" />
           </el-select>
 
           <el-select v-model="selectedStage" size="small" placeholder="漏斗" clearable class="filter-select">
@@ -1021,7 +1021,7 @@ function initialOfByMsg(msg, direction) {
   if (direction === 'out') {
     const accId = conversations.currentConversation?.discordAccountId || conversations.currentConversation?.accountId
     const acc = accounts.getAccountById(accId)
-    const name = acc?.name || acc?.nickname || acc?.discordBotName || acc?.globalName || acc?.username || auth.agent?.username || 'A'
+    const name = acc?.name || acc?.nickname || acc?.discordName || acc?.globalName || acc?.username || auth.agent?.username || 'A'
     return name.charAt(0).toUpperCase()
   }
   const convName = conversations.currentConversation?.globalName || conversations.currentConversation?.username || conversations.currentConversation?.friendName
@@ -1043,7 +1043,7 @@ function senderNameOf(msg) {
   if (msg.direction === 'OUTBOUND') {
     const accId = conversations.currentConversation?.discordAccountId || conversations.currentConversation?.accountId
     const acc = accounts.getAccountById(accId)
-    return acc?.name || acc?.discordBotName || acc?.nickname || acc?.globalName || acc?.username || msg.senderName || '客服'
+    return acc?.name || acc?.discordName || acc?.nickname || acc?.globalName || acc?.username || msg.senderName || '客服'
   }
   const convName = conversations.currentConversation?.globalName || conversations.currentConversation?.username || conversations.currentConversation?.friendName
   return msg.senderName || convName || '客户'

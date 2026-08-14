@@ -93,9 +93,9 @@ public class DiscordAccountService {
             
             // 检测 USER 账号的 token 有效性
             if (a.getAccountType() == DiscordAccount.AccountType.USER
-                    && a.getBotToken() != null && !a.getBotToken().isBlank()) {
+                    && a.getToken() != null && !a.getToken().isBlank()) {
                 try {
-                    userClient.getMe(a.getBotToken());
+                    userClient.getMe(a.getToken());
                     tokenValid = true;
                 } catch (Exception e) {
                     tokenValid = false;
@@ -107,15 +107,15 @@ public class DiscordAccountService {
             // 获取头像
             if (a.getAvatarUrl() == null
                     && a.getAccountType() == DiscordAccount.AccountType.USER
-                    && a.getBotToken() != null
-                    && a.getDiscordBotId() != null) {
+                    && a.getToken() != null
+                    && a.getDiscordId() != null) {
                 try {
-                    JsonNode me = userClient.getMe(a.getBotToken());
+                    JsonNode me = userClient.getMe(a.getToken());
                     String avatarHash = me.path("avatar").asText(null);
                     if (avatarHash != null && !avatarHash.isBlank()) {
                         String ext = avatarHash.startsWith("a_") ? "gif" : "png";
                         String avatarUrl = "https://cdn.discordapp.com/avatars/"
-                                + a.getDiscordBotId() + "/" + avatarHash + "." + ext;
+                                + a.getDiscordId() + "/" + avatarHash + "." + ext;
                         a.setAvatarUrl(avatarUrl);
                         changed = true;
                     }
@@ -296,12 +296,12 @@ public class DiscordAccountService {
         if (request.name() == null || request.name().isBlank()) {
             throw new IllegalArgumentException("账号名称不能为空");
         }
-        if (request.botToken() == null || request.botToken().isBlank()) {
+        if (request.token() == null || request.token().isBlank()) {
             throw new IllegalArgumentException("Bot Token 不能为空");
         }
         DiscordAccount account = new DiscordAccount();
         account.setName(request.name().trim());
-        account.setBotToken(request.botToken().trim());
+        account.setToken(request.token().trim());
         String accType = request.accountType() != null ? request.accountType().toUpperCase() : "BOT";
         account.setAccountType(DiscordAccount.AccountType.valueOf(accType));
         account.setStatus(DiscordAccount.AccountStatus.ACTIVE);
@@ -326,7 +326,7 @@ public class DiscordAccountService {
         boolean hasAuth = SecurityUtils.currentAgent() != null;
 
         if (request.discordUserId() != null && !request.discordUserId().isBlank()) {
-            Optional<DiscordAccount> existByUserId = accountRepository.findByDiscordBotId(request.discordUserId().trim());
+            Optional<DiscordAccount> existByUserId = accountRepository.findByDiscordId(request.discordUserId().trim());
             if (existByUserId.isPresent()) {
                 DiscordAccount exist = existByUserId.get();
                 if (hasAuth) SecurityUtils.checkMerchantAccess(exist.getMerchantId());
@@ -334,7 +334,7 @@ public class DiscordAccountService {
             }
         }
 
-        Optional<DiscordAccount> existByToken = accountRepository.findByBotToken(token);
+        Optional<DiscordAccount> existByToken = accountRepository.findByToken(token);
         if (existByToken.isPresent()) {
             DiscordAccount exist = existByToken.get();
             if (hasAuth) SecurityUtils.checkMerchantAccess(exist.getMerchantId());
@@ -348,7 +348,7 @@ public class DiscordAccountService {
                                                        String token, String name) {
         if (exist.getStatus() == DiscordAccount.AccountStatus.INACTIVE) {
             exist.setStatus(DiscordAccount.AccountStatus.ACTIVE);
-            exist.setBotToken(token);
+            exist.setToken(token);
             exist.setLastError(null);
             if (name != null && !name.isBlank()) exist.setName(name);
             if (request.avatar() != null && !request.avatar().isBlank()) {
@@ -367,8 +367,8 @@ public class DiscordAccountService {
                 exist.setAvatarUrl(newAvatarUrl);
             }
         }
-        if (!token.equals(exist.getBotToken())) {
-            exist.setBotToken(token);
+        if (!token.equals(exist.getToken())) {
+            exist.setToken(token);
             exist.setLastError(null);
         }
         exist = accountRepository.save(exist);
@@ -426,18 +426,18 @@ public class DiscordAccountService {
 
         DiscordAccount account = new DiscordAccount();
         account.setName(name);
-        account.setBotToken(token);
+        account.setToken(token);
         account.setAccountType(type);
         account.setStatus(DiscordAccount.AccountStatus.ACTIVE);
         account.setMerchantId(SecurityUtils.currentMerchantId());
         if (type == DiscordAccount.AccountType.USER) {
             if (request.discordUserId() != null && !request.discordUserId().isBlank()) {
-                account.setDiscordBotId(request.discordUserId().trim());
+                account.setDiscordId(request.discordUserId().trim());
             }
             String displayName = request.globalName();
             if (displayName == null || displayName.isBlank()) displayName = request.username();
             if (displayName != null && !displayName.isBlank()) {
-                account.setDiscordBotName(displayName);
+                account.setDiscordName(displayName);
             }
             if (request.avatar() != null && !request.avatar().isBlank()
                     && request.discordUserId() != null && !request.discordUserId().isBlank()) {
@@ -461,13 +461,13 @@ public class DiscordAccountService {
         boolean validationOk = false;
         try {
             JsonNode me = userClient.getMe(token);
-            if (me.path("id").asText(null) != null) account.setDiscordBotId(me.path("id").asText());
-            if (me.path("username").asText(null) != null) account.setDiscordBotName(me.path("username").asText());
+            if (me.path("id").asText(null) != null) account.setDiscordId(me.path("id").asText());
+            if (me.path("username").asText(null) != null) account.setDiscordName(me.path("username").asText());
             String avatarHash = me.path("avatar").asText(null);
-            if (avatarHash != null && !avatarHash.isBlank() && account.getDiscordBotId() != null) {
+            if (avatarHash != null && !avatarHash.isBlank() && account.getDiscordId() != null) {
                 String ext = avatarHash.startsWith("a_") ? "gif" : "png";
                 account.setAvatarUrl("https://cdn.discordapp.com/avatars/"
-                        + account.getDiscordBotId() + "/" + avatarHash + "." + ext);
+                        + account.getDiscordId() + "/" + avatarHash + "." + ext);
             }
             account = accountRepository.save(account);
             validationOk = true;
@@ -498,9 +498,9 @@ public class DiscordAccountService {
         if (request.name() != null && !request.name().isBlank()) {
             account.setName(request.name().trim());
         }
-        if (request.botToken() != null && !request.botToken().isBlank()
-                && !request.botToken().trim().equals(account.getBotToken())) {
-            account.setBotToken(request.botToken().trim());
+        if (request.token() != null && !request.token().isBlank()
+                && !request.token().trim().equals(account.getToken())) {
+            account.setToken(request.token().trim());
             tokenChanged = true;
         }
         if (request.status() != null) {
@@ -631,30 +631,30 @@ public class DiscordAccountService {
             String userId = me.path("id").asText(null);
 
             // 更新账号
-            account.setBotToken(token);
+            account.setToken(token);
             account.setLastError(null);
             // 设置 Token 过期时间（Discord USER token 默认 24 小时有效期）
             account.setTokenExpiresAt(Instant.now().plusSeconds(24 * 60 * 60));
             account.setTokenCheckedAt(Instant.now());
             if (userId != null) {
-                account.setDiscordBotId(userId);
+                account.setDiscordId(userId);
             }
             String username = me.path("username").asText(null);
             String globalName = me.path("global_name").asText(null);
             if (globalName != null && !globalName.isBlank()) {
-                account.setDiscordBotName(globalName);
+                account.setDiscordName(globalName);
                 account.setName(globalName);
             } else if (username != null) {
-                account.setDiscordBotName(username);
+                account.setDiscordName(username);
                 account.setName(username);
             }
 
             // 更新头像
             String avatarHash = me.path("avatar").asText(null);
-            if (avatarHash != null && !avatarHash.isBlank() && account.getDiscordBotId() != null) {
+            if (avatarHash != null && !avatarHash.isBlank() && account.getDiscordId() != null) {
                 String ext = avatarHash.startsWith("a_") ? "gif" : "png";
                 String avatarUrl = "https://cdn.discordapp.com/avatars/"
-                        + account.getDiscordBotId() + "/" + avatarHash + "." + ext;
+                        + account.getDiscordId() + "/" + avatarHash + "." + ext;
                 account.setAvatarUrl(avatarUrl);
             }
 
@@ -757,10 +757,10 @@ public class DiscordAccountService {
         DiscordAccount account = null;
         Long currentMerchantId = SecurityUtils.currentMerchantId();
         if (userId != null) {
-            Optional<DiscordAccount> exist = accountRepository.findByDiscordBotId(userId);
+            Optional<DiscordAccount> exist = accountRepository.findByDiscordId(userId);
             if (exist.isPresent()) {
                 account = exist.get();
-                account.setBotToken(token);
+                account.setToken(token);
                 account.setStatus(DiscordAccount.AccountStatus.ACTIVE);
                 account.setLastError(null);
                 account.setName(displayName);
@@ -772,11 +772,11 @@ public class DiscordAccountService {
         if (account == null) {
             account = new DiscordAccount();
             account.setName(displayName);
-            account.setBotToken(token);
+            account.setToken(token);
             account.setAccountType(DiscordAccount.AccountType.USER);
             account.setStatus(DiscordAccount.AccountStatus.ACTIVE);
-            account.setDiscordBotId(userId);
-            account.setDiscordBotName(displayName);
+            account.setDiscordId(userId);
+            account.setDiscordName(displayName);
             account.setEmail(email.trim());
             account.setMerchantId(currentMerchantId);
         }

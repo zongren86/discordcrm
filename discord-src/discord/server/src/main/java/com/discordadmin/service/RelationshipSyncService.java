@@ -74,8 +74,8 @@ public class RelationshipSyncService {
         List<JsonNode> remoteFriends;
         List<JsonNode> remotePending;
         try {
-            remoteFriends = userClient.listFriends(acc.getBotToken());
-            remotePending = userClient.listPendingFriendRequests(acc.getBotToken());
+            remoteFriends = userClient.listFriends(acc.getToken());
+            remotePending = userClient.listPendingFriendRequests(acc.getToken());
         } catch (DiscordUserClient.DiscordUserApiException e) {
             acc.setLastError("拉好友失败: " + e.statusCode + " " + truncate(e.rawBody, 200));
             accountRepository.save(acc);
@@ -182,7 +182,7 @@ public class RelationshipSyncService {
      * 这样 UserMessagePoller 才能轮询到好友发来的私信。
      */
     private int syncDmChannels(DiscordAccount acc) throws Exception {
-        JsonNode channels = userClient.listDmChannels(acc.getBotToken());
+        JsonNode channels = userClient.listDmChannels(acc.getToken());
         if (channels == null || !channels.isArray()) return 0;
 
         int count = 0;

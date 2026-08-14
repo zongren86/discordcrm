@@ -38,7 +38,7 @@
               <el-avatar :size="40" :src="getAvatar(row)" class="account-avatar-cell">{{ initialOf(row) }}</el-avatar>
               <div class="account-cell-info">
                 <div class="account-cell-name">
-                  {{ row.name || row.discordBotName || '未命名' }}
+                  {{ row.name || row.discordName || '未命名' }}
                   <el-tag :type="row.accountType === 'USER' ? 'primary' : 'warning'" size="small" effect="light" style="margin-left:6px;">
                     {{ row.accountType === 'USER' ? 'USER' : 'BOT' }}
                   </el-tag>
@@ -200,7 +200,7 @@ async function fetchAccounts() {
 
 function resetFilters() { filters.keyword = ''; filters.status = null; fetchAccounts() }
 const filteredAccounts = computed(() => allAccounts.value)
-function initialOf(acc) { const n = acc.name || acc.discordBotName || acc.nickname || acc.globalName || acc.username || '?'; return n.charAt(0).toUpperCase() }
+function initialOf(acc) { const n = acc.name || acc.discordName || acc.nickname || acc.globalName || acc.username || '?'; return n.charAt(0).toUpperCase() }
 function getAvatar(acc) { if (!acc.avatarUrl) return ''; return acc.avatarUrl }
 function statusClass(status) { return { 'ACTIVE': 'active', 'INACTIVE': 'inactive', 'TOKEN_EXPIRED': 'expired' }[status] || 'inactive' }
 function statusLabel(status) { return { 'ACTIVE': '正常', 'INACTIVE': '已停用', 'TOKEN_EXPIRED': 'Token过期' }[status] || '未知' }
@@ -210,7 +210,7 @@ const botDialog = reactive({ visible: false, editId: null, saving: false, form: 
 function openAddAccount() { botDialog.visible = true; botDialog.editId = null; botDialog.form = { nickname: '', token: '', accountType: 'BOT', email: '', remark: '', merchantId: null } }
 function openEdit(acc) {
   botDialog.visible = true; botDialog.editId = acc.id
-  botDialog.form = { nickname: acc.name || acc.discordBotName || acc.nickname || '', token: '', accountType: acc.accountType || 'BOT', email: acc.email || '', remark: acc.remark || '', merchantId: acc.merchantId || null }
+  botDialog.form = { nickname: acc.name || acc.discordName || acc.nickname || '', token: '', accountType: acc.accountType || 'BOT', email: acc.email || '', remark: acc.remark || '', merchantId: acc.merchantId || null }
 }
 function resetBotDialog() { botDialog.editId = null; botDialog.form = { nickname: '', token: '', accountType: 'BOT', email: '', remark: '', merchantId: null }; botDialog.saving = false }
 async function saveBot() {
@@ -266,7 +266,7 @@ function exportFailedAccounts() {
 
 async function removeAccount(acc) {
   try {
-    const dispName = acc.name || acc.discordBotName || acc.nickname || acc.username
+    const dispName = acc.name || acc.discordName || acc.nickname || acc.username
     await ElMessageBox.confirm(`确定要删除账号「${dispName}」吗？此操作将删除关联数据。`, '提示', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
     await deleteAccount(acc.id); ElMessage.success('已删除'); await fetchAccounts()
   } catch (e) {}

@@ -59,7 +59,7 @@
               </el-avatar>
               <div class="account-cell-info">
                 <div class="account-cell-name">
-                  {{ row.name || row.discordBotName || '未命名' }}
+                  {{ row.name || row.discordName || '未命名' }}
                   <el-tag :type="row.accountType === 'USER' ? 'primary' : 'warning'" size="small" effect="light" style="margin-left:6px;">
                     {{ row.accountType === 'USER' ? 'USER' : 'BOT' }}
                   </el-tag>
@@ -326,7 +326,7 @@ const hasUserAccounts = computed(() => {
 })
 
 function initialOf(acc) {
-  const n = acc.name || acc.discordBotName || acc.nickname || acc.globalName || acc.username || '?'
+  const n = acc.name || acc.discordName || acc.nickname || acc.globalName || acc.username || '?'
   return n.charAt(0).toUpperCase()
 }
 
@@ -371,7 +371,7 @@ function openEdit(acc) {
   botDialog.visible = true
   botDialog.editId = acc.id
   botDialog.form = {
-    nickname: acc.name || acc.discordBotName || acc.nickname || '',
+    nickname: acc.name || acc.discordName || acc.nickname || '',
     token: '',
     accountType: acc.accountType || 'BOT',
     email: acc.email || '',
@@ -437,7 +437,7 @@ const refreshTokenDialog = reactive({
 
 function openRefreshToken(account) {
   refreshTokenDialog.accountId = account.id
-  refreshTokenDialog.accountName = account.name || account.discordBotName || '未命名'
+  refreshTokenDialog.accountName = account.name || account.discordName || '未命名'
   refreshTokenDialog.form.email = account.email || ''
   refreshTokenDialog.form.password = ''
   refreshTokenDialog.visible = true
@@ -579,7 +579,7 @@ function exportFailedAccounts() {
 
 async function removeAccount(acc) {
   try {
-    const dispName = acc.name || acc.discordBotName || acc.nickname || acc.username
+    const dispName = acc.name || acc.discordName || acc.nickname || acc.username
     await ElMessageBox.confirm(`确定要删除账号「${dispName}」吗？此操作将删除关联数据。`, '提示', {
       type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消'
     })

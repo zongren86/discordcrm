@@ -77,8 +77,8 @@ public class UserMessagePoller {
                 List<Conversation> conversations = conversationRepository
                         .findByDiscordAccountAndType(account, Conversation.ConversationType.DM);
 
-                log.info("轮询账号[{}](id={}) 发现 {} 个 DM 会话, discordBotId={}",
-                        account.getName(), account.getId(), conversations.size(), account.getDiscordBotId());
+                log.info("轮询账号[{}](id={}) 发现 {} 个 DM 会话, discordId={}",
+                        account.getName(), account.getId(), conversations.size(), account.getDiscordId());
 
                 for (Conversation conv : conversations) {
                     try {
@@ -138,7 +138,7 @@ public class UserMessagePoller {
 
         JsonNode messages;
         try {
-            messages = discordUserClient.listMessages(account.getBotToken(), channelId, 50);
+            messages = discordUserClient.listMessages(account.getToken(), channelId, 50);
         } catch (DiscordUserClient.DiscordUserApiException e) {
             if (e.statusCode == 401) {
                 account.setLastError("Token 已过期，请用 Chrome 插件重新导入 Token 续期");
@@ -196,8 +196,8 @@ public class UserMessagePoller {
             }
 
             boolean isOutbound = authorId != null
-                    && account.getDiscordBotId() != null
-                    && authorId.equals(account.getDiscordBotId());
+                    && account.getDiscordId() != null
+                    && authorId.equals(account.getDiscordId());
 
             log.info("处理新消息 [convId={}, msgId={}, direction={}, author={}, contentLen={}]",
                     conv.getId(), msgId, (isOutbound ? "OUTBOUND" : "INBOUND"), authorName, content.length());

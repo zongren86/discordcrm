@@ -90,8 +90,8 @@ public class DiscordMemberController {
                 try {
                     Long accountId = Long.parseLong(discordAccountIdStr);
                     DiscordAccount account = accountRepository.findById(accountId).orElse(null);
-                    if (account != null && account.getBotToken() != null && !account.getBotToken().isBlank()) {
-                        JsonNode guildInfo = discordUserClient.getGuild(account.getBotToken(), guildId);
+                    if (account != null && account.getToken() != null && !account.getToken().isBlank()) {
+                        JsonNode guildInfo = discordUserClient.getGuild(account.getToken(), guildId);
                         if (guildInfo != null) {
                             serverName = guildInfo.path("name").asText("");
                             log.info("解析服务器成功: guildId={}, name={}", guildId, serverName);

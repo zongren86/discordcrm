@@ -188,7 +188,7 @@ public class GuildService {
     private void fetchMembersBatch(DiscordAccount account, GuildServer server, 
                                     MerchantConfig config, FetchProgress progress, 
                                     String startAfter) throws Exception {
-        String token = account.getBotToken();
+        String token = account.getToken();
         String guildId = server.getGuildId();
         int limit = Math.min(config.getRequestCount(), 1000);
         int maxRequests = config.getMaxRequests();

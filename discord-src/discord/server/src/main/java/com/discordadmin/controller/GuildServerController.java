@@ -262,9 +262,9 @@ public class GuildServerController {
         com.discordadmin.entity.DiscordAccount acc = accountMap.get(server.getDiscordAccountId());
         if (acc != null) {
             map.put("accountName", acc.getName());
-            map.put("accountDiscordBotName", acc.getDiscordBotName());
-            map.put("accountDiscordBotId", acc.getDiscordBotId());
-            map.put("accountBotToken", acc.getBotToken());
+            map.put("accountDiscordName", acc.getDiscordName());
+            map.put("accountDiscordId", acc.getDiscordId());
+            map.put("accountToken", acc.getToken());
         } else {
             map.put("accountName", "未知账号");
         }

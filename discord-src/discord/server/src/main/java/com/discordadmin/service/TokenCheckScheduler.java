@@ -77,7 +77,7 @@ public class TokenCheckScheduler {
      * 检查单个账号的 Token 有效性并更新状态
      */
     private boolean checkAndUpdateTokenStatus(DiscordAccount account) {
-        if (account.getBotToken() == null || account.getBotToken().isBlank()) {
+        if (account.getToken() == null || account.getToken().isBlank()) {
             account.setLastError("Token 为空");
             accountRepository.save(account);
             return false;
@@ -85,7 +85,7 @@ public class TokenCheckScheduler {
         
         try {
             // 尝试调用 Discord API 验证 Token
-            JsonNode me = userClient.getMe(account.getBotToken());
+            JsonNode me = userClient.getMe(account.getToken());
             
             // Token 有效，更新检查时间和过期时间
             account.setTokenCheckedAt(Instant.now());

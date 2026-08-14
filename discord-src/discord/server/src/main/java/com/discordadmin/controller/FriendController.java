@@ -87,7 +87,7 @@ public class FriendController {
         if (acc.getAccountType() != DiscordAccount.AccountType.USER) {
             throw new IllegalStateException("仅 USER 类型账号可处理好友请求");
         }
-        userClient.acceptFriendRequest(acc.getBotToken(), friendUserId);
+        userClient.acceptFriendRequest(acc.getToken(), friendUserId);
 
         Optional<Friend> existOpt = friendRepository
                 .findByDiscordAccountAndFriendDiscordUserId(acc, friendUserId);
@@ -119,7 +119,7 @@ public class FriendController {
         if (acc.getAccountType() != DiscordAccount.AccountType.USER) {
             throw new IllegalStateException("仅 USER 类型账号可处理好友请求");
         }
-        userClient.removeRelationship(acc.getBotToken(), friendUserId);
+        userClient.removeRelationship(acc.getToken(), friendUserId);
 
         friendRepository.findByDiscordAccountAndFriendDiscordUserId(acc, friendUserId)
                 .ifPresent(friendRepository::delete);

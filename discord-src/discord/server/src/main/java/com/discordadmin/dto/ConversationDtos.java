@@ -18,10 +18,10 @@ public class ConversationDtos {
         }
     }
 
-    public record DiscordAccountDto(Long id, String name, String discordBotName, String status) {
+    public record DiscordAccountDto(Long id, String name, String discordName, String status) {
         public static DiscordAccountDto from(DiscordAccount a) {
             if (a == null) return null;
-            return new DiscordAccountDto(a.getId(), a.getName(), a.getDiscordBotName(),
+            return new DiscordAccountDto(a.getId(), a.getName(), a.getDiscordName(),
                     a.getStatus().name());
         }
     }
