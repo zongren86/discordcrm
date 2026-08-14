@@ -632,42 +632,98 @@
           </div>
 
           <div class="input-box-wrap">
+            <!-- 空闲：开始录音按钮（只有idle态才显示，录音中整块区域替换） -->
             <el-button
               v-if="!isEditing && !isRecording"
-              class="voice-btn"
+              class="voice-btn voice-btn-start"
               :type="recordedAudioData ? 'success' : 'default'"
               circle
               size="large"
               :disabled="sending"
-              @click="startRecording">
+              @click="startRecording"
+              title="开始录音（发送语音）">
               <el-icon><Microphone /></el-icon>
             </el-button>
-            <el-button
-              v-else-if="!isEditing && isRecording"
-              class="voice-btn voice-btn-recording"
-              type="danger"
-              circle
-              size="large"
-              @click="stopRecording">
-              <span class="voice-rec-indicator"></span>
-              <span class="voice-rec-time">{{ recordingDuration }}s</span>
-            </el-button>
+
+            <!-- 录音中：左(波形+时间+提示) + 右(取消/停止都放右边) -->
+            <div v-else-if="!isEditing && isRecording" class="recorder-live">
+              <div class="recorder-live-main">
+                <div class="live-wave">
+                  <!-- 基线声波 SVG：作为一条连续的浅红正弦波打底，初始就是"声波线"不是虚线 -->
+                  <svg class="live-wave-baseline" viewBox="0 0 600 40" preserveAspectRatio="none" aria-hidden="true">
+                    <defs>
+                      <linearGradient id="waveBaselineGrad" x1="0" x2="1" y1="0" y2="0">
+                        <stop offset="0%" stop-color="#fca5a5" stop-opacity="0.9"/>
+                        <stop offset="50%" stop-color="#f87171" stop-opacity="0.95"/>
+                        <stop offset="100%" stop-color="#fca5a5" stop-opacity="0.9"/>
+                      </linearGradient>
+                    </defs>
+                    <path d="M0 20
+                             C 30 18, 45 24, 60 20
+                             C 75 16, 90 26, 105 20
+                             C 120 14, 135 28, 150 20
+                             C 165 12, 180 30, 195 20
+                             C 210 10, 225 32, 240 20
+                             C 255 8, 270 34, 285 20
+                             C 300 6, 315 36, 330 20
+                             C 345 6, 360 36, 375 20
+                             C 390 8, 405 34, 420 20
+                             C 435 10, 450 32, 465 20
+                             C 480 12, 495 30, 510 20
+                             C 525 14, 540 26, 555 20
+                             C 570 16, 585 24, 600 20"
+                          fill="none"
+                          stroke="url(#waveBaselineGrad)"
+                          stroke-width="2.2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"/>
+                  </svg>
+                  <div class="live-wave-bars" :aria-label="'录音中，音量波形条，共'+recordingBars.length+'格'">
+                    <div v-for="(v, i) in recordingBars" :key="i" class="live-wave-bar" :style="{ '--lv': v }"></div>
+                  </div>
+                </div>
+                <div class="live-meta">
+                  <div class="live-duration">
+                    <span class="live-led" aria-hidden="true"></span>
+                    <span class="live-clock">{{ String(Math.floor(recordingDuration/60)).padStart(2,'0') }}:{{ String(recordingDuration%60).padStart(2,'0') }}</span>
+                  </div>
+                  <div class="live-hint" aria-live="polite">
+                    点击 <b>停止录音</b> 预览并发送 · <span class="live-hint-act" @click.stop="cancelRecording">取消</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="recorder-actions">
+                <button type="button" class="btn-cancel-rec" @click="cancelRecording" aria-label="取消本次录音，不保存">
+                  取消
+                </button>
+                <button type="button"
+                        class="btn-stop-rec"
+                        @click="stopRecording"
+                        aria-label="停止录音并进入预览">
+                  <span class="bsr-ic" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"></rect></svg>
+                  </span>
+                  <span class="bsr-label">停止</span>
+                </button>
+              </div>
+            </div>
 
             <div v-if="recordedAudioData && !isEditing" class="recorded-preview">
               <audio :src="localVoiceSrc()" controls class="recorded-audio" />
               <span v-if="recordedAudioDuration" class="recorded-duration">{{ recordedAudioDuration }}s</span>
-              <el-button size="small" circle @click="cancelRecording" :disabled="sending">
+              <el-button size="small" circle @click="cancelRecording" :disabled="sending" title="删除录音">
                 <el-icon><Delete /></el-icon>
               </el-button>
-              <el-button size="small" type="primary" circle :loading="sending" :disabled="sending" @click="sendVoice">
+              <el-button size="small" type="primary" circle :loading="sending" :disabled="sending" @click="sendVoice" title="发送语音">
                 <el-icon><Promotion /></el-icon>
               </el-button>
             </div>
 
-            <el-input v-if="!recordedAudioData" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
+            <el-input v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
               :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
               resize="none" @keydown="onInputKeydown" class="msg-input" />
-            <el-button v-if="!isEditing && !recordedAudioData" type="primary" class="send-btn"
+            <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
               :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
               @click="send">
               {{ sending ? '发送中' : '发送' }}
@@ -881,7 +937,12 @@ let recordTimer = null
 let recordStartTime = 0
 let audioContextRef = null
 let analyserRef = null
+let audioStreamRef = null
 let animationFrameId = null
+// 可视化波形条（40 格，每格 0~1 的音量）
+const recordingBars = ref(new Array(40).fill(0))
+// 最近 40 次 RMS 采样，按时间顺序滚动，模拟 Discord 语音消息的波形从左到右延伸
+const recordingRmsHistory = []
 
 // === 分配/转移 ===
 const assignDialogVisible = ref(false)
@@ -1992,11 +2053,71 @@ function presenceTitle(c) {
 
 // ===== 语音录音辅助 =====
 const MAX_RECORD_SECONDS = 60
+const VIS_BAR_COUNT = 40
 
 function localVoiceSrc() {
   if (!recordedAudioData.value) return ''
   const mime = recordedAudioMime.value || 'audio/webm'
   return `data:${mime};base64,${recordedAudioData.value}`
+}
+
+function _cleanupVisualizer() {
+  if (animationFrameId) {
+    cancelAnimationFrame(animationFrameId)
+    animationFrameId = null
+  }
+  if (analyserRef) {
+    try { analyserRef.disconnect() } catch (_) { /* noop */ }
+    analyserRef = null
+  }
+  if (audioContextRef && audioContextRef.state !== 'closed') {
+    audioContextRef.close().catch(() => {})
+  }
+  audioContextRef = null
+  recordingBars.value = new Array(VIS_BAR_COUNT).fill(0)
+  recordingRmsHistory.length = 0
+}
+
+function _startVisualizerFromStream(stream) {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext
+    if (!AC) return
+    audioContextRef = new AC()
+    const source = audioContextRef.createMediaStreamSource(stream)
+    const analyser = audioContextRef.createAnalyser()
+    analyser.fftSize = 1024
+    analyser.smoothingTimeConstant = 0.6
+    source.connect(analyser)
+    analyserRef = analyser
+
+    const buf = new Uint8Array(analyser.fftSize)
+    const tick = () => {
+      if (!analyserRef) return
+      analyserRef.getByteTimeDomainData(buf)
+      let sum = 0
+      for (let i = 0; i < buf.length; i++) {
+        const v = (buf[i] - 128) / 128
+        sum += v * v
+      }
+      // RMS 归一化到 0~1，人类说话语音峰值一般 RMS 0.05~0.3，压缩一下显示更明显
+      const rms = Math.sqrt(sum / buf.length)
+      let level = Math.min(1, Math.max(0, (rms - 0.01)) * 3.5)
+      if (level < 0.03) level = 0  // 背景静默抑制
+      recordingRmsHistory.push(level)
+      if (recordingRmsHistory.length > VIS_BAR_COUNT) recordingRmsHistory.shift()
+      // 输出 bars：按「历史按时间从左到右」铺 40 格，不足的前面补 0
+      const out = new Array(VIS_BAR_COUNT).fill(0)
+      for (let i = 0; i < recordingRmsHistory.length; i++) {
+        out[VIS_BAR_COUNT - recordingRmsHistory.length + i] = recordingRmsHistory[i]
+      }
+      recordingBars.value = out
+      animationFrameId = requestAnimationFrame(tick)
+    }
+    animationFrameId = requestAnimationFrame(tick)
+  } catch (e) {
+    // 可视化失败不影响录音
+    console.warn('录音可视化启动失败', e)
+  }
 }
 
 async function startRecording() {
@@ -2006,8 +2127,11 @@ async function startRecording() {
     recordedAudioData.value = null
     recordedAudioDuration.value = 0
     recordingDuration.value = 0
+    recordingBars.value = new Array(VIS_BAR_COUNT).fill(0)
+    recordingRmsHistory.length = 0
 
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    audioStreamRef = stream
     let mimeType = 'audio/webm'
     const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
     for (const c of candidates) {
@@ -2031,12 +2155,18 @@ async function startRecording() {
       }
       reader.readAsDataURL(blob)
       stream.getTracks().forEach(t => t.stop())
+      if (audioStreamRef) {
+        audioStreamRef.getTracks().forEach(t => t.stop())
+        audioStreamRef = null
+      }
+      _cleanupVisualizer()
     }
 
     mr.start()
     mediaRecorderRef.value = mr
     isRecording.value = true
     recordStartTime = Date.now()
+    _startVisualizerFromStream(stream)
     recordTimer = setInterval(() => {
       recordingDuration.value = Math.floor((Date.now() - recordStartTime) / 1000)
       if (recordingDuration.value >= MAX_RECORD_SECONDS) stopRecording()
@@ -2060,6 +2190,7 @@ function cancelRecording() {
   recordedChunks.length = 0
   recordedAudioData.value = null
   recordingDuration.value = 0
+  _cleanupVisualizer()
 }
 
 async function sendVoice() {
@@ -3333,35 +3464,248 @@ onUnmounted(() => {
   background: var(--color-bg-4);
   border-color: var(--color-border);
   color: var(--color-text-2);
+  transition: all 180ms cubic-bezier(.2,.7,.2,1);
 }
 .voice-btn:hover {
   color: var(--color-primary);
   border-color: var(--color-primary);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px -6px rgba(88, 101, 242, 0.45);
 }
-.voice-btn-recording {
+.voice-btn-start:active { transform: scale(.94); }
+.voice-btn-start:disabled { opacity: .55; transform: none; box-shadow: none; }
+
+/* ============= 录音中：整个 inline 录音器（新UI） ============= */
+.recorder-live {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px;
+  border-radius: 16px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(255, 180, 180, 0.20), transparent 55%),
+    linear-gradient(180deg, #fffaf9 0%, #fff6f0 100%);
+  border: 1px solid rgba(252, 165, 165, 0.55);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.7) inset,
+    0 8px 20px -12px rgba(248, 113, 113, 0.25);
+}
+
+/* 右侧：取消+停止 按钮组（紧凑同一行，不占中间空间） */
+.recorder-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 1px;
+}
+
+/* 停止按钮：浅红配色，紧凑 38px 高度，标签缩成「停止」两个字 */
+.btn-stop-rec {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 38px;
+  padding: 0 11px 0 9px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #fff1f1 0%, #ffe4e4 100%);
+  color: #c2410c;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.85) inset,
+    0 -1px 0 rgba(255,255,255,.3) inset,
+    0 6px 14px -10px rgba(248, 113, 113, 0.55);
+  transition: transform 120ms ease, box-shadow 180ms ease, filter 120ms ease, background 120ms ease;
+  user-select: none;
+}
+.btn-stop-rec:hover {
+  background: linear-gradient(180deg, #ffe7e7 0%, #ffd6d6 100%);
+  transform: translateY(-1px);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.85) inset,
+    0 -1px 0 rgba(255,255,255,.3) inset,
+    0 10px 20px -10px rgba(248, 113, 113, 0.65);
+}
+.btn-stop-rec:active { transform: translateY(0) scale(.98); }
+.btn-stop-rec .bsr-ic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  background: rgba(251, 113, 133, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(248, 113, 113, 0.22);
+  color: #b91c1c;
+}
+.btn-stop-rec .bsr-label { padding-right: 1px; }
+
+/* 中间区域：波形条 + 时间 + 提示文字 */
+.recorder-live-main {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 2px;
+  min-width: 0;
+  padding: 1px 2px 2px 2px;
+}
+.live-wave {
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  min-width: 0;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(255, 241, 241, 0.35), rgba(255, 241, 241, 0.05));
 }
-.voice-rec-indicator {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #fff;
-  animation: voice-rec-pulse 1s infinite;
+/* 连续声波基线（SVG，默认展示就有一条平滑红色正弦声波，不是 40 个虚线段） */
+.live-wave-baseline {
+  position: absolute;
+  inset: 4px 6px;
+  width: calc(100% - 12px);
+  height: calc(100% - 8px);
+  opacity: 0.9;
+  pointer-events: none;
 }
-.voice-rec-time {
-  font-size: 11px;
-  font-weight: 600;
-  color: #fff;
+.live-wave-bars {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  height: 26px;
 }
-@keyframes voice-rec-pulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.4); opacity: 0.5; }
+.live-wave-bar {
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 6px;
+  height: calc(2px + var(--lv, 0) * 22px);
+  min-height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #fca5a5 0%, #f87171 55%, #fb7185 100%);
+  transform-origin: center;
+  transition: height 70ms cubic-bezier(.2,.7,.2,1);
+  mix-blend-mode: multiply;
+}
+.live-wave-bar:nth-child(even) {
+  background: linear-gradient(180deg, #fecaca 0%, #fca5a5 55%, #f87171 100%);
+}
+/* RMS = 0（静默）时，bar 完全透明，让 SVG 基线露出来，不会出现 40 个小虚线段 */
+.live-wave-bar {
+  opacity: calc(0.12 + var(--lv, 0) * 1.05);
 }
 
+/* 元信息：时间 + 操作提示 */
+.live-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 6px 1px;
+  min-width: 0;
+}
+.live-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 9px 2px 7px;
+  border-radius: 999px;
+  background: rgba(254, 202, 202, 0.45);
+  border: 1px solid rgba(252, 165, 165, 0.55);
+}
+.live-led {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f87171;
+  box-shadow: 0 0 0 2.5px rgba(248, 113, 113, 0.20);
+  animation: led-blink 1.1s ease-in-out infinite;
+}
+@keyframes led-blink {
+  0%, 100% { transform: scale(1); opacity: 1; box-shadow: 0 0 0 2.5px rgba(248, 113, 113, 0.20); }
+  50% { transform: scale(1.22); opacity: .78; box-shadow: 0 0 0 4px rgba(248, 113, 113, 0.05); }
+}
+.live-clock {
+  font-size: 13px;
+  font-weight: 700;
+  color: #c2410c;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "JetBrains Mono", monospace;
+  letter-spacing: 0.5px;
+}
+
+/* 操作提示文字 */
+.live-hint {
+  flex: 1;
+  text-align: right;
+  font-size: 11.5px;
+  color: #9ca3af;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.live-hint b {
+  color: #b91c1c;
+  font-weight: 700;
+  padding: 1px 5px;
+  margin: 0 2px;
+  border-radius: 5px;
+  background: rgba(254, 202, 202, 0.45);
+  border: 1px solid rgba(252, 165, 165, 0.45);
+}
+.live-hint-act {
+  cursor: pointer;
+  color: #6b7280;
+  text-decoration: underline;
+  text-decoration-color: rgba(107,114,128,.4);
+  text-underline-offset: 2px;
+  padding: 0 2px;
+  border-radius: 4px;
+  transition: color 120ms ease, background 120ms ease;
+}
+.live-hint-act:hover {
+  color: #374151;
+  background: rgba(0,0,0,.04);
+}
+
+/* 取消录音：副按钮（放在右边，跟停止同组） */
+.btn-cancel-rec {
+  align-self: center;
+  height: 38px;
+  padding: 0 11px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.9) inset,
+    0 5px 12px -10px rgba(0,0,0,.20);
+  transition: transform 120ms ease, color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.btn-cancel-rec:hover {
+  color: #111827;
+  border-color: rgba(17, 24, 39, 0.20);
+  background: #fafafa;
+  transform: translateY(-1px);
+}
+.btn-cancel-rec:active { transform: translateY(0) scale(.98); }
+
+@media (prefers-reduced-motion: reduce) {
+  .live-led, .live-wave-bar { animation: none !important; transition: none !important; }
+}
+
+/* === 录音预览态（已有录音） === */
 .recorded-preview {
   display: flex;
   align-items: center;

@@ -189,9 +189,9 @@ public class DiscordUserClient {
         payload.put("attachments", List.of(att0));
         String payloadJson = mapper.writeValueAsString(payload);
 
-        // 2) multipart: 先放 attachments[0] 文件体
+        // 2) multipart: 先放 files[0] 文件二进制（Discord 要求文件 part 名称必须是 files[N]，不是 attachments[N]）
         bodyBuilder.append("--").append(boundary).append("\r\n");
-        bodyBuilder.append("Content-Disposition: form-data; name=\"attachments[0]\"; filename=\"")
+        bodyBuilder.append("Content-Disposition: form-data; name=\"files[0]\"; filename=\"")
                 .append(fileName).append("\"\r\n");
         bodyBuilder.append("Content-Type: ").append(mimeType != null ? mimeType : "application/octet-stream").append("\r\n\r\n");
 
