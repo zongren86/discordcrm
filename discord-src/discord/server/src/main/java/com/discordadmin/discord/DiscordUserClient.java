@@ -60,6 +60,24 @@ public class DiscordUserClient {
         return listRelationshipsByType(token, 1);
     }
 
+    /**
+     * 获取好友列表及对应原生 Presence。
+     * GET /users/@me/relationships，返回 type=1 的好友关系，含 presence 字段。
+     * 每个元素结构：{id, type, user:{id, username, ...}, presence:{status, desktop, mobile, web, activities}}
+     */
+    public JsonNode listFriendsWithPresence(String token) throws Exception {
+        JsonNode arr = request(token, "GET", "/users/@me/relationships", null);
+        if (arr == null || !arr.isArray()) return mapper.createArrayNode();
+        com.fasterxml.jackson.databind.node.ArrayNode result = mapper.createArrayNode();
+        for (JsonNode rel : arr) {
+            int type = rel.path("type").asInt(0);
+            if (type == 1) {
+                result.add(rel);
+            }
+        }
+        return result;
+    }
+
     public List<JsonNode> listPendingFriendRequests(String token) throws Exception {
         return listRelationshipsByType(token, 3);
     }
@@ -131,6 +149,138 @@ public class DiscordUserClient {
         String body = mapper.writeValueAsString(Map.of("content", content));
         JsonNode resp = request(token, "POST", "/channels/" + channelId + "/messages", body);
         return resp.path("id").asText(null);
+    }
+
+    /**
+     * 发送带文件附件的消息（用于语音消息等）。
+     * 使用 multipart/form-data 格式上传文件到 Discord。
+     *
+     * @param durationSecs 可选，语音消息时长（秒），用于 Discord 原生语音条展示
+     * @param waveformBase64 可选，语音消息 waveform（Discord 客户端展示的波形条），传 null 则自动生成
+     */
+    public JsonNode sendMessageWithFile(String token, String channelId, String content,
+                                          String fileName, byte[] fileData, String mimeType,
+                                          Integer durationSecs, String waveformBase64) throws Exception {
+        String boundary = "----DiscordAdminBoundary" + System.currentTimeMillis();
+        StringBuilder bodyBuilder = new StringBuilder();
+
+        // 1) 构造 payload_json，对语音消息写入 attachments[0].duration_secs / waveform / description / content 空
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        // 原生语音消息 content 为空，客户端会自动渲染语音条；非语音保留原始 content
+        payload.put("content", content != null ? content : "");
+        Map<String, Object> att0 = new java.util.LinkedHashMap<>();
+        att0.put("id", "0");
+        att0.put("filename", fileName);
+        if (mimeType != null) att0.put("content_type", mimeType);
+        att0.put("size", fileData.length);
+        if (durationSecs != null) {
+            att0.put("duration_secs", durationSecs);
+            // 原生语音消息附件的描述字段，非必须但尽量带上
+            att0.put("description", "Voice message");
+        }
+        // waveform: Discord 用的是 base64 编码的 256 字节 byte 数组，每个字节 0~31
+        String wf = waveformBase64;
+        if (wf == null && durationSecs != null && durationSecs > 0) {
+            wf = generateDefaultWaveform(durationSecs);
+        }
+        if (wf != null) {
+            att0.put("waveform", wf);
+        }
+        payload.put("attachments", List.of(att0));
+        String payloadJson = mapper.writeValueAsString(payload);
+
+        // 2) multipart: 先放 attachments[0] 文件体
+        bodyBuilder.append("--").append(boundary).append("\r\n");
+        bodyBuilder.append("Content-Disposition: form-data; name=\"attachments[0]\"; filename=\"")
+                .append(fileName).append("\"\r\n");
+        bodyBuilder.append("Content-Type: ").append(mimeType != null ? mimeType : "application/octet-stream").append("\r\n\r\n");
+
+        String bodyPart = bodyBuilder.toString();
+        String endPart = "\r\n--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"payload_json\"\r\n"
+                + "Content-Type: application/json\r\n\r\n"
+                + payloadJson + "\r\n"
+                + "--" + boundary + "--\r\n";
+
+        byte[] bodyBytes = concatenate(bodyPart.getBytes("UTF-8"), fileData, endPart.getBytes("UTF-8"));
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + "/channels/" + channelId + "/messages"))
+                .timeout(Duration.ofSeconds(60))
+                .header("Authorization", token)
+                .header("User-Agent", UA)
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .header("Accept", "application/json")
+                .header("X-Discord-Locale", "zh-CN")
+                .POST(HttpRequest.BodyPublishers.ofByteArray(bodyBytes))
+                .build();
+
+        Exception lastException = null;
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                HttpResponse<String> resp = http.send(request, HttpResponse.BodyHandlers.ofString());
+                int code = resp.statusCode();
+                if (code == 200 || code == 201) {
+                    return mapper.readTree(resp.body());
+                }
+                if (code == 429) {
+                    String retryAfter = resp.headers().firstValue("Retry-After").orElse("5");
+                    Thread.sleep(Long.parseLong(retryAfter) * 1000L);
+                    continue;
+                }
+                log.warn("sendMessageWithFile 非 2xx code={} body={}", code, resp.body());
+                throw new DiscordUserApiException(code, resp.body());
+            } catch (DiscordUserApiException e) {
+                throw e;
+            } catch (Exception e) {
+                lastException = e;
+                if (attempt < 2) {
+                    Thread.sleep(1000L * (attempt + 1));
+                }
+            }
+        }
+        throw new RuntimeException("Discord 文件上传失败: " + (lastException != null ? lastException.getMessage() : "unknown"));
+    }
+
+    /**
+     * 兼容旧签名（无 duration / waveform 参数）。
+     */
+    public JsonNode sendMessageWithFile(String token, String channelId, String content,
+                                          String fileName, byte[] fileData, String mimeType) throws Exception {
+        return sendMessageWithFile(token, channelId, content, fileName, fileData, mimeType, null, null);
+    }
+
+    /**
+     * 生成 Discord 语音消息默认 waveform：256 字节，每字节 8~25 随机，编码 base64。
+     * 让客户端至少能显示一个真实的波形，而不是空 / 报错。
+     */
+    private String generateDefaultWaveform(int durationSecs) {
+        int len = 256;
+        byte[] data = new byte[len];
+        // 用时长作为种子，避免同一条消息多次发送波形完全不一致
+        java.util.Random rnd = new java.util.Random(1000L * durationSecs + 7);
+        for (int i = 0; i < len; i++) {
+            // 模拟真实语音波形：中间高两端低
+            double t = (double) i / len;
+            double envelope = Math.sin(Math.PI * t) * 0.6 + 0.4;
+            int v = (int) (8 + (17 * envelope) + rnd.nextInt(5) - 2);
+            if (v < 5) v = 5;
+            if (v > 31) v = 31;
+            data[i] = (byte) v;
+        }
+        return java.util.Base64.getEncoder().encodeToString(data);
+    }
+
+    private byte[] concatenate(byte[]... arrays) {
+        int totalLength = 0;
+        for (byte[] arr : arrays) totalLength += arr.length;
+        byte[] result = new byte[totalLength];
+        int offset = 0;
+        for (byte[] arr : arrays) {
+            System.arraycopy(arr, 0, result, offset, arr.length);
+            offset += arr.length;
+        }
+        return result;
     }
 
     public JsonNode listMessages(String token, String channelId, int limit) throws Exception {
@@ -301,6 +451,44 @@ public class DiscordUserClient {
         }
         throw new RuntimeException("Discord API 调用失败（重试3次后仍失败）: "
                 + (lastException != null ? lastException.getMessage() : "unknown"), lastException);
+    }
+
+    /**
+     * 下载任意 URL 的内容并返回原始字节（复用 http 客户端与代理配置）。
+     * 用于轮询消息时把 Discord CDN 的语音附件下载到本地转 base64，
+     * 避免前端浏览器 <audio> 直接拉 CDN 时被 Referer/CORS 拦截。
+     */
+    public byte[] downloadBytes(String urlStr) throws Exception {
+        if (urlStr == null || urlStr.isBlank()) throw new IllegalArgumentException("URL 为空");
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(urlStr))
+                .timeout(Duration.ofSeconds(20))
+                .header("User-Agent", UA)
+                .header("Accept", "*/*")
+                // CDN.discordapp.com 不校验 Referer，但设置为 discordapp.com 更保险
+                .header("Referer", "https://discord.com/")
+                .GET()
+                .build();
+        HttpResponse<byte[]> resp = http.send(req, HttpResponse.BodyHandlers.ofByteArray());
+        if (resp.statusCode() >= 400) {
+            throw new RuntimeException("下载失败 HTTP " + resp.statusCode() + " url=" + urlStr);
+        }
+        return resp.body();
+    }
+
+    /**
+     * 下载并编码为 Base64（用于后端入库，前端直接 data URL 播放）。
+     * 失败返回 null（此时前端退化为用 audioUrl 尝试直连）。
+     */
+    public String downloadAsBase64(String urlStr) {
+        try {
+            byte[] bytes = downloadBytes(urlStr);
+            if (bytes == null || bytes.length == 0) return null;
+            return java.util.Base64.getEncoder().encodeToString(bytes);
+        } catch (Exception e) {
+            log.warn("downloadAsBase64 失败: url={} err={}", urlStr == null ? "null" : urlStr, e.getMessage());
+            return null;
+        }
     }
 
     public static class DiscordUserApiException extends RuntimeException {

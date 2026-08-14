@@ -11,10 +11,12 @@ import java.util.List;
 public class ConversationDtos {
 
     public record DiscordUserDto(Long id, String discordUserId, String username, String globalName,
-                                  String avatarUrl, String notes, String tags, String status) {
+                                  String avatarUrl, String notes, String tags, String status,
+                                  Instant lastActiveAt, String presence, Instant presenceUpdatedAt) {
         public static DiscordUserDto from(DiscordUser u) {
             return new DiscordUserDto(u.getId(), u.getDiscordUserId(), u.getUsername(), u.getGlobalName(),
-                    u.getAvatarUrl(), u.getNotes(), u.getTags(), u.getStatus().name());
+                    u.getAvatarUrl(), u.getNotes(), u.getTags(), u.getStatus().name(),
+                    u.getLastActiveAt(), u.getPresence(), u.getPresenceUpdatedAt());
         }
     }
 
@@ -34,6 +36,9 @@ public class ConversationDtos {
             String username,
             String globalName,
             String avatarUrl,
+            Instant friendLastActiveAt,
+            String friendPresence,
+            Instant friendPresenceUpdatedAt,
             Long discordAccountId,
             String discordAccountName,
             String type,
@@ -84,6 +89,9 @@ public class ConversationDtos {
                     du.getUsername(),
                     du.getGlobalName(),
                     du.getAvatarUrl(),
+                    du.getLastActiveAt(),
+                    du.getPresence(),
+                    du.getPresenceUpdatedAt(),
                     c.getDiscordAccount() != null ? c.getDiscordAccount().getId() : null,
                     c.getDiscordAccount() != null ? c.getDiscordAccount().getName() : null,
                     c.getType().name(),
@@ -107,6 +115,7 @@ public class ConversationDtos {
         public ConversationDto withMessages(List<MessageDtos.MessageDto> messages) {
             return new ConversationDto(
                     id, channelId, discordUserId, friendDiscordUserId, username, globalName, avatarUrl,
+                    friendLastActiveAt, friendPresence, friendPresenceUpdatedAt,
                     discordAccountId, discordAccountName, type, status,
                     lastMessagePreview, lastMessageAt, lastMessageDirection,
                     stage, stageChangedAt, pinned, remark, lastReadAt, messages,
@@ -117,6 +126,7 @@ public class ConversationDtos {
         public ConversationDto withUnreadCount(int unread) {
             return new ConversationDto(
                     id, channelId, discordUserId, friendDiscordUserId, username, globalName, avatarUrl,
+                    friendLastActiveAt, friendPresence, friendPresenceUpdatedAt,
                     discordAccountId, discordAccountName, type, status,
                     lastMessagePreview, lastMessageAt, lastMessageDirection,
                     stage, stageChangedAt, pinned, remark, lastReadAt, messages,

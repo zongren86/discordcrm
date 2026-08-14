@@ -54,11 +54,16 @@ export function startWebSocket(token) {
             const store = useConversationsStore()
             const existing = store.conversations.find(c => c.id === conv.id)
             if (existing) {
-              const preservedUnread = existing.unreadCount || 0
+              // 保留原有的未读计数，除非后端明确提供了新的未读计数
+              const preservedUnread = existing.unreadCount
               Object.assign(existing, conv)
-              if (preservedUnread > 0) {
-                existing.unreadCount = preservedUnread
+              // 如果后端没有明确提供 unreadCount (undefined)，则保留原有的值
+              if (conv.unreadCount === undefined || conv.unreadCount === null) {
+                existing.unreadCount = preservedUnread || 0
               }
+            } else {
+              // 新会话，直接添加
+              store.conversations.push(conv)
             }
           } catch (e) {
             console.warn('[WS] conversation update parse error', e)

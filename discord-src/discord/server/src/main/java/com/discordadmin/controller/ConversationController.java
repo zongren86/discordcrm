@@ -9,11 +9,14 @@ import com.discordadmin.dto.ConversationDtos.UpdateStatusRequest;
 import com.discordadmin.dto.MessageDtos.MessageDto;
 import com.discordadmin.dto.MessageDtos.SendMessageRequest;
 import com.discordadmin.security.JwtAuthFilter.AuthenticatedAgent;
+import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.ConversationService;
+import com.discordadmin.translation.LanguageDetectionService;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,9 +25,12 @@ import java.util.Map;
 public class ConversationController {
 
     private final ConversationService conversationService;
+    private final LanguageDetectionService languageDetectionService;
 
-    public ConversationController(ConversationService conversationService) {
+    public ConversationController(ConversationService conversationService, 
+                                    LanguageDetectionService languageDetectionService) {
         this.conversationService = conversationService;
+        this.languageDetectionService = languageDetectionService;
     }
 
     @PostMapping("/open-dm")
@@ -56,7 +62,9 @@ public class ConversationController {
     @PostMapping("/{id}/messages")
     public MessageDto sendMessage(@PathVariable Long id,
                                    @RequestBody SendMessageRequest request) {
-        return conversationService.sendMessage(id, request.content(), getCurrentUsername());
+        return conversationService.sendMessage(id, request.content(), request.targetLanguage(),
+                request.messageType(), request.audioData(), request.audioMimeType(),
+                request.audioDuration(), request.audioFileName(), getCurrentUsername());
     }
 
     @PutMapping("/{id}/status")
@@ -110,9 +118,32 @@ public class ConversationController {
     }
 
     @PostMapping("/{id}/messages/{messageId}/translate")
-    public MessageDto translateMessage(@PathVariable Long id, @PathVariable Long messageId) {
+    public MessageDto translateMessage(@PathVariable Long id, @PathVariable Long messageId,
+                                        @RequestParam(defaultValue = "zh-CN") String targetLanguage) {
         conversationService.loadOwnedConversation(id);
-        return conversationService.translateMessage(messageId, "zh-CN");
+        return conversationService.translateMessage(messageId, targetLanguage);
+    }
+
+    @PostMapping("/detect-language")
+    public Map<String, Object> detectLanguage(@RequestBody DetectLanguageRequest request) {
+        Long merchantId = SecurityUtils.currentMerchantId();
+        LanguageDetectionService.LanguageResult result = languageDetectionService.detect(request.text(), merchantId);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("data", Map.of(
+            "language", result.getCode(),
+            "languageName", result.getName(),
+            "confidence", result.getConfidence(),
+            "detected", result.isDetected()
+        ));
+        return response;
+    }
+
+    @PostMapping("/{id}/messages/{messageId}/detect-language")
+    public MessageDto detectMessageLanguage(@PathVariable Long id, @PathVariable Long messageId) {
+        conversationService.loadOwnedConversation(id);
+        return conversationService.detectAndSetLanguage(messageId);
     }
 
     @PutMapping("/{id}/messages/{messageId}")
@@ -138,7 +169,9 @@ public class ConversationController {
     @PostMapping("/{id}/messages/{messageId}/reply")
     public MessageDto replyMessage(@PathVariable Long id, @PathVariable Long messageId,
                                     @RequestBody SendMessageRequest request) {
-        return conversationService.replyMessage(id, request.content(), getCurrentUsername(), messageId);
+        return conversationService.replyMessage(id, request.content(), request.targetLanguage(),
+                request.messageType(), request.audioData(), request.audioMimeType(),
+                request.audioDuration(), request.audioFileName(), getCurrentUsername(), messageId);
     }
 
     private String getCurrentUsername() {
@@ -152,4 +185,5 @@ public class ConversationController {
     public record EditMessageRequest(String content) {}
     public record ReactionRequest(String emoji, Boolean remove) {}
     public record TransferRequest(Long agentId, String reason) {}
+    public record DetectLanguageRequest(String text) {}
 }

@@ -87,8 +87,15 @@ export function listMessages(conversationId) {
 export function loadMoreMessages(conversationId, beforeMsgId) {
   return http.get('/conversations/' + conversationId + '/messages/before/' + beforeMsgId)
 }
-export function sendMessage(conversationId, content) {
-  return http.post('/conversations/' + conversationId + '/messages', { content })
+export function sendMessage(conversationId, content, targetLanguage, extra = {}) {
+  const body = { content }
+  if (targetLanguage) body.targetLanguage = targetLanguage
+  if (extra.messageType) body.messageType = extra.messageType
+  if (extra.audioData) body.audioData = extra.audioData
+  if (extra.audioMimeType) body.audioMimeType = extra.audioMimeType
+  if (extra.audioDuration) body.audioDuration = extra.audioDuration
+  if (extra.audioFileName) body.audioFileName = extra.audioFileName
+  return http.post('/conversations/' + conversationId + '/messages', body)
 }
 export function openConversation(accountId, discordUserId) {
   return http.post('/conversations/open-dm', {
@@ -96,8 +103,16 @@ export function openConversation(accountId, discordUserId) {
     friendDiscordUserId: discordUserId
   })
 }
-export function translateMessage(conversationId, messageId) {
-  return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/translate')
+export function translateMessage(conversationId, messageId, targetLanguage = 'zh-CN') {
+  return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/translate', null, { params: { targetLanguage } })
+}
+
+export function detectLanguage(text) {
+  return http.post('/conversations/detect-language', { text })
+}
+
+export function detectMessageLanguage(conversationId, messageId) {
+  return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/detect-language')
 }
 
 // === Discord 用户资料 ===
@@ -263,8 +278,10 @@ export function deleteMessage(conversationId, messageId) {
 export function addReaction(conversationId, messageId, emoji, remove = false) {
   return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/reactions', { emoji, remove })
 }
-export function replyMessage(conversationId, messageId, content) {
-  return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/reply', { content })
+export function replyMessage(conversationId, messageId, content, targetLanguage) {
+  const body = { content }
+  if (targetLanguage) body.targetLanguage = targetLanguage
+  return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/reply', body)
 }
 
 // === 附件 ===

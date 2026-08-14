@@ -9,6 +9,7 @@ export const useConversationsStore = defineStore('conversations', {
   state: () => ({
     conversations: [],
     loadingConversations: false,
+    initialLoadDone: false,  // 首次加载完成标志
     currentConversationId: null,
     messagesMap: {},       // convId -> Message[]
     loadingMessagesMap: {}, // convId -> bool
@@ -22,29 +23,79 @@ export const useConversationsStore = defineStore('conversations', {
       state.messagesMap[state.currentConversationId] || []
   },
   actions: {
-    async fetchConversations(params = {}) {
-      this.loadingConversations = true
+    /**
+     * 动态无刷新技术 - 静默更新会话列表
+     * @param {Object} params - 查询参数
+     * @param {boolean} silent - 是否静默更新（true=不显示loading，用于定时轮询）
+     */
+    async fetchConversations(params = {}, silent = false) {
+      // 只有首次加载或手动刷新时才显示loading
+      if (!silent) {
+        this.loadingConversations = true
+      }
       try {
         const res = params.accountId || params.stage || params.keyword || params.pinnedOnly
           ? await listConversations(params)
           : (params.accountId ? await listConversationsByAccount(params.accountId) : await listConversations())
-        const existingUnread = {}
-        for (const c of this.conversations) {
-          if (c.unreadCount) existingUnread[c.id] = c.unreadCount
+        const newData = Array.isArray(res) ? res : (res?.data || [])
+
+        if (silent && this.conversations.length > 0) {
+          // 静默模式：增量更新，保留本地状态
+          this.mergeConversations(newData)
+        } else {
+          // 全量替换（首次加载或手动刷新）
+          this.conversations = newData
+          this.conversations.sort((a, b) => {
+            const ta = (a.lastMessageAt || a.lastMessageTime) ? new Date(a.lastMessageAt || a.lastMessageTime).getTime() : 0
+            const tb = (b.lastMessageAt || b.lastMessageTime) ? new Date(b.lastMessageAt || b.lastMessageTime).getTime() : 0
+            return tb - ta
+          })
         }
-        this.conversations = Array.isArray(res) ? res : (res?.data || [])
-        for (const c of this.conversations) {
-          if (existingUnread[c.id]) c.unreadCount = existingUnread[c.id]
-        }
-        this.conversations.sort((a, b) => {
-          const ta = (a.lastMessageAt || a.lastMessageTime) ? new Date(a.lastMessageAt || a.lastMessageTime).getTime() : 0
-          const tb = (b.lastMessageAt || b.lastMessageTime) ? new Date(b.lastMessageAt || b.lastMessageTime).getTime() : 0
-          return tb - ta
-        })
+        this.initialLoadDone = true
         return this.conversations
       } finally {
-        this.loadingConversations = false
+        if (!silent) {
+          this.loadingConversations = false
+        }
       }
+    },
+
+    /**
+     * 增量合并会话数据（动态无刷新技术核心）
+     * 保留本地的未读计数等状态，用后端新数据更新其他字段
+     */
+    mergeConversations(newData) {
+      const existingMap = new Map(this.conversations.map(c => [c.id, c]))
+      const merged = []
+
+      for (const newConv of newData) {
+        const existing = existingMap.get(newConv.id)
+        if (existing) {
+          // 保留本地状态，如未读计数
+          const preservedUnread = existing.unreadCount || 0
+          const preservedPinned = existing.pinned
+          // 用新数据更新，但保留未读计数（除非本地为0且新数据有值）
+          Object.assign(existing, newConv)
+          if (preservedUnread > 0) {
+            existing.unreadCount = preservedUnread
+          }
+          existing.pinned = preservedPinned ?? newConv.pinned
+          merged.push(existing)
+          existingMap.delete(newConv.id)
+        } else {
+          // 新会话，直接添加
+          merged.push(newConv)
+        }
+      }
+
+      // 排序
+      merged.sort((a, b) => {
+        const ta = (a.lastMessageAt || a.lastMessageTime) ? new Date(a.lastMessageAt || a.lastMessageTime).getTime() : 0
+        const tb = (b.lastMessageAt || b.lastMessageTime) ? new Date(b.lastMessageAt || b.lastMessageTime).getTime() : 0
+        return tb - ta
+      })
+
+      this.conversations = merged
     },
     selectConversation(id) {
       this.currentConversationId = id
@@ -98,8 +149,8 @@ export const useConversationsStore = defineStore('conversations', {
         return []
       }
     },
-    async send(convId, content) {
-      const res = await sendMessage(convId, content)
+    async send(convId, content, targetLanguage, extra = {}) {
+      const res = await sendMessage(convId, content, targetLanguage, extra)
       if (res && res.id) {
         this.appendMessage(convId, res)
       }
@@ -107,7 +158,8 @@ export const useConversationsStore = defineStore('conversations', {
     },
     async open(accountId, discordUserId) {
       const res = await openConversation(accountId, discordUserId)
-      await this.fetchConversations()
+      // 动态无刷新技术：静默刷新
+      await this.fetchConversations({}, true)
       if (res && res.id) {
         this.currentConversationId = res.id
         await this.fetchMessages(res.id)
@@ -185,6 +237,7 @@ export const useConversationsStore = defineStore('conversations', {
       this.loadingMessagesMap = {}
       this.hasMoreMap = {}
       this.earliestIdMap = {}
+      this.initialLoadDone = false  // 重置首次加载标志
     }
   }
 })

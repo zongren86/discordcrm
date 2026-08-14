@@ -10,7 +10,9 @@ import java.time.Instant;
 @Table(name = "guild_members", indexes = {
         @Index(name = "idx_gm_guild_server_id", columnList = "guild_server_id"),
         @Index(name = "idx_gm_user_id", columnList = "user_id"),
-        @Index(name = "idx_gm_guild_user", columnList = "guild_server_id, user_id")
+        @Index(name = "idx_gm_guild_user", columnList = "guild_server_id, user_id"),
+        @Index(name = "idx_gm_display_name", columnList = "display_name(64)"),
+        @Index(name = "idx_gm_username", columnList = "username(64)")
 })
 @Getter
 @Setter

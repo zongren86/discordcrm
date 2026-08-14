@@ -118,6 +118,17 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
         """)
     List<Object[]> countUnreadByConversationIds(@Param("convIds") List<Long> convIds);
 
+    /** 统计单个会话的未读消息数 */
+    @Query("""
+        SELECT COUNT(m) FROM Message m JOIN m.conversation c
+        WHERE c.id = :convId AND m.direction = 'INBOUND'
+        AND m.createdAt > COALESCE(c.lastReadAt, (
+            SELECT COALESCE(MAX(m2.createdAt), '1970-01-01T00:00:00Z') FROM Message m2
+            WHERE m2.conversation = c AND m2.direction = 'OUTBOUND'
+        ))
+        """)
+    int countUnreadByConversationId(@Param("convId") Long convId);
+
     /** 检查会话是否双方都有消息（既有INBOUND又有OUTBOUND） */
     @Query("""
         SELECT COUNT(m) > 0 FROM Message m

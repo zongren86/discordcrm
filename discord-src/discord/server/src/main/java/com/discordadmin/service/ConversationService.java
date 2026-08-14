@@ -18,7 +18,11 @@ import com.discordadmin.repository.DiscordUserRepository;
 import com.discordadmin.repository.FriendRepository;
 import com.discordadmin.repository.MessageRepository;
 import com.discordadmin.security.SecurityUtils;
+import com.discordadmin.translation.LanguageDetectionService;
 import com.discordadmin.translation.TranslationService;
+import com.discordadmin.translation.TranslationServiceFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -34,6 +38,8 @@ import java.util.Optional;
 @Service
 public class ConversationService {
 
+    private static final Logger log = LoggerFactory.getLogger(ConversationService.class);
+
     private final DiscordUserRepository discordUserRepository;
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
@@ -44,6 +50,8 @@ public class ConversationService {
     private final MessageService messageService;
     private final SimpMessagingTemplate messagingTemplate;
     private final TranslationService translationService;
+    private final TranslationServiceFactory translationServiceFactory;
+    private final LanguageDetectionService languageDetectionService;
 
     public ConversationService(DiscordUserRepository discordUserRepository,
                                ConversationRepository conversationRepository,
@@ -54,7 +62,9 @@ public class ConversationService {
                                DiscordUserClient discordUserClient,
                                MessageService messageService,
                                SimpMessagingTemplate messagingTemplate,
-                               TranslationService translationService) {
+                               TranslationService translationService,
+                               TranslationServiceFactory translationServiceFactory,
+                               LanguageDetectionService languageDetectionService) {
         this.discordUserRepository = discordUserRepository;
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
@@ -65,6 +75,8 @@ public class ConversationService {
         this.messageService = messageService;
         this.messagingTemplate = messagingTemplate;
         this.translationService = translationService;
+        this.translationServiceFactory = translationServiceFactory;
+        this.languageDetectionService = languageDetectionService;
     }
 
     @Transactional
@@ -134,7 +146,30 @@ public class ConversationService {
         message.setSenderDiscordUserId(inbound.authorUserId());
         message.setContent(inbound.content());
         message.setAttachmentsJson(inbound.attachmentsJson());
-        translationService.translate(inbound.content(), "zh-CN").ifPresent(message::setTranslatedContent);
+
+        // 语音消息字段
+        boolean isVoice = "voice".equals(inbound.messageType());
+        message.setMessageType(isVoice ? "voice" : "text");
+        if (isVoice) {
+            message.setAudioUrl(inbound.audioUrl());
+            message.setAudioMimeType(inbound.audioMimeType());
+            message.setAudioDuration(inbound.audioDuration());
+            message.setAudioData(inbound.audioData());
+        }
+
+        // 自动检测语言并保存
+        Long merchantId = conversation.getMerchantId();
+        if (merchantId == null && conversation.getDiscordAccount() != null) {
+            merchantId = conversation.getDiscordAccount().getMerchantId();
+        }
+        LanguageDetectionService.LanguageResult langResult = languageDetectionService.detect(inbound.content(), merchantId);
+        if (langResult != null && langResult.isDetected()) {
+            message.setLanguage(langResult.getCode());
+        }
+
+        // 使用翻译工厂（支持 AI 翻译 + 降级免费翻译）
+        translationServiceFactory.translate(inbound.content(), "zh-CN", merchantId)
+                .ifPresent(message::setTranslatedContent);
         message = messageRepository.save(message);
 
         messagingTemplate.convertAndSend("/topic/conversations/" + conversation.getId(), MessageDto.from(message));
@@ -402,15 +437,20 @@ public class ConversationService {
                 .toList();
     }
 
-    public MessageDto sendMessage(Long id, String content, String senderName) {
+    public MessageDto sendMessage(Long id, String content, String targetLanguage,
+                                   String messageType, String audioData, String audioMimeType,
+                                   Integer audioDuration, String audioFileName, String senderName) {
         loadOwnedConversation(id);
-        return MessageDto.from(messageService.sendReply(id, content, senderName));
+        return MessageDto.from(messageService.sendReply(id, content, targetLanguage,
+                messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName));
     }
 
     public ConversationDto updateStatus(Long id, String status) {
         Conversation conversation = loadOwnedConversation(id);
         conversation.setStatus(Conversation.ConversationStatus.valueOf(status));
-        return ConversationDto.from(conversationRepository.save(conversation));
+        Conversation saved = conversationRepository.save(conversation);
+        int unreadCount = messageRepository.countUnreadByConversationId(saved.getId());
+        return ConversationDto.from(saved, unreadCount);
     }
 
     public ConversationDto assignToMe(Long id, Long agentId) {
@@ -418,7 +458,9 @@ public class ConversationService {
         Agent foundAgent = agentRepository.findById(agentId)
                 .orElseThrow(() -> new IllegalArgumentException("客服账号不存在"));
         conversation.setAssignedAgent(foundAgent);
-        return ConversationDto.from(conversationRepository.save(conversation));
+        Conversation saved = conversationRepository.save(conversation);
+        int unreadCount = messageRepository.countUnreadByConversationId(saved.getId());
+        return ConversationDto.from(saved, unreadCount);
     }
 
     public ConversationDto assignToAgent(Long id, Long agentId) {
@@ -427,7 +469,9 @@ public class ConversationService {
                 .orElseThrow(() -> new IllegalArgumentException("客服不存在"));
         SecurityUtils.checkMerchantAccess(targetAgent.getMerchantId());
         conversation.setAssignedAgent(targetAgent);
-        return ConversationDto.from(conversationRepository.save(conversation));
+        Conversation saved = conversationRepository.save(conversation);
+        int unreadCount = messageRepository.countUnreadByConversationId(saved.getId());
+        return ConversationDto.from(saved, unreadCount);
     }
 
     public ConversationDto transferConversation(Long id, Long agentId, String reason) {
@@ -447,7 +491,9 @@ public class ConversationService {
                 oldAgent, newAgent, reason != null ? reason : "未说明");
         conversation.setRemark(transferNote + remark);
 
-        return ConversationDto.from(conversationRepository.save(conversation));
+        Conversation saved = conversationRepository.save(conversation);
+        int unreadCount = messageRepository.countUnreadByConversationId(saved.getId());
+        return ConversationDto.from(saved, unreadCount);
     }
 
     public List<Map<String, Object>> listAvailableAgents() {
@@ -475,7 +521,9 @@ public class ConversationService {
             conversation.setStage(Conversation.Stage.valueOf(stage));
             conversation.setStageChangedAt(java.time.Instant.now());
         }
-        return ConversationDto.from(conversationRepository.save(conversation));
+        Conversation saved = conversationRepository.save(conversation);
+        int unreadCount = messageRepository.countUnreadByConversationId(saved.getId());
+        return ConversationDto.from(saved, unreadCount);
     }
 
     public ConversationDto updatePin(Long id, Boolean pinned) {
@@ -483,13 +531,17 @@ public class ConversationService {
         if (pinned != null) {
             conversation.setPinned(pinned);
         }
-        return ConversationDto.from(conversationRepository.save(conversation));
+        Conversation saved = conversationRepository.save(conversation);
+        int unreadCount = messageRepository.countUnreadByConversationId(saved.getId());
+        return ConversationDto.from(saved, unreadCount);
     }
 
     public ConversationDto updateRemark(Long id, String remark) {
         Conversation conversation = loadOwnedConversation(id);
         conversation.setRemark(remark);
-        return ConversationDto.from(conversationRepository.save(conversation));
+        Conversation saved = conversationRepository.save(conversation);
+        int unreadCount = messageRepository.countUnreadByConversationId(saved.getId());
+        return ConversationDto.from(saved, unreadCount);
     }
 
     public ConversationDto markAsRead(Long id) {
@@ -500,6 +552,36 @@ public class ConversationService {
 
     public MessageDto translateMessage(Long messageId, String targetLang) {
         return MessageDto.from(messageService.translateMessage(messageId, targetLang));
+    }
+
+    @Transactional
+    public MessageDto detectAndSetLanguage(Long messageId) {
+        Message message = messageRepository.findById(messageId)
+                .orElseThrow(() -> new IllegalArgumentException("消息不存在"));
+        
+        // 检测语言
+        Long merchantId = SecurityUtils.currentMerchantId();
+        LanguageDetectionService.LanguageResult result = languageDetectionService.detect(message.getContent(), merchantId);
+        message.setLanguage(result.getCode());
+        
+        // 如果有语言且不是目标语言，自动翻译
+        if (result.isDetected() && !"zh-cn".equalsIgnoreCase(result.getCode())) {
+            String targetLang = "zh-CN";
+            translationServiceFactory.translate(message.getContent(), targetLang, merchantId)
+                    .ifPresent(message::setTranslatedContent);
+            if (message.getTranslatedContent() == null) {
+                message.setTranslatedContent(message.getContent());
+            }
+        } else if (message.getTranslatedContent() == null) {
+            message.setTranslatedContent(message.getContent());
+        }
+        
+        Message saved = messageRepository.save(message);
+        
+        // WebSocket 推送更新
+        messagingTemplate.convertAndSend("/topic/messages", MessageDto.from(saved));
+        
+        return MessageDto.from(saved);
     }
 
     public MessageDto editMessage(Long messageId, String content) {
@@ -514,8 +596,11 @@ public class ConversationService {
         return MessageDto.from(messageService.addReaction(messageId, emoji, remove));
     }
 
-    public MessageDto replyMessage(Long id, String content, String senderName, Long messageId) {
+    public MessageDto replyMessage(Long id, String content, String targetLanguage,
+                                    String messageType, String audioData, String audioMimeType,
+                                    Integer audioDuration, String audioFileName, String senderName, Long messageId) {
         loadOwnedConversation(id);
-        return MessageDto.from(messageService.sendReplyWithReference(id, content, senderName, messageId));
+        return MessageDto.from(messageService.sendReplyWithReference(id, content, targetLanguage,
+                messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName, messageId));
     }
 }

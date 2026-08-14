@@ -9,10 +9,12 @@ import java.time.Instant;
 public class MessageDtos {
 
     public record MessageDto(Long id, Long conversationId, String direction, String senderName,
-                              String content, String translatedContent, String attachmentsJson,
+                              String content, String translatedContent, String language, String attachmentsJson,
                               Instant createdAt, Instant discordCreatedAt, String senderAvatarUrl, String discordMessageId,
                               Long referencedMessageId, String referencedDiscordMessageId,
-                              String reactions, Instant editedAt, Boolean isDeleted) {
+                              String reactions, Instant editedAt, Boolean isDeleted,
+                              String messageType, String audioUrl, Integer audioDuration, String audioMimeType,
+                              String audioData) {
 
         public static MessageDto from(Message m) {
             String avatarUrl = resolveAvatarUrl(m);
@@ -23,6 +25,7 @@ public class MessageDtos {
                     m.getSenderName(),
                     m.getContent(),
                     m.getTranslatedContent(),
+                    m.getLanguage(),
                     m.getAttachmentsJson(),
                     m.getCreatedAt(),
                     m.getDiscordCreatedAt() != null ? m.getDiscordCreatedAt() : m.getCreatedAt(),
@@ -32,7 +35,12 @@ public class MessageDtos {
                     m.getReferencedDiscordMessageId(),
                     m.getReactionJson(),
                     m.getEditedAt(),
-                    m.getIsDeleted() != null && m.getIsDeleted()
+                    m.getIsDeleted() != null && m.getIsDeleted(),
+                    m.getMessageType(),
+                    m.getAudioUrl(),
+                    m.getAudioDuration(),
+                    m.getAudioMimeType(),
+                    m.getAudioData()
             );
         }
 
@@ -45,6 +53,7 @@ public class MessageDtos {
                     m.getSenderName(),
                     m.getContent(),
                     m.getTranslatedContent(),
+                    m.getLanguage(),
                     m.getAttachmentsJson(),
                     m.getCreatedAt(),
                     m.getDiscordCreatedAt() != null ? m.getDiscordCreatedAt() : m.getCreatedAt(),
@@ -54,7 +63,12 @@ public class MessageDtos {
                     m.getReferencedDiscordMessageId(),
                     m.getReactionJson(),
                     m.getEditedAt(),
-                    m.getIsDeleted() != null && m.getIsDeleted()
+                    m.getIsDeleted() != null && m.getIsDeleted(),
+                    m.getMessageType(),
+                    m.getAudioUrl(),
+                    m.getAudioDuration(),
+                    m.getAudioMimeType(),
+                    m.getAudioData()
             );
         }
 
@@ -78,6 +92,7 @@ public class MessageDtos {
         }
     }
 
-    public record SendMessageRequest(String content) {
+    public record SendMessageRequest(String content, String targetLanguage, String messageType,
+                                      String audioData, String audioMimeType, Integer audioDuration, String audioFileName) {
     }
 }

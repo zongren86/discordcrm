@@ -68,7 +68,8 @@
 
       <div class="conv-list-wrap">
         <el-scrollbar class="conv-scroll">
-          <div v-if="conversations.loadingConversations" class="loading-tip">
+          <!-- 动态无刷新技术：只在首次加载时显示loading，后续静默刷新 -->
+          <div v-if="conversations.loadingConversations && !conversations.initialLoadDone" class="loading-tip">
             <el-icon class="is-loading"><Loading /></el-icon> 加载中...
           </div>
           <el-empty v-else-if="getFilteredSortedConversations().length === 0" description="暂无会话" :image-size="80" />
@@ -89,14 +90,25 @@
                   <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
                     {{ initialOf(c) }}
                   </el-avatar>
-                  <span v-if="c.stage === 'PROSPECT' && (!c.lastMessageAt || c.unreadCount === 0)" class="unread-dot"></span>
+                  <!-- 红点显示规则 -->
+                  <!-- PROSPECT阶段 + 从未发过消息(无lastMessageAt) => 红点 -->
+                  <span v-if="c.stage === 'PROSPECT' && !c.lastMessageAt" class="unread-dot"></span>
+                  <!-- 有未读消息 => 数字 -->
                   <span v-else-if="c.unreadCount > 0" class="unread-badge">
                     {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
                   </span>
                   <el-avatar v-if="c.agentName" :size="18" class="agent-badge" :title="c.agentName">
                     {{ (c.agentName || '?').charAt(0).toUpperCase() }}
                   </el-avatar>
-                  <span class="account-dot"></span>
+                  <!-- 账号指示点（与当前会话绑定的Discord账号颜色） -->
+                  <span v-if="c.discordAccountId"
+                        class="account-dot"
+                        :style="{ background: accountColor(c.discordAccountId) }"
+                        :title="c.discordAccountName ? `账号: ${c.discordAccountName}` : '账号'"></span>
+                  <!-- 好友原生在线状态圆点：绿=在线，灰=离线 -->
+                  <span class="conv-presence-dot"
+                        :class="presenceClass(c)"
+                        :title="presenceTitle(c)"></span>
                 </div>
                 <div class="conv-main">
                   <div class="conv-line-1">
@@ -106,8 +118,16 @@
                       {{ stageLabel(c.stage) }}
                     </el-tag>
                   </div>
-                  <div class="conv-line-2">
-                    <span class="conv-nickname">{{ c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}</span>
+                  <div class="conv-line-2 conv-line-grid">
+                    <span class="conv-nickname" :title="'@' + (c.username || c.globalName || '')">
+                      @{{ c.username || c.globalName || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}
+                    </span>
+                    <span v-if="c.discordAccountName" class="conv-account-name"
+                          :title="`发送账号: ${c.discordAccountName}`">
+                      <span class="conv-account-dot"
+                            :style="{ background: accountColor(c.discordAccountId) }"></span>
+                      {{ c.discordAccountName }}
+                    </span>
                   </div>
                 </div>
                 <div class="conv-actions">
@@ -134,14 +154,23 @@
                   <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
                     {{ initialOf(c) }}
                   </el-avatar>
-                  <span v-if="c.stage === 'PROSPECT' && (!c.lastMessageAt || c.unreadCount === 0)" class="unread-dot"></span>
+                  <!-- 红点显示规则 -->
+                  <!-- PROSPECT阶段 + 从未发过消息(无lastMessageAt) => 红点 -->
+                  <span v-if="c.stage === 'PROSPECT' && !c.lastMessageAt" class="unread-dot"></span>
+                  <!-- 有未读消息 => 数字 -->
                   <span v-else-if="c.unreadCount > 0" class="unread-badge">
                     {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
                   </span>
                   <el-avatar v-if="c.agentName" :size="18" class="agent-badge" :title="c.agentName">
                     {{ (c.agentName || '?').charAt(0).toUpperCase() }}
                   </el-avatar>
-                  <span class="account-dot"></span>
+                  <span v-if="c.discordAccountId"
+                        class="account-dot"
+                        :style="{ background: accountColor(c.discordAccountId) }"
+                        :title="c.discordAccountName ? `账号: ${c.discordAccountName}` : '账号'"></span>
+                  <span class="conv-presence-dot"
+                        :class="presenceClass(c)"
+                        :title="presenceTitle(c)"></span>
                 </div>
                 <div class="conv-main">
                   <div class="conv-line-1">
@@ -150,8 +179,16 @@
                       {{ stageLabel(c.stage) }}
                     </el-tag>
                   </div>
-                  <div class="conv-line-2">
-                    <span class="conv-nickname">{{ c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}</span>
+                  <div class="conv-line-2 conv-line-grid">
+                    <span class="conv-nickname" :title="'@' + (c.username || c.globalName || '')">
+                      @{{ c.username || c.globalName || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}
+                    </span>
+                    <span v-if="c.discordAccountName" class="conv-account-name"
+                          :title="`发送账号: ${c.discordAccountName}`">
+                      <span class="conv-account-dot"
+                            :style="{ background: accountColor(c.discordAccountId) }"></span>
+                      {{ c.discordAccountName }}
+                    </span>
                   </div>
                 </div>
                 <div class="conv-actions">
@@ -370,8 +407,19 @@
                     <span>引用消息</span>
                   </div>
 
-                  <div v-if="!msg.isDeleted" class="msg-content">{{ displayContentOf(msg) }}</div>
-                  <div v-else class="msg-deleted-tip">[消息已删除]</div>
+                  <div v-if="!msg.isDeleted && isVoiceMsg(msg)" class="msg-voice-wrap">
+                    <el-icon><Microphone /></el-icon>
+                    <audio v-if="voiceSrc(msg)" :src="voiceSrc(msg)" :type="msg.audioMimeType || 'audio/ogg'" controls class="msg-voice-audio"
+                           onerror="this.style.display='none';this.nextElementSibling && (this.nextElementSibling.style.display='flex')">
+                    </audio>
+                    <div v-else class="msg-voice-placeholder">
+                      语音消息
+                      <span v-if="msg.audioDuration" class="msg-voice-duration">{{ msg.audioDuration }}s</span>
+                      <span v-else-if="voiceSrc(msg)" class="msg-voice-duration">点击播放</span>
+                    </div>
+                  </div>
+                  <div v-if="!msg.isDeleted && !isVoiceMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
+                  <div v-else-if="msg.isDeleted" class="msg-deleted-tip">[消息已删除]</div>
 
                   <div v-if="parseReactions(msg).length" class="msg-reactions">
                     <el-tag v-for="r in parseReactions(msg)" :key="r.emoji" size="small" class="reaction-tag"
@@ -389,6 +437,9 @@
                   </div>
 
                   <div v-if="canTranslateInbound(msg)" class="msg-translate-wrap">
+                    <el-tag v-if="msg.language && msg.language !== 'zh-cn'" size="small" type="info" effect="plain" class="msg-lang-tag">
+                      检测语言: {{ getLanguageName(msg.language) }}
+                    </el-tag>
                     <el-button size="small" link type="primary" :loading="translatingSet.has(msg.id)" @click="translateMsg(msg)">
                       <el-icon><Location /></el-icon> 翻译成{{ targetLang === 'zh' ? '中文' : targetLang === 'en' ? 'English' : targetLang === 'ja' ? '日本語' : '한국어' }}
                     </el-button>
@@ -517,8 +568,9 @@
           </div>
 
           <div class="toolbar-right">
-            <span class="detected-lang">检测: {{ detectedLang }}</span>
-            <el-select v-model="targetLang" size="small" class="lang-select">
+            <span class="detected-lang">好友语言: {{ detectedLang }}</span>
+            <span class="target-lang-label">目标语言:</span>
+            <el-select v-model="targetLang" size="small" class="lang-select" @change="onTargetLangChange">
               <el-option value="zh" label="中文" />
               <el-option value="en" label="English" />
               <el-option value="ja" label="日本語" />
@@ -580,16 +632,48 @@
           </div>
 
           <div class="input-box-wrap">
-            <el-input v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
-              :placeholder="isEditing ? '编辑消息内容...' : '输入消息，Enter 发送，Shift+Enter 换行。中文会自动翻译成英文发送。'"
+            <el-button
+              v-if="!isEditing && !isRecording"
+              class="voice-btn"
+              :type="recordedAudioData ? 'success' : 'default'"
+              circle
+              size="large"
+              :disabled="sending"
+              @click="startRecording">
+              <el-icon><Microphone /></el-icon>
+            </el-button>
+            <el-button
+              v-else-if="!isEditing && isRecording"
+              class="voice-btn voice-btn-recording"
+              type="danger"
+              circle
+              size="large"
+              @click="stopRecording">
+              <span class="voice-rec-indicator"></span>
+              <span class="voice-rec-time">{{ recordingDuration }}s</span>
+            </el-button>
+
+            <div v-if="recordedAudioData && !isEditing" class="recorded-preview">
+              <audio :src="localVoiceSrc()" controls class="recorded-audio" />
+              <span v-if="recordedAudioDuration" class="recorded-duration">{{ recordedAudioDuration }}s</span>
+              <el-button size="small" circle @click="cancelRecording" :disabled="sending">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+              <el-button size="small" type="primary" circle :loading="sending" :disabled="sending" @click="sendVoice">
+                <el-icon><Promotion /></el-icon>
+              </el-button>
+            </div>
+
+            <el-input v-if="!recordedAudioData" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
+              :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
               resize="none" @keydown="onInputKeydown" class="msg-input" />
-            <el-button v-if="!isEditing" type="primary" class="send-btn"
+            <el-button v-if="!isEditing && !recordedAudioData" type="primary" class="send-btn"
               :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
               @click="send">
               {{ sending ? '发送中' : '发送' }}
               <el-icon style="margin-left:4px;"><Promotion /></el-icon>
             </el-button>
-            <el-button v-else type="primary" class="send-btn"
+            <el-button v-else-if="isEditing" type="primary" class="send-btn"
               :disabled="!inputText.trim()" :loading="sending"
               @click="saveEditMsg">
               保存
@@ -698,7 +782,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Loading, ChatDotRound, Refresh, ArrowUp, ArrowDown, InfoFilled, Promotion,
   Location, User, Top, Stamp, Plus, Close, Document, CopyDocument, Delete,
-  ChatLineSquare, Edit, MoreFilled, Switch, PriceTag, UploadFilled, Calendar
+  ChatLineSquare, Edit, MoreFilled, Switch, PriceTag, UploadFilled, Calendar, Microphone
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAccountsStore } from '@/stores/accounts'
@@ -776,6 +860,7 @@ const translatingSet = reactive(new Set())
 
 const targetLang = ref('zh')
 const detectedLang = ref('未知')
+let userChangedTargetLang = false  // 标记用户是否手动修改过目标语言
 const isEditing = ref(false)
 const editingMsgId = ref(null)
 const showGifPanel = ref(false)
@@ -783,6 +868,20 @@ const showStickerPanel = ref(false)
 const showMentionPanel = ref(false)
 const gifTab = ref('favorites')
 const stickerTab = ref('system')
+
+// === 语音录音 ===
+const isRecording = ref(false)
+const recordingDuration = ref(0)
+const recordedAudioData = ref(null)  // base64 dataURL
+const recordedAudioMime = ref('audio/webm')
+const recordedAudioDuration = ref(0)
+const mediaRecorderRef = ref(null)
+const recordedChunks = []
+let recordTimer = null
+let recordStartTime = 0
+let audioContextRef = null
+let analyserRef = null
+let animationFrameId = null
 
 // === 分配/转移 ===
 const assignDialogVisible = ref(false)
@@ -952,8 +1051,16 @@ const hasMore = computed(() =>
 
 const inputHint = computed(() => {
   if (!inputText.value.trim()) return ''
-  if (containsChinese(inputText.value)) return '检测到中文，发送时将自动翻译为英文'
+  if (containsChinese(inputText.value)) {
+    const targetName = LANGUAGE_NAMES[targetLang.value] || targetLang.value
+    return `检测到中文，发送时将自动翻译为${targetName}`
+  }
   return ''
+})
+
+const inputPlaceholder = computed(() => {
+  const targetName = LANGUAGE_NAMES[targetLang.value] || targetLang.value
+  return `输入消息，Enter 发送，Shift+Enter 换行。中文会自动翻译成${targetName}发送。`
 })
 
 const isOnline = computed(() => {
@@ -1050,8 +1157,24 @@ function senderNameOf(msg) {
 }
 
 function displayContentOf(msg) {
+  if (msg?.messageType === 'voice') return ''
   if (msg.direction === 'OUTBOUND') return msg.translatedContent || msg.content || ''
   return msg.translatedContent || msg.content || ''
+}
+
+function isVoiceMsg(msg) {
+  return msg?.messageType === 'voice' || msg?.audioUrl || msg?.audioData
+}
+
+function voiceSrc(msg) {
+  // 优先用后端下载并转存的 base64（同源 data URL，不会被 CDN CORS/Referer 拦截）
+  if (msg?.audioData) {
+    const mime = msg.audioMimeType || 'audio/webm'
+    return `data:${mime};base64,${msg.audioData}`
+  }
+  // 兜底：直接走 CDN URL（浏览器如果 CORS 失败会走 audio 的 onerror 回落到 placeholder）
+  if (msg?.audioUrl) return msg.audioUrl
+  return ''
 }
 
 function hasOriginal(msg) {
@@ -1067,19 +1190,36 @@ function toggleOriginal(msgId) {
 
 function canTranslateInbound(msg) {
   if (msg.direction !== 'INBOUND') return false
+  // 语音消息: 占位文本「[语音消息]」不提供翻译操作（要翻译文字的话走语音转文字后再翻）
+  if (isVoiceMsg(msg)) return false
   if (msg.translatedContent && msg.translatedContent !== msg.content) return false
   if (msg.userTranslated) return false
   return !containsChinese(msg.content || '')
+}
+
+// 语言代码映射
+const LANGUAGE_NAMES = {
+  'zh': '中文', 'zh-cn': '中文', 'en': '英文', 'ja': '日文', 'ko': '韩文',
+  'fr': '法文', 'de': '德文', 'es': '西班牙文', 'pt': '葡萄牙文', 'ru': '俄文',
+  'it': '意大利文', 'ar': '阿拉伯文', 'th': '泰文', 'vi': '越南文'
+}
+
+function getLanguageName(langCode) {
+  if (!langCode) return '未知'
+  return LANGUAGE_NAMES[langCode.toLowerCase()] || langCode
 }
 
 async function translateMsg(msg) {
   if (translatingSet.has(msg.id)) return
   translatingSet.add(msg.id)
   try {
-    const res = await translateMessage(conversations.currentConversationId, msg.id)
+    const res = await translateMessage(conversations.currentConversationId, msg.id, targetLang.value)
     if (res?.translatedContent) {
       msg.translatedContent = res.translatedContent
       msg.userTranslated = res.translatedContent
+      if (res.language) {
+        msg.language = res.language
+      }
     } else {
       msg.userTranslated = '翻译结果为空'
     }
@@ -1401,10 +1541,10 @@ async function send() {
       content = (content ? content + ' ' : '') + attachmentDesc
     }
     if (replyToMsg.value && replyToMsg.value.id) {
-      await replyMessageApi(conversations.currentConversationId, replyToMsg.value.id, content)
+      await replyMessageApi(conversations.currentConversationId, replyToMsg.value.id, content, targetLang.value)
       replyToMsg.value = null
     } else {
-      await conversations.send(conversations.currentConversationId, content)
+      await conversations.send(conversations.currentConversationId, content, targetLang.value)
     }
     inputText.value = ''
     pendingAttachments.value = []
@@ -1424,20 +1564,70 @@ let lastCount = 0
 watch(() => conversations.currentMessages.length, (cnt) => {
   if (cnt > lastCount) scrollToBottom()
   lastCount = cnt
-})
-
-watch(showProfile, (v) => {
-  if (v && conversations.currentConversation) {
-    loadUserProfile(conversations.currentConversation)
-  }
+  // 更新检测语言
+  updateDetectedLang()
 })
 
 watch(() => conversations.currentConversationId, () => {
   replyToMsg.value = null
+  // 切换会话时重置用户手动修改标记
+  userChangedTargetLang = false
   if (showProfile.value && conversations.currentConversation) {
     loadUserProfile(conversations.currentConversation)
   }
+  // 更新检测语言
+  updateDetectedLang()
 })
+
+function updateDetectedLang() {
+  const msgs = conversations.currentMessages
+  if (!msgs || msgs.length === 0) {
+    detectedLang.value = '未知'
+    return
+  }
+  // 优先使用最近一条入站消息的检测语言
+  let detectedCode = null
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const msg = msgs[i]
+    if (msg.direction === 'INBOUND' && msg.language && msg.language !== 'unknown') {
+      detectedCode = msg.language
+      break
+    }
+  }
+  // 如果没有检测到，使用启发式检测
+  if (!detectedCode) {
+    const lastMsg = msgs[msgs.length - 1]
+    if (lastMsg?.content) {
+      detectedCode = heuristicDetectLang(lastMsg.content)
+    }
+  }
+  if (detectedCode) {
+    detectedLang.value = getLanguageName(detectedCode)
+    // 如果用户没有手动修改目标语言，则自动跟随检测到的语言
+    if (!userChangedTargetLang) {
+      targetLang.value = detectedCode
+    }
+  } else {
+    detectedLang.value = '未知'
+  }
+}
+
+function onTargetLangChange() {
+  userChangedTargetLang = true
+}
+
+function heuristicDetectLang(text) {
+  if (!text) return null
+  const zhRegex = /[\u4e00-\u9fa5]/
+  const jaRegex = /[\u3040-\u309F]/
+  const koRegex = /[\uAC00-\uD7AF]/
+  if (koRegex.test(text)) return 'ko'
+  if (jaRegex.test(text) && zhRegex.test(text)) return 'ja'
+  if (zhRegex.test(text)) return 'zh'
+  if (/[\u0600-\u06FF]/.test(text)) return 'ar'
+  if (/[\u0E00-\u0E7F]/.test(text)) return 'th'
+  return 'en'
+}
 
 let pollTimer = null
 let lastPollCount = 0
@@ -1467,8 +1657,17 @@ async function pollCurrentMessages() {
 }
 
 let convPollTimer = null
+/**
+ * 动态无刷新技术 - 静默刷新会话列表
+ * 不显示loading，在后台静默更新数据
+ */
 async function pollConversations() {
-  try { await conversations.fetchConversations() } catch (e) {}
+  try {
+    // 使用 silent=true 静默刷新，不显示loading
+    await conversations.fetchConversations({}, true)
+  } catch (e) {
+    // 静默刷新失败不提示用户
+  }
 }
 
 // ========= 头部菜单命令 =========
@@ -1521,7 +1720,8 @@ async function submitAssign() {
     await assignToAgent(conversations.currentConversationId, assignForm.agentId)
     ElMessage.success('已分配给客服')
     assignDialogVisible.value = false
-    await conversations.fetchConversations()
+    // 动态无刷新技术：静默刷新，不显示loading
+    await conversations.fetchConversations({}, true)
   } catch (e) {
     ElMessage.error('分配失败')
   } finally {
@@ -1539,7 +1739,8 @@ async function submitTransfer() {
     await transferConversation(conversations.currentConversationId, transferForm.agentId, transferForm.reason)
     ElMessage.success('会话已转移')
     transferDialogVisible.value = false
-    await conversations.fetchConversations()
+    // 动态无刷新技术：静默刷新，不显示loading
+    await conversations.fetchConversations({}, true)
   } catch (e) {
     ElMessage.error('转移失败')
   } finally {
@@ -1748,6 +1949,147 @@ function splitAgentName(name) {
   }
   return lines
 }
+
+// ===== 账号颜色（稳定 hash），用于区分账号指示点 =====
+const ACCOUNT_PALETTE = [
+  '#5865F2', '#EB459E', '#57F287', '#FEE75C', '#ED4245',
+  '#9B59B6', '#1ABC9C', '#E67E22', '#2980B9', '#D35400'
+]
+const accountColorCache = new Map()
+function accountColor(accountId) {
+  if (accountId == null) return 'var(--color-primary)'
+  const key = String(accountId)
+  if (accountColorCache.has(key)) return accountColorCache.get(key)
+  let hash = 0
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0
+  const color = ACCOUNT_PALETTE[hash % ACCOUNT_PALETTE.length]
+  accountColorCache.set(key, color)
+  return color
+}
+
+// ===== 好友在线状态（原生 Discord Presence + 活跃时间兜底） =====
+function presenceClass(c) {
+  const p = c?.friendPresence
+  if (p === 'online' || p === 'idle' || p === 'dnd') return 'online'
+  if (p === 'offline') return 'offline'
+  // 兜底：用 lastActiveAt 5 分钟内视为在线
+  const t = c?.friendLastActiveAt
+  if (!t) return 'offline'
+  const diff = Date.now() - new Date(t).getTime()
+  return diff < 5 * 60 * 1000 ? 'online' : 'offline'
+}
+
+function presenceTitle(c) {
+  const p = c?.friendPresence
+  const map = { online: '在线', idle: '空闲', dnd: '请勿打扰', offline: '离线' }
+  if (p && map[p]) return map[p]
+  const t = c?.friendLastActiveAt
+  if (!t) return '离线'
+  const diff = Date.now() - new Date(t).getTime()
+  if (diff < 5 * 60 * 1000) return '最近活跃'
+  return '离线'
+}
+
+// ===== 语音录音辅助 =====
+const MAX_RECORD_SECONDS = 60
+
+function localVoiceSrc() {
+  if (!recordedAudioData.value) return ''
+  const mime = recordedAudioMime.value || 'audio/webm'
+  return `data:${mime};base64,${recordedAudioData.value}`
+}
+
+async function startRecording() {
+  if (isRecording.value) return
+  try {
+    recordedChunks.length = 0
+    recordedAudioData.value = null
+    recordedAudioDuration.value = 0
+    recordingDuration.value = 0
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    let mimeType = 'audio/webm'
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4']
+    for (const c of candidates) {
+      if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) { mimeType = c; break }
+    }
+    const mr = new MediaRecorder(stream, { mimeType })
+    recordedAudioMime.value = mimeType
+
+    mr.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data)
+    }
+    mr.onstop = () => {
+      const blob = new Blob(recordedChunks, { type: mimeType })
+      const reader = new FileReader()
+      reader.onloadend = () => {
+        const dataUrl = reader.result
+        // 去掉 data:audio/xxx;base64, 前缀
+        const base64 = dataUrl?.split(',')[1] || ''
+        recordedAudioData.value = base64
+        recordedAudioDuration.value = Math.round((Date.now() - recordStartTime) / 1000)
+      }
+      reader.readAsDataURL(blob)
+      stream.getTracks().forEach(t => t.stop())
+    }
+
+    mr.start()
+    mediaRecorderRef.value = mr
+    isRecording.value = true
+    recordStartTime = Date.now()
+    recordTimer = setInterval(() => {
+      recordingDuration.value = Math.floor((Date.now() - recordStartTime) / 1000)
+      if (recordingDuration.value >= MAX_RECORD_SECONDS) stopRecording()
+    }, 200)
+  } catch (e) {
+    ElMessage.error('无法访问麦克风: ' + (e?.message || '请检查浏览器权限'))
+  }
+}
+
+function stopRecording() {
+  if (!isRecording.value) return
+  isRecording.value = false
+  if (recordTimer) { clearInterval(recordTimer); recordTimer = null }
+  try {
+    mediaRecorderRef.value?.stop()
+  } catch (_) { /* ignore */ }
+}
+
+function cancelRecording() {
+  stopRecording()
+  recordedChunks.length = 0
+  recordedAudioData.value = null
+  recordingDuration.value = 0
+}
+
+async function sendVoice() {
+  if (!recordedAudioData.value) return
+  if (!conversations.currentConversationId) {
+    ElMessage.warning('请选择会话')
+    return
+  }
+  sending.value = true
+  try {
+    const mime = recordedAudioMime.value || 'audio/webm'
+    const ext = mime.includes('mp4') ? 'm4a' : (mime.includes('ogg') ? 'ogg' : 'webm')
+    await conversations.send(conversations.currentConversationId, '[语音]', targetLang.value, {
+      messageType: 'voice',
+      audioData: recordedAudioData.value,
+      audioMimeType: mime,
+      audioDuration: recordedAudioDuration.value,
+      audioFileName: `voice_message.${ext}`
+    })
+    recordedAudioData.value = null
+    recordingDuration.value = 0
+    conversations.markCurrentAsRead()
+  } catch (e) {
+    const errorMsg = e?.response?.data?.message || e?.message || '语音发送失败'
+    ElMessage.error(errorMsg)
+  } finally {
+    sending.value = false
+  }
+}
+
 
 function enterEditMode(msg) {
   isEditing.value = true
@@ -2197,6 +2539,54 @@ onUnmounted(() => {
   border-radius: 50%;
   border: 2px solid var(--color-bg-2);
   background: var(--color-primary);
+  z-index: 3;
+}
+
+.conv-presence-dot {
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--color-bg-2);
+  background: #555;
+  z-index: 3;
+  transition: background 0.2s ease;
+}
+.conv-presence-dot.online {
+  background: #23a55a;
+}
+.conv-presence-dot.offline {
+  background: #8a919f;
+}
+
+.conv-line-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.conv-account-name {
+  font-size: 11px;
+  color: var(--color-text-3);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 80px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+}
+
+.conv-account-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .agent-badge {
@@ -2610,6 +3000,16 @@ onUnmounted(() => {
   gap: 4px;
 }
 
+.msg-lang-tag {
+  margin-right: 8px;
+  font-size: 11px;
+}
+
+.msg-translate-wrap .el-button,
+.msg-translate-wrap .el-tag {
+  align-self: flex-start;
+}
+
 .original-text,
 .translated-text {
   font-size: 12px;
@@ -2677,6 +3077,14 @@ onUnmounted(() => {
 }
 
 .detected-lang {
+  font-size: 12px;
+  color: var(--color-text-3);
+  background: var(--color-bg-3);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.target-lang-label {
   font-size: 12px;
   color: var(--color-text-3);
 }
@@ -2915,6 +3323,97 @@ onUnmounted(() => {
 .send-btn:hover {
   background: var(--color-primary-hover);
   border-color: var(--color-primary-hover);
+}
+
+/* === 语音录音 === */
+.voice-btn {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  background: var(--color-bg-4);
+  border-color: var(--color-border);
+  color: var(--color-text-2);
+}
+.voice-btn:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.voice-btn-recording {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.voice-rec-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #fff;
+  animation: voice-rec-pulse 1s infinite;
+}
+.voice-rec-time {
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+}
+@keyframes voice-rec-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.5; }
+}
+
+.recorded-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  background: var(--color-bg-4);
+  border: 1px solid var(--color-primary);
+  border-radius: 20px;
+  padding: 4px 10px;
+  min-width: 0;
+}
+.recorded-audio {
+  flex: 1;
+  height: 32px;
+  min-width: 0;
+}
+.recorded-duration {
+  font-size: 12px;
+  color: var(--color-text-2);
+  font-family: "JetBrains Mono", monospace;
+  min-width: 32px;
+  text-align: right;
+}
+
+.msg-voice-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--color-bg-3);
+  border-radius: 10px;
+  margin-bottom: 6px;
+}
+.msg-voice-wrap .el-icon {
+  font-size: 18px;
+  color: var(--color-primary);
+}
+.msg-voice-audio {
+  flex: 1;
+  height: 28px;
+  min-width: 180px;
+}
+.msg-voice-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-2);
+  font-size: 13px;
+}
+.msg-voice-duration {
+  color: var(--color-text-3);
+  font-size: 12px;
 }
 
 /* AI Panel */

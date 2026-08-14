@@ -44,6 +44,14 @@ public class DiscordUser {
     @Column(name = "last_active_at")
     private Instant lastActiveAt;
 
+    /** 原生 Discord Presence: online / idle / dnd / offline */
+    @Column(name = "presence", length = 16)
+    private String presence;
+
+    /** Presence 最后同步时间 */
+    @Column(name = "presence_updated_at")
+    private Instant presenceUpdatedAt;
+
     public enum UserStatus {
         NORMAL, BLOCKED
     }

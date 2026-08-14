@@ -18,8 +18,8 @@ export const config = {
   // 模拟器前端地址（用于 iframe 嵌入）
   EMU_FRONTEND_URL: 'http://localhost:5273',
   
-  // 是否使用绝对路径（跨域部署时设为 true）
-  USE_ABSOLUTE_URL: true
+  // 是否使用绝对路径（跨域部署时设为 true，开发时用 false 走 Vite 代理避免 CORS）
+  USE_ABSOLUTE_URL: false
 }
 
 // 计算导出的 baseURL

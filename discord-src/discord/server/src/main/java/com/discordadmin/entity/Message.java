@@ -58,6 +58,25 @@ public class Message {
     @Column(name = "translated_content", columnDefinition = "TEXT")
     private String translatedContent;
 
+    @Column(name = "language", length = 16)
+    private String language;
+
+    @Column(name = "message_type", length = 16)
+    private String messageType;
+
+    @Column(name = "audio_url", length = 512)
+    private String audioUrl;
+
+    @Column(name = "audio_duration")
+    private Integer audioDuration;
+
+    @Column(name = "audio_mime_type", length = 64)
+    private String audioMimeType;
+
+    /** 发送方本地保存的音频 base64（用于前端回放自己发送的语音） */
+    @Column(name = "audio_data", columnDefinition = "LONGTEXT")
+    private String audioData;
+
     @Column(name = "attachments_json", columnDefinition = "TEXT")
     private String attachmentsJson;
 

@@ -1,5 +1,6 @@
 package com.discordadmin.discord;
 
+import com.discordadmin.dto.ConversationDtos;
 import com.discordadmin.dto.MessageDtos;
 import com.discordadmin.entity.*;
 import com.discordadmin.repository.*;
@@ -8,9 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.context.event.EventListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -56,7 +55,6 @@ public class UserMessagePoller {
         this.messagingTemplate = messagingTemplate;
     }
 
-    // @EventListener(ApplicationReadyEvent.class)  // 已禁用：改用 JDA WebSocket
     public void init() {
         log.info("USER 账号 DM 消息轮询器已启动（每 2 秒轮询一次）");
     }
@@ -180,7 +178,7 @@ public class UserMessagePoller {
             String authorName = author.path("global_name").asText(
                     author.path("username").asText("Unknown"));
             String content = msgNode.path("content").asText("");
-            
+
             // 获取 Discord 消息的实际发送时间
             String timestampStr = msgNode.path("timestamp").asText(null);
             Instant discordCreatedAt = null;
@@ -208,7 +206,66 @@ public class UserMessagePoller {
             msgEntity.setDirection(isOutbound ? Message.Direction.OUTBOUND : Message.Direction.INBOUND);
             msgEntity.setSenderName(isOutbound ? account.getName() : authorName);
             msgEntity.setSenderDiscordUserId(authorId);
+
+            // ===== 解析 attachments，识别 Discord 原生语音消息 =====
+            JsonNode attachments = msgNode.get("attachments");
+            String attachmentsJson = null;
+            String resolvedMessageType = "text";
+            String resolvedAudioUrl = null;
+            String resolvedAudioMime = null;
+            Integer resolvedAudioDuration = null;
+            String resolvedAudioData = null;
+            if (attachments != null && attachments.isArray() && !attachments.isEmpty()) {
+                List<String> urls = new java.util.ArrayList<>();
+                JsonNode voiceAtt = null;
+                for (JsonNode a : attachments) {
+                    String u = a.path("url").asText(null);
+                    if (u != null) urls.add(u);
+                    if (voiceAtt != null) continue;
+                    String fn = a.path("filename").asText("").toLowerCase();
+                    // 兼容三种判定：Discord 官方用 filename=voice-message.ogg；
+                    // 也兼容 content_type 以 audio/ 开头；或显式 duration_secs 字段
+                    boolean isAudioByCt = a.path("content_type").asText("").toLowerCase().startsWith("audio/");
+                    boolean hasVoiceName = fn.startsWith("voice-message");
+                    boolean hasDuration = a.has("duration_secs");
+                    if (hasVoiceName || isAudioByCt || hasDuration) {
+                        voiceAtt = a;
+                    }
+                }
+                attachmentsJson = String.join(",", urls);
+                if (voiceAtt != null) {
+                    resolvedMessageType = "voice";
+                    String url = voiceAtt.path("url").asText(null);
+                    String proxy = voiceAtt.path("proxy_url").asText(null);
+                    resolvedAudioUrl = url != null ? url : proxy;
+                    resolvedAudioMime = resolveAttachmentMime(voiceAtt);
+                    // Discord v10 语音消息附件有两种字段：duration_secs（整数）或 duration（浮点）
+                    int dur = -1;
+                    if (voiceAtt.has("duration_secs")) {
+                        dur = (int) Math.round(voiceAtt.path("duration_secs").asDouble(0.0));
+                    } else if (voiceAtt.has("duration")) {
+                        dur = (int) Math.round(voiceAtt.path("duration").asDouble(0.0));
+                    }
+                    resolvedAudioDuration = dur > 0 ? dur : null;
+                    // 后端主动下载音频为 base64，避免前端浏览器直连 CDN 被 403/Referer 拦
+                    if (resolvedAudioUrl != null) {
+                        resolvedAudioData = discordUserClient.downloadAsBase64(resolvedAudioUrl);
+                    }
+                    // 原生语音 content 一般是 ""，但后台列表要能预览，给个占位
+                    if (content == null || content.isBlank()) {
+                        content = "[语音消息]";
+                    }
+                }
+            }
             msgEntity.setContent(content);
+            msgEntity.setAttachmentsJson(attachmentsJson);
+            msgEntity.setMessageType(resolvedMessageType);
+            if ("voice".equals(resolvedMessageType)) {
+                msgEntity.setAudioUrl(resolvedAudioUrl);
+                msgEntity.setAudioMimeType(resolvedAudioMime);
+                msgEntity.setAudioDuration(resolvedAudioDuration);
+                msgEntity.setAudioData(resolvedAudioData);
+            }
             msgEntity.setDiscordCreatedAt(discordCreatedAt);
             msgEntity.setCreatedAt(discordCreatedAt);
 
@@ -265,12 +322,44 @@ public class UserMessagePoller {
         }
 
         if (newCount > 0) {
-            log.info("会话 [convId={}] 新增 {} 条消息", conv.getId(), newCount);
-            messagingTemplate.convertAndSend(
-                    "/topic/conversations",
-                    com.discordadmin.dto.ConversationDtos.ConversationDto.from(conv));
+            // 计算未读消息数并推送到前端
+            int unreadCount = calculateUnreadCount(conv.getId());
+            log.info("会话 [convId={}] 新增 {} 条消息, 未读数: {}", conv.getId(), newCount, unreadCount);
+
+            ConversationDtos.ConversationDto convDto = ConversationDtos.ConversationDto.from(conv, unreadCount);
+            messagingTemplate.convertAndSend("/topic/conversations", convDto);
         } else {
             log.info("会话 [convId={}] 无新消息 (lastMsgId={})", conv.getId(), lastMessageIdByChannel.get(lastMsgKey));
         }
+    }
+
+    /**
+     * 计算单个会话的未读消息数
+     */
+    private int calculateUnreadCount(Long convId) {
+        try {
+            List<Object[]> results = messageRepository.countUnreadByConversationIds(List.of(convId));
+            if (!results.isEmpty()) {
+                return ((Number) results.get(0)[1]).intValue();
+            }
+        } catch (Exception e) {
+            log.warn("计算未读数失败: convId={}, error={}", convId, e.getMessage());
+        }
+        return 0;
+    }
+
+    /**
+     * 解析 attachment 的 content_type / filename 推断 MIME，兜底 audio/ogg。
+     */
+    private String resolveAttachmentMime(JsonNode att) {
+        if (att == null) return "audio/ogg";
+        String ct = att.path("content_type").asText("").toLowerCase();
+        if (!ct.isBlank() && ct.startsWith("audio/")) return ct;
+        String fn = att.path("filename").asText("").toLowerCase();
+        if (fn.endsWith(".webm")) return "audio/webm";
+        if (fn.endsWith(".mp3")) return "audio/mpeg";
+        if (fn.endsWith(".wav")) return "audio/wav";
+        if (fn.endsWith(".m4a") || fn.endsWith(".mp4")) return "audio/mp4";
+        return "audio/ogg";
     }
 }

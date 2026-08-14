@@ -39,20 +39,57 @@
             <el-switch v-model="f.enabled" @change="toggleEnabled(f)" />
           </div>
           <div class="feature-body">
-            <div class="provider-row">
-              <el-select v-model="f.provider" placeholder="选择AI提供商" @change="onProviderChange(f)">
+            <div class="config-row">
+              <label class="config-label">AI 提供商</label>
+              <el-select v-model="f.provider" placeholder="选择AI提供商" @change="onProviderChange(f)" class="config-input">
+                <el-option v-if="f.hasFreeOption" label="免费翻译（Google + MyMemory）" value="free" />
+                <el-option label="阿里云百炼 (千问)" value="qwen" />
                 <el-option label="DeepSeek" value="deepseek" />
-                <el-option label="阿里云百炼" value="qwen" />
                 <el-option label="OpenAI" value="openai" />
                 <el-option label="自定义" value="custom" />
               </el-select>
-              <el-input v-model="f.model" placeholder="模型名称，如 deepseek-chat" />
             </div>
-            <div class="endpoint-row">
-              <el-input v-model="f.apiEndpoint" placeholder="API地址（可选）" />
+            
+            <!-- 翻译功能 + 千问：显示预设翻译模型 -->
+            <div v-if="f.key === 'translate' && f.provider === 'qwen'" class="config-row">
+              <label class="config-label">翻译模型</label>
+              <el-select 
+                v-model="f.model" 
+                placeholder="选择翻译模型"
+                filterable
+                allow-create
+                default-first-option
+                class="config-input"
+              >
+                <el-option 
+                  v-for="m in qwenTranslationModels" 
+                  :key="m.value" 
+                  :label="m.label" 
+                  :value="m.value" 
+                />
+              </el-select>
             </div>
-            <div class="api-key-row">
-              <el-input v-model="f.apiKey" type="password" show-password placeholder="API Key" />
+            
+            <!-- 非千问提供商：显示模型输入框 -->
+            <div v-else-if="f.provider && f.provider !== 'free'" class="config-row">
+              <label class="config-label">模型名称</label>
+              <el-input v-model="f.model" placeholder="模型名称" class="config-input" />
+            </div>
+            
+            <!-- 免费渠道标签 -->
+            <div v-if="f.hasFreeOption && (!f.provider || f.provider === 'free')" class="config-row">
+              <label class="config-label">翻译渠道</label>
+              <el-tag type="success" effect="dark" class="config-tag">免费渠道 - Google + MyMemory</el-tag>
+            </div>
+            
+            <div v-if="f.provider && f.provider !== 'free'" class="config-row">
+              <label class="config-label">API 地址</label>
+              <el-input v-model="f.apiEndpoint" placeholder="API地址（可选）" class="config-input" />
+            </div>
+            
+            <div v-if="f.provider && f.provider !== 'free'" class="config-row">
+              <label class="config-label">API Key</label>
+              <el-input v-model="f.apiKey" type="password" show-password placeholder="请输入 API Key" class="config-input" />
             </div>
             <div class="params-row">
               <el-input-number v-model="f.temperature" :min="0" :max="2" :step="0.1" size="small" />
@@ -97,7 +134,7 @@ const effectiveMerchantId = computed(() => {
 })
 
 const featureDefs = [
-  { key: 'translate', label: '翻译（入站英文→中文 / 出站中文→英文）', icon: ChatLineSquare, promptPlaceholder: '你是专业的翻译助手，将用户输入翻译为目标语言，只输出译文。' },
+  { key: 'translate', label: '翻译（入站英文→中文 / 出站中文→英文）', icon: ChatLineSquare, promptPlaceholder: '你是专业的翻译助手，将用户输入翻译为目标语言，只输出译文。', hasFreeOption: true },
   { key: 'reply_suggest', label: 'AI推荐回复（多语气建议）', icon: MagicStick, promptPlaceholder: '你是专业的客服助手，请根据客户历史消息生成3条不同语气的回复建议（友好/专业/轻松）。' },
   { key: 'summary', label: '会话摘要 / 客户画像', icon: EditPen, promptPlaceholder: '请根据对话历史总结客户关键信息、需求、阶段与下一步建议，输出简洁要点。' }
 ]
@@ -110,6 +147,7 @@ function initFeatures() {
     features.push({
       key: d.key, label: d.label, icon: d.icon,
       promptPlaceholder: d.promptPlaceholder,
+      hasFreeOption: !!d.hasFreeOption,
       enabled: false, provider: '', model: '', apiEndpoint: '', apiKey: '',
       temperature: 0.7, maxTokens: 1024, systemPrompt: d.promptPlaceholder,
       thinking: false, webSearch: false, id: null, saving: false
@@ -168,15 +206,31 @@ function toggleEnabled(f) {
 function onProviderChange(f) {
   const defaults = {
     deepseek: { endpoint: 'https://api.deepseek.com/v1', model: 'deepseek-chat' },
-    qwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-    openai: { endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' }
+    qwen: { endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model: 'qwen-mt-plus' },
+    openai: { endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    free: { endpoint: '', model: '' }
   }
   const d = defaults[f.provider]
   if (d) {
-    if (!f.apiEndpoint) f.apiEndpoint = d.endpoint
-    if (!f.model) f.model = d.model
+    if (f.provider === 'free') {
+      f.apiEndpoint = ''
+      f.model = ''
+      f.apiKey = ''
+    } else {
+      if (!f.apiEndpoint) f.apiEndpoint = d.endpoint
+      if (!f.model) f.model = d.model
+    }
   }
 }
+
+// 千问翻译模型预设
+const qwenTranslationModels = [
+  { label: 'qwen-mt-plus (翻译专用，高精度)', value: 'qwen-mt-plus' },
+  { label: 'qwen-mt-turbo (翻译专用，快速)', value: 'qwen-mt-turbo' },
+  { label: 'qwen-turbo (通用快速)', value: 'qwen-turbo' },
+  { label: 'qwen-plus (通用增强)', value: 'qwen-plus' },
+  { label: 'qwen-max (通用最大)', value: 'qwen-max' }
+]
 
 async function saveFeature(f) {
   f.saving = true
@@ -223,10 +277,16 @@ onMounted(async () => {
 .feature-head { padding:14px 18px; border-bottom:1px solid var(--color-border); display:flex; justify-content:space-between; align-items:center; }
 .feature-title { display:flex; align-items:center; gap:8px; color:var(--color-text); font-size:14px; font-weight:600; }
 .feature-icon { color:var(--color-primary); font-size:18px; }
-.feature-body { padding:16px; display:flex; flex-direction:column; gap:10px; }
+.feature-body { padding:16px; display:flex; flex-direction:column; gap:12px; }
 
-.provider-row, .endpoint-row, .api-key-row { display:grid; grid-template-columns: 1fr 1.3fr; gap:8px; }
-.params-row { display:flex; align-items:center; gap:10px; color:var(--color-text-2); font-size:12px; }
+.config-row { display:flex; flex-direction:column; gap:4px; }
+.config-label { font-size:12px; color:var(--color-text-2); font-weight:500; }
+.config-input { width:100% !important; }
+.config-input :deep(.el-input__wrapper),
+.config-input :deep(.el-select__wrapper) { width:100% !important; }
+.config-tag { font-size:13px; padding:6px 12px; }
+
+.params-row { display:flex; align-items:center; gap:10px; color:var(--color-text-2); font-size:12px; flex-wrap:wrap; }
 .param-label { color:var(--color-text-2); }
 .prompt-row :deep(.el-textarea__inner) { min-height: 60px !important; }
 .flags-row { display:flex; gap:16px; color:var(--color-text-2); font-size:12px; }

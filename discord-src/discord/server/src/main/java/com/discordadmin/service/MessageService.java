@@ -10,7 +10,9 @@ import com.discordadmin.entity.Message;
 import com.discordadmin.repository.ConversationRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.MessageRepository;
+import com.discordadmin.translation.LanguageDetectionService;
 import com.discordadmin.translation.TranslationService;
+import com.discordadmin.translation.TranslationServiceFactory;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +39,8 @@ public class MessageService {
     private final DiscordUserClient discordUserClient;
     private final SimpMessagingTemplate messagingTemplate;
     private final TranslationService translationService;
+    private final TranslationServiceFactory translationServiceFactory;
+    private final LanguageDetectionService languageDetectionService;
 
     public MessageService(ConversationRepository conversationRepository,
                            MessageRepository messageRepository,
@@ -44,7 +48,9 @@ public class MessageService {
                            DiscordBotManager discordBotManager,
                            DiscordUserClient discordUserClient,
                            SimpMessagingTemplate messagingTemplate,
-                           TranslationService translationService) {
+                           TranslationService translationService,
+                           TranslationServiceFactory translationServiceFactory,
+                           LanguageDetectionService languageDetectionService) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.discordAccountRepository = discordAccountRepository;
@@ -52,16 +58,30 @@ public class MessageService {
         this.discordUserClient = discordUserClient;
         this.messagingTemplate = messagingTemplate;
         this.translationService = translationService;
+        this.translationServiceFactory = translationServiceFactory;
+        this.languageDetectionService = languageDetectionService;
     }
 
     @Transactional
     public List<Message> listMessages(Long conversationId) {
         Conversation conversation = getConversation(conversationId);
+        Long merchantId = conversation.getMerchantId();
+        if (merchantId == null && conversation.getDiscordAccount() != null) {
+            merchantId = conversation.getDiscordAccount().getMerchantId();
+        }
         List<Message> messages = messageRepository.findByConversationOrderByCreatedAtAsc(conversation);
         for (Message message : messages) {
+            // 检测语言（如果尚未检测）
+            if (message.getLanguage() == null || message.getLanguage().isEmpty()) {
+                LanguageDetectionService.LanguageResult langResult = languageDetectionService.detect(message.getContent(), merchantId);
+                if (langResult != null && langResult.isDetected()) {
+                    message.setLanguage(langResult.getCode());
+                }
+            }
+            // 翻译（如果尚未翻译）
             if (message.getTranslatedContent() == null) {
                 String targetLanguage = message.getDirection() == Message.Direction.INBOUND ? "zh-CN" : "en";
-                translationService.translate(message.getContent(), targetLanguage)
+                translationServiceFactory.translate(message.getContent(), targetLanguage, merchantId)
                         .ifPresent(message::setTranslatedContent);
             }
         }
@@ -175,8 +195,12 @@ public class MessageService {
     }
 
     @Transactional
-    public Message sendReply(Long conversationId, String content, String agentDisplayName) {
-        if (content == null || content.isBlank()) {
+    public Message sendReply(Long conversationId, String content, String targetLanguage,
+                              String messageType, String audioData, String audioMimeType,
+                              Integer audioDuration, String audioFileName, String agentDisplayName) {
+        boolean isVoiceMessage = "voice".equals(messageType) && audioData != null && !audioData.isBlank();
+
+        if (!isVoiceMessage && (content == null || content.isBlank())) {
             throw new IllegalArgumentException("消息内容不能为空");
         }
 
@@ -184,21 +208,55 @@ public class MessageService {
         Conversation conversation = conversationRepository.findById(conversationId)
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
 
-        // 仅当内容包含中文时才翻译为英文，否则直接发送原文
-        String textToSend = containsChinese(content)
-                ? translationService.translate(content, "en").orElse(content)
-                : content;
+        Long merchantId = conversation.getMerchantId();
+        if (merchantId == null && conversation.getDiscordAccount() != null) {
+            merchantId = conversation.getDiscordAccount().getMerchantId();
+        }
+
+        String targetLang = targetLanguage;
+        if ((targetLang == null || targetLang.isBlank()) && content != null && !content.isBlank()) {
+            targetLang = containsChinese(content) ? "en" : "zh-CN";
+        }
+
+        String textToSend = content;
+        if (!isVoiceMessage && content != null && !content.isBlank()) {
+            textToSend = translationServiceFactory.translate(content, targetLang, merchantId)
+                    .orElse(content);
+        } else if (isVoiceMessage) {
+            textToSend = content != null ? content : "[语音消息]";
+        }
+
+        LanguageDetectionService.LanguageResult langResult = null;
+        if (content != null && !content.isBlank()) {
+            langResult = languageDetectionService.detect(content, merchantId);
+        }
+        String detectedLang = (langResult != null && langResult.isDetected()) ? langResult.getCode() : null;
 
         DiscordAccount account = discordAccountRepository.findById(
                         conversation.getDiscordAccount().getId())
                 .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
 
         String discordMessageId = null;
+        String discordAttachmentUrl = null;
         if (account.getAccountType() == DiscordAccount.AccountType.USER) {
             try {
-                discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
+                if (isVoiceMessage) {
+                    byte[] audioBytes = java.util.Base64.getDecoder().decode(audioData);
+                    // Discord 原生语音消息要求文件名必须以 voice-message. 开头
+                    // 官方客户端默认扩展名 ogg，这里统一规范化
+                    String fileName = normalizeVoiceFileName(audioFileName, audioMimeType);
+                    String mimeType = normalizeVoiceMimeType(audioMimeType);
+                    // 语音消息 content 必须为空，客户端才会自动显示原生语音条
+                    String discordContent = "";
+                    com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
+                            account.getToken(), conversation.getChannelId(), discordContent,
+                            fileName, audioBytes, mimeType, audioDuration, null);
+                    discordMessageId = resp.path("id").asText(null);
+                    discordAttachmentUrl = extractAttachmentUrl(resp);
+                } else {
+                    discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
+                }
             } catch (Exception e) {
-                // 检查是否是 token 失效错误
                 if (e.getMessage() != null && (e.getMessage().contains("401") || e.getMessage().contains("Unauthorized"))) {
                     log.error("账号 [{}] token 已失效，无法发送消息", account.getName());
                     throw new IllegalStateException("账号「" + account.getName() + "」的 Discord 授权已失效，请重新登录该账号", e);
@@ -206,30 +264,63 @@ public class MessageService {
                 throw new IllegalStateException("消息发送失败: " + e.getMessage(), e);
             }
         } else {
-            discordBotManager.sendMessage(account.getId(), conversation, textToSend);
+            if (isVoiceMessage) {
+                byte[] audioBytes = java.util.Base64.getDecoder().decode(audioData);
+                String fileName = normalizeVoiceFileName(audioFileName, audioMimeType);
+                String mimeType = normalizeVoiceMimeType(audioMimeType);
+                try {
+                    com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
+                            account.getToken(), conversation.getChannelId(), "",
+                            fileName, audioBytes, mimeType, audioDuration, null);
+                    discordMessageId = resp.path("id").asText(null);
+                    discordAttachmentUrl = extractAttachmentUrl(resp);
+                } catch (Exception e) {
+                    log.warn("Bot账号发送语音消息失败，尝试纯文本: {}", e.getMessage());
+                    discordBotManager.sendMessage(account.getId(), conversation, textToSend);
+                }
+            } else {
+                discordBotManager.sendMessage(account.getId(), conversation, textToSend);
+            }
         }
 
         Message message = new Message();
         message.setConversation(conversation);
         message.setDirection(Message.Direction.OUTBOUND);
         message.setSenderName(account.getName());
-        message.setContent(content);
+        message.setContent(content != null ? content : "[语音消息]");
+        message.setMessageType(isVoiceMessage ? "voice" : "text");
+        if (isVoiceMessage) {
+            message.setAudioDuration(audioDuration);
+            message.setAudioMimeType(audioMimeType != null ? normalizeVoiceMimeType(audioMimeType) : "audio/ogg");
+            message.setAudioData(audioData);
+            // 优先用 Discord 返回的真实附件 URL（CDN 链接），前端才能跨设备 / 跨端播放
+            if (discordAttachmentUrl != null) {
+                message.setAudioUrl(discordAttachmentUrl);
+            } else if (discordMessageId != null) {
+                // 兜底：拼接跳转链接（注意：这个链接浏览器通常不能直接播放音频，只是一个消息定位）
+                message.setAudioUrl("https://discord.com/channels/@me/"
+                        + conversation.getChannelId() + "/" + discordMessageId);
+            }
+        }
+        if (detectedLang != null) {
+            message.setLanguage(detectedLang);
+        }
         Instant now = Instant.now();
         message.setDiscordCreatedAt(now);
         message.setCreatedAt(now);
         if (discordMessageId != null) {
             message.setDiscordMessageId(discordMessageId);
         }
-        if (!textToSend.equals(content)) {
+        if (!isVoiceMessage && !textToSend.equals(content)) {
             message.setTranslatedContent(textToSend);
         }
         message = messageRepository.save(message);
 
-        conversation.setLastMessagePreview(content.length() > 200 ? content.substring(0, 200) : content);
+        String previewContent = content != null && !content.isBlank() ? content : "[语音消息]";
+        conversation.setLastMessagePreview(previewContent.length() > 200 ? previewContent.substring(0, 200) : previewContent);
         conversation.setLastMessageDirection("OUTBOUND");
         conversation.setLastMessageAt(Instant.now());
 
-        // 自动升级阶段：如果是PROSPECT阶段且双方都有消息，升级为NEW
         if (conversation.getStage() == Conversation.Stage.PROSPECT) {
             long inboundCount = messageRepository.countInboundMessages(conversation);
             if (inboundCount > 0) {
@@ -250,9 +341,25 @@ public class MessageService {
         return message;
     }
 
+    /** 向后兼容的旧方法（3参数） */
+    @Transactional
+    public Message sendReply(Long conversationId, String content, String agentDisplayName) {
+        return sendReply(conversationId, content, null, null, null, null, null, null, agentDisplayName);
+    }
+
+    /** 向后兼容的旧方法（4参数） */
+    @Transactional
+    public Message sendReply(Long conversationId, String content, String targetLanguage, String agentDisplayName) {
+        return sendReply(conversationId, content, targetLanguage, null, null, null, null, null, agentDisplayName);
+    }
+
     public void translateAndSave(Message message, String targetLanguage) {
         if (message.getTranslatedContent() == null) {
-            translationService.translate(message.getContent(), targetLanguage)
+            Long merchantId = message.getMerchantId();
+            if (merchantId == null && message.getConversation() != null) {
+                merchantId = message.getConversation().getMerchantId();
+            }
+            translationServiceFactory.translate(message.getContent(), targetLanguage, merchantId)
                     .ifPresent(message::setTranslatedContent);
             if (message.getTranslatedContent() == null) {
                 message.setTranslatedContent(message.getContent());
@@ -260,12 +367,25 @@ public class MessageService {
         }
     }
 
-    /** 手动翻译指定消息 */
+    /** 手动翻译指定消息（自动检测语言） */
     @Transactional
     public Message translateMessage(Long messageId, String targetLanguage) {
         Message message = messageRepository.findById(messageId)
                 .orElseThrow(() -> new IllegalArgumentException("消息不存在"));
-        translationService.translate(message.getContent(), targetLanguage)
+        Long merchantId = message.getMerchantId();
+        if (merchantId == null && message.getConversation() != null) {
+            merchantId = message.getConversation().getMerchantId();
+        }
+        
+        // 自动检测语言并保存
+        if (message.getLanguage() == null || message.getLanguage().isEmpty()) {
+            LanguageDetectionService.LanguageResult langResult = languageDetectionService.detect(message.getContent(), merchantId);
+            if (langResult != null && langResult.isDetected()) {
+                message.setLanguage(langResult.getCode());
+            }
+        }
+        
+        translationServiceFactory.translate(message.getContent(), targetLanguage, merchantId)
                 .ifPresent(message::setTranslatedContent);
         if (message.getTranslatedContent() == null) {
             message.setTranslatedContent(message.getContent());
@@ -281,13 +401,17 @@ public class MessageService {
         message.setContent(newContent);
         message.setTranslatedContent(null);
         message.setEditedAt(Instant.now());
+        Long merchantId = message.getMerchantId();
+        if (merchantId == null && message.getConversation() != null) {
+            merchantId = message.getConversation().getMerchantId();
+        }
         // 如果是出站消息包含中文，重新翻译
         if (message.getDirection() == Message.Direction.OUTBOUND && containsChinese(newContent)) {
-            translationService.translate(newContent, "en")
+            translationServiceFactory.translate(newContent, "en", merchantId)
                     .ifPresent(message::setTranslatedContent);
             if (message.getTranslatedContent() == null) message.setTranslatedContent(newContent);
         } else if (message.getDirection() == Message.Direction.INBOUND) {
-            translationService.translate(newContent, "zh-CN")
+            translationServiceFactory.translate(newContent, "zh-CN", merchantId)
                     .ifPresent(message::setTranslatedContent);
             if (message.getTranslatedContent() == null) message.setTranslatedContent(newContent);
         } else {
@@ -349,8 +473,12 @@ public class MessageService {
 
     /** 带引用回复消息 */
     @Transactional
-    public Message sendReplyWithReference(Long conversationId, String content, String agentDisplayName, Long referencedMessageId) {
-        Message replyMsg = sendReply(conversationId, content, agentDisplayName);
+    public Message sendReplyWithReference(Long conversationId, String content, String targetLanguage,
+                                           String messageType, String audioData, String audioMimeType,
+                                           Integer audioDuration, String audioFileName,
+                                           String agentDisplayName, Long referencedMessageId) {
+        Message replyMsg = sendReply(conversationId, content, targetLanguage,
+                messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
         if (referencedMessageId != null) {
             replyMsg.setReferencedMessageId(referencedMessageId);
             try {
@@ -384,6 +512,51 @@ public class MessageService {
             if (c >= '\u4e00' && c <= '\u9fff') return true;
         }
         return false;
+    }
+
+    /**
+     * Discord 原生语音消息文件名必须以 "voice-message." 开头。
+     * 官方客户端默认扩展名是 .ogg（Ogg+Opus）。我们尽量统一成 voice-message.ogg，
+     * 如果用户自定义了扩展名，且不是常见音频格式，才原样保留（但仍强制前缀）。
+     */
+    private String normalizeVoiceFileName(String audioFileName, String audioMimeType) {
+        String mime = audioMimeType == null ? "" : audioMimeType.toLowerCase();
+        String fn = audioFileName == null ? "" : audioFileName.toLowerCase();
+        // 先决定扩展名
+        String ext = "ogg";
+        if (fn.endsWith(".ogg") || mime.contains("ogg") || mime.contains("opus")) ext = "ogg";
+        else if (fn.endsWith(".webm") || mime.contains("webm")) ext = "webm";
+        else if (fn.endsWith(".mp3") || mime.contains("mpeg")) ext = "mp3";
+        else if (fn.endsWith(".wav") || mime.contains("wav")) ext = "wav";
+        else if (fn.endsWith(".m4a") || mime.contains("mp4") || mime.contains("m4a")) ext = "m4a";
+        // 强制前缀 voice-message.
+        return "voice-message." + ext;
+    }
+
+    /**
+     * 按扩展名匹配规范化 MIME type，避免 webm 被标成 ogg 导致播不了。
+     */
+    private String normalizeVoiceMimeType(String audioMimeType) {
+        String m = audioMimeType == null ? "" : audioMimeType.toLowerCase();
+        if (m.contains("webm")) return "audio/webm";
+        if (m.contains("mp3") || m.contains("mpeg")) return "audio/mpeg";
+        if (m.contains("wav")) return "audio/wav";
+        if (m.contains("mp4") || m.contains("m4a")) return "audio/mp4";
+        // 兜底：ogg / opus / 空字符串 → ogg
+        return "audio/ogg";
+    }
+
+    /**
+     * 从 sendMessageWithFile 返回的响应里取出 attachments[0].url（真实 CDN 链接）。
+     * 这个 URL 是永久可用的，前端可以直接播放。
+     */
+    private String extractAttachmentUrl(com.fasterxml.jackson.databind.JsonNode sendResp) {
+        if (sendResp == null) return null;
+        com.fasterxml.jackson.databind.JsonNode atts = sendResp.get("attachments");
+        if (atts == null || !atts.isArray() || atts.isEmpty()) return null;
+        String url = atts.get(0).path("url").asText(null);
+        if (url != null) return url;
+        return atts.get(0).path("proxy_url").asText(null);
     }
 
 }
