@@ -5,6 +5,7 @@ import com.discordadmin.discord.InboundMessage;
 import com.discordadmin.dto.ConversationDtos.ConversationDto;
 import com.discordadmin.dto.ConversationDtos.OpenDmRequest;
 import com.discordadmin.dto.MessageDtos.MessageDto;
+import com.discordadmin.dto.MessagePageDto;
 import com.discordadmin.entity.Agent;
 import com.discordadmin.entity.Conversation;
 import com.discordadmin.entity.DiscordAccount;
@@ -82,8 +83,13 @@ public class ConversationService {
     @Transactional
     public void handleInbound(InboundMessage inbound) {
         if (messageRepository.findByDiscordMessageId(inbound.discordMessageId()).isPresent()) {
+            log.info("[INBOUND] 跳过重复消息: discordMsgId={} accountId={}", inbound.discordMessageId(), inbound.discordAccountId());
             return;
         }
+        log.info("[INBOUND] 开始入库: discordMsgId={} accountId={} messageType={} author={} isVoice={} audioUrlPresent={}",
+                inbound.discordMessageId(), inbound.discordAccountId(), inbound.messageType(),
+                inbound.authorUsername(), "voice".equals(inbound.messageType()),
+                inbound.audioUrl() != null && !inbound.audioUrl().isBlank());
 
         DiscordUser user = discordUserRepository.findByDiscordUserId(inbound.authorUserId())
                 .orElseGet(DiscordUser::new);
@@ -178,6 +184,23 @@ public class ConversationService {
         // 推送带未读计数的会话更新
         int unread = calculateUnreadCount(conversation.getId());
         messagingTemplate.convertAndSend("/topic/conversations", ConversationDto.from(conversation, unread));
+
+        // INBOUND 语音消息：异步触发语音转文字 + 自动翻译为中文
+        if (isVoice) {
+            final Long mId = message.getId();
+            final Long fMerchantId = merchantId;
+            String urlPreview = inbound.audioUrl();
+            if (urlPreview != null && urlPreview.length() > 160) urlPreview = urlPreview.substring(0, 160) + "...";
+            log.info("[INBOUND] 触发 ASR: msgId={} merchantId={} autoTranslate=true audioUrl={}",
+                    mId, fMerchantId, urlPreview);
+            try {
+                messageService.transcribeAsrAsync(mId, fMerchantId, true);
+            } catch (Exception e) {
+                log.warn("触发 INBOUND 语音自动转文字失败: msgId={} err={}", mId, e.getMessage(), e);
+            }
+        } else {
+            log.info("[INBOUND] 非语音消息，跳过ASR: msgId={} type={}", message.getId(), inbound.messageType());
+        }
     }
 
     /**
@@ -430,6 +453,20 @@ public class ConversationService {
                 .toList();
     }
 
+    /** 会话消息：默认加载最近 N 天（默认 3 天）+ 分页；返回 hasOlder + 游标（用于上滑加载更早一页） */
+    public MessagePageDto listMessagesRecent(Long id, Integer daysBack, Integer pageSize) {
+        loadOwnedConversation(id);
+        MessageService.MessageSlice slice = messageService.listRecentMessages(id, daysBack, pageSize);
+        return MessagePageDto.fromEntities(slice.messages(), slice.hasOlder());
+    }
+
+    /** 会话消息：加载比 oldestCreatedAt + oldestId 更早的一页（上滑加载） */
+    public MessagePageDto listMessagesOlder(Long id, java.time.Instant oldestCreatedAt, Long oldestId, Integer pageSize) {
+        loadOwnedConversation(id);
+        MessageService.MessageSlice slice = messageService.listOlderMessages(id, oldestCreatedAt, oldestId, pageSize);
+        return MessagePageDto.fromEntities(slice.messages(), slice.hasOlder());
+    }
+
     public List<MessageDto> loadMoreHistory(Long id, String msgId) {
         loadOwnedConversation(id);
         return messageService.loadMoreHistory(id, msgId).stream()
@@ -552,6 +589,14 @@ public class ConversationService {
 
     public MessageDto translateMessage(Long messageId, String targetLang) {
         return MessageDto.from(messageService.translateMessage(messageId, targetLang));
+    }
+
+    public MessageDto transcribeAsr(Long messageId, boolean autoTranslate) {
+        return MessageDto.from(messageService.transcribeAsr(messageId, autoTranslate));
+    }
+
+    public MessageDto translateAsrText(Long messageId, String targetLanguage) {
+        return MessageDto.from(messageService.translateAsrText(messageId, targetLanguage));
     }
 
     @Transactional

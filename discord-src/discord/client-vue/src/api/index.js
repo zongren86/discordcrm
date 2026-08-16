@@ -32,7 +32,20 @@ export function createAccount(payload) {
     email: payload.email,
     remark: payload.remark,
     merchantId: payload.merchantId,
-    accountType: payload.accountType
+    accountType: payload.accountType,
+    discordId: payload.discordId
+  })
+}
+/** 手工添加：粘贴解析后按 Discord ID 做 upsert（存在=更新，不存在=新增） */
+export function upsertAccountByDiscordId(payload) {
+  return http.post('/discord-accounts/upsert-by-discord-id', {
+    username: payload.username || payload.nickname || payload.name,
+    email: payload.email,
+    discordId: payload.discordId,
+    token: payload.token,
+    merchantId: payload.merchantId,
+    remark: payload.remark,
+    accountType: payload.accountType || 'USER'
   })
 }
 export function updateAccount(id, payload) {
@@ -81,8 +94,19 @@ export function listConversations(params = {}) {
 export function listConversationsByAccount(accountId) {
   return http.get('/conversations', { params: { accountId } })
 }
-export function listMessages(conversationId) {
-  return http.get('/conversations/' + conversationId + '/messages')
+export function listMessages(conversationId, params = {}) {
+  return http.get('/conversations/' + conversationId + '/messages', {
+    params: {
+      daysBack: params.daysBack ?? 1,
+      pageSize: params.pageSize ?? 20
+    }
+  })
+}
+/** 上滑加载更早一页（游标分页，传入当前加载消息中最早的一条 createdAt + id） */
+export function listOlderMessages(conversationId, oldestCreatedAt, oldestId, pageSize = 20) {
+  return http.get('/conversations/' + conversationId + '/messages/older', {
+    params: { oldestCreatedAt, oldestId, pageSize }
+  })
 }
 export function loadMoreMessages(conversationId, beforeMsgId) {
   return http.get('/conversations/' + conversationId + '/messages/before/' + beforeMsgId)
@@ -105,6 +129,13 @@ export function openConversation(accountId, discordUserId) {
 }
 export function translateMessage(conversationId, messageId, targetLanguage = 'zh-CN') {
   return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/translate', null, { params: { targetLanguage } })
+}
+
+export function transcribeVoiceAsr(conversationId, messageId, autoTranslate = false) {
+  return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/asr', null, { params: { autoTranslate } })
+}
+export function translateAsrText(conversationId, messageId, targetLanguage = 'zh-CN') {
+  return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/asr/translate', null, { params: { targetLanguage } })
 }
 
 export function detectLanguage(text) {

@@ -302,18 +302,84 @@ public class DiscordAccountService {
         DiscordAccount account = new DiscordAccount();
         account.setName(request.name().trim());
         account.setToken(request.token().trim());
-        String accType = request.accountType() != null ? request.accountType().toUpperCase() : "BOT";
-        account.setAccountType(DiscordAccount.AccountType.valueOf(accType));
+        // 统一为 USER 账号（不再区分 USER/BOT）
+        account.setAccountType(DiscordAccount.AccountType.USER);
         account.setStatus(DiscordAccount.AccountStatus.ACTIVE);
+        // 商户：入参优先；否则用当前登录用户所属商户兜底
         if (request.merchantId() != null) {
             account.setMerchantId(request.merchantId());
         } else {
-            account.setMerchantId(SecurityUtils.currentMerchantId());
+            Long current = SecurityUtils.currentMerchantId();
+            if (current != null) account.setMerchantId(current);
         }
         if (request.email() != null) account.setEmail(request.email().trim());
         if (request.remark() != null) account.setRemark(request.remark().trim());
+        if (request.discordId() != null && !request.discordId().isBlank()) account.setDiscordId(request.discordId().trim());
         account = accountRepository.save(account);
         botManager.startAccount(account.getId());
+        return AccountDto.from(account, botManager.isConnected(account.getId()), botManager.isConnecting(account.getId()));
+    }
+
+    /**
+     * 手工添加-粘贴解析：通过 discordId 做 upsert。
+     * - 如果 discordId 对应的账号已存在且当前用户可访问 → 更新 username/email/token/remark/merchantId
+     * - 否则 → 新建 USER 账号
+     */
+    @Transactional
+    public AccountDto upsertByDiscordId(UpsertAccountByDiscordIdRequest req) {
+        if (req.discordId() == null || req.discordId().isBlank()) {
+            throw new IllegalArgumentException("Discord ID (账号ID) 不能为空");
+        }
+        if (req.token() == null || req.token().isBlank()) {
+            throw new IllegalArgumentException("Token 不能为空");
+        }
+        String discordId = req.discordId().trim();
+        String username = req.username() == null ? "" : req.username().trim();
+        String email = req.email() == null ? "" : req.email().trim();
+        String token = req.token().trim();
+
+        Optional<DiscordAccount> existOpt = accountRepository.findByDiscordId(discordId);
+        Long currentMerchant = SecurityUtils.currentMerchantId();
+        // 商户：入参优先；否则用当前登录用户所属商户兜底
+        Long merchantId = req.merchantId() != null ? req.merchantId() : currentMerchant;
+        // 统一为 USER 账号（不再区分 USER/BOT，忽略入参）
+        final String accType = "USER";
+
+        DiscordAccount account;
+        boolean created;
+        if (existOpt.isPresent()) {
+            account = existOpt.get();
+            SecurityUtils.checkMerchantAccess(account.getMerchantId());
+            created = false;
+        } else {
+            account = new DiscordAccount();
+            account.setDiscordId(discordId);
+            account.setStatus(DiscordAccount.AccountStatus.ACTIVE);
+            account.setMerchantId(merchantId);
+            created = true;
+        }
+        if (!username.isBlank()) {
+            account.setName(username);
+            account.setDiscordName(username);
+        } else if (account.getName() == null || account.getName().isBlank()) {
+            account.setName("未命名账号");
+        }
+        if (!email.isBlank()) account.setEmail(email);
+        account.setToken(token);
+        // 统一设置为 USER（忽略入参中的 accountType）
+        account.setAccountType(DiscordAccount.AccountType.USER);
+        if (req.remark() != null) account.setRemark(req.remark().trim());
+        // 商户：已存在账号也允许更新 merchantId；入参为空则兜底当前商户
+        if (req.merchantId() != null) {
+            account.setMerchantId(req.merchantId());
+        } else if (merchantId != null && !created) {
+            // 更新场景下，商户传空时若当前上下文有商户，则兜底填充（避免商户用户越权变空）
+            account.setMerchantId(merchantId);
+        }
+
+        account = accountRepository.save(account);
+        botManager.startAccount(account.getId());
+        log.info("账号{}成功: discordId={} id={}", created ? "新增" : "更新", discordId, account.getId());
         return AccountDto.from(account, botManager.isConnected(account.getId()), botManager.isConnecting(account.getId()));
     }
 

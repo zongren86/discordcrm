@@ -14,7 +14,8 @@ public class MessageDtos {
                               Long referencedMessageId, String referencedDiscordMessageId,
                               String reactions, Instant editedAt, Boolean isDeleted,
                               String messageType, String audioUrl, Integer audioDuration, String audioMimeType,
-                              String audioData) {
+                              String audioData,
+                              String asrText, String asrTranslated, String asrLanguage, String asrStatus, String asrError) {
 
         public static MessageDto from(Message m) {
             String avatarUrl = resolveAvatarUrl(m);
@@ -40,7 +41,12 @@ public class MessageDtos {
                     m.getAudioUrl(),
                     m.getAudioDuration(),
                     m.getAudioMimeType(),
-                    m.getAudioData()
+                    m.getAudioData(),
+                    m.getAsrText(),
+                    m.getAsrTranslated(),
+                    m.getAsrLanguage(),
+                    m.getAsrStatus(),
+                    m.getAsrError()
             );
         }
 
@@ -68,7 +74,12 @@ public class MessageDtos {
                     m.getAudioUrl(),
                     m.getAudioDuration(),
                     m.getAudioMimeType(),
-                    m.getAudioData()
+                    m.getAudioData(),
+                    m.getAsrText(),
+                    m.getAsrTranslated(),
+                    m.getAsrLanguage(),
+                    m.getAsrStatus(),
+                    m.getAsrError()
             );
         }
 

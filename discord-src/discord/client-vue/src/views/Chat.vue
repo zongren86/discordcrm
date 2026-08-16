@@ -122,12 +122,6 @@
                     <span class="conv-nickname" :title="'@' + (c.username || c.globalName || '')">
                       @{{ c.username || c.globalName || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}
                     </span>
-                    <span v-if="c.discordAccountName" class="conv-account-name"
-                          :title="`发送账号: ${c.discordAccountName}`">
-                      <span class="conv-account-dot"
-                            :style="{ background: accountColor(c.discordAccountId) }"></span>
-                      {{ c.discordAccountName }}
-                    </span>
                   </div>
                 </div>
                 <div class="conv-actions">
@@ -182,12 +176,6 @@
                   <div class="conv-line-2 conv-line-grid">
                     <span class="conv-nickname" :title="'@' + (c.username || c.globalName || '')">
                       @{{ c.username || c.globalName || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}
-                    </span>
-                    <span v-if="c.discordAccountName" class="conv-account-name"
-                          :title="`发送账号: ${c.discordAccountName}`">
-                      <span class="conv-account-dot"
-                            :style="{ background: accountColor(c.discordAccountId) }"></span>
-                      {{ c.discordAccountName }}
                     </span>
                   </div>
                 </div>
@@ -418,6 +406,37 @@
                       <span v-else-if="voiceSrc(msg)" class="msg-voice-duration">点击播放</span>
                     </div>
                   </div>
+
+                  <!-- 语音转文字区（INBOUND 默认展示，已去掉"语音转文字/翻译/转文字"按钮）
+                       - 转写/翻译进行中：显示骨架
+                       - 失败：显示错误+重试
+                       - 成功：默认直接显示中文译文（asrTranslated 或兜底 asrText/content）
+                       - 仅当译文存在且与原文不同时，才在右下角提供"查看原文 / 查看译文"切换链接 -->
+                  <div v-if="!msg.isDeleted && isVoiceMsg(msg) && shouldShowAsrCard(msg)" class="msg-asr-card asr-card-simple">
+                    <div class="asr-card-body">
+                      <!-- 加载状态 -->
+                      <el-skeleton v-if="isAsrPending(msg) || !hasAsrResult(msg) && !asrFailed(msg)" :rows="2" animated />
+                      <!-- 错误状态 -->
+                      <div v-else-if="asrFailed(msg)" class="asr-error">
+                        <el-icon><Warning /></el-icon>
+                        <span>语音转文字失败：{{ msg.asrError || '请检查 AI 配置中的百炼 key' }}</span>
+                        <el-button size="small" type="primary" link @click="triggerAsr(msg, true)">重试</el-button>
+                      </div>
+                      <!-- 文本内容：默认显示译文，下方展开原文 -->
+                      <div v-else>
+                        <!-- 译文（优先显示，没有译文时显示原文） -->
+                        <div class="asr-text">{{ asrDisplayText(msg) }}</div>
+                        <!-- 有译文+原文时，下方展开显示 ASR 原文（非切换，是展开） -->
+                        <div v-if="canShowOriginalBelow(msg)" class="asr-original-wrap">
+                          <div class="asr-toggle-link" @click="toggleOriginalBelow(msg)">
+                            {{ originalBelowExpanded[msg.id] ? '收起原文' : '查看原文' }}
+                          </div>
+                          <div v-show="originalBelowExpanded[msg.id]" class="asr-original-text">{{ msg.asrText }}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <div v-if="!msg.isDeleted && !isVoiceMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
                   <div v-else-if="msg.isDeleted" class="msg-deleted-tip">[消息已删除]</div>
 
@@ -428,19 +447,20 @@
                     </el-tag>
                   </div>
 
-                  <div v-if="hasOriginal(msg)" class="msg-original-wrap">
+                  <!-- 普通文本消息的"外层原文折叠"：对语音消息隐藏，避免和卡片内「查看原文/译文」切换重复 -->
+                  <div v-if="hasOriginal(msg) && !isVoiceMsg(msg)" class="msg-original-wrap">
                     <el-button size="small" link type="info" @click="toggleOriginal(msg.id)">
-                      {{ originalExpandedSet.has(msg.id) ? '收起原文' : `查看原文 (${(originalContentOf(msg) || '').length})` }}
-                      <el-icon class="arrow-icon" :class="{ flip: originalExpandedSet.has(msg.id) }"><ArrowDown /></el-icon>
+                      {{ originalExpandedSet[msg.id] ? '收起原文' : `查看原文 (${(originalContentOf(msg) || '').length})` }}
+                      <el-icon class="arrow-icon" :class="{ flip: originalExpandedSet[msg.id] }"><ArrowDown /></el-icon>
                     </el-button>
-                    <div v-show="originalExpandedSet.has(msg.id)" class="original-text">原文：{{ originalContentOf(msg) }}</div>
+                    <div v-show="originalExpandedSet[msg.id]" class="original-text">原文：{{ originalContentOf(msg) }}</div>
                   </div>
 
                   <div v-if="canTranslateInbound(msg)" class="msg-translate-wrap">
                     <el-tag v-if="msg.language && msg.language !== 'zh-cn'" size="small" type="info" effect="plain" class="msg-lang-tag">
                       检测语言: {{ getLanguageName(msg.language) }}
                     </el-tag>
-                    <el-button size="small" link type="primary" :loading="translatingSet.has(msg.id)" @click="translateMsg(msg)">
+                    <el-button size="small" link type="primary" :loading="translatingSet[msg.id]" @click="translateMsg(msg)">
                       <el-icon><Location /></el-icon> 翻译成{{ targetLang === 'zh' ? '中文' : targetLang === 'en' ? 'English' : targetLang === 'ja' ? '日本語' : '한국어' }}
                     </el-button>
                     <div v-if="msg.userTranslated" class="translated-text">翻译：{{ msg.userTranslated }}</div>
@@ -838,7 +858,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Loading, ChatDotRound, Refresh, ArrowUp, ArrowDown, InfoFilled, Promotion,
   Location, User, Top, Stamp, Plus, Close, Document, CopyDocument, Delete,
-  ChatLineSquare, Edit, MoreFilled, Switch, PriceTag, UploadFilled, Calendar, Microphone
+  ChatLineSquare, Edit, MoreFilled, Switch, PriceTag, UploadFilled, Calendar, Microphone,
+  Warning, RefreshRight
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useAccountsStore } from '@/stores/accounts'
@@ -851,7 +872,8 @@ import {
   assignToAgent, transferConversation, listAvailableAgents,
   getConversationTags, addConversationTags, removeConversationTag, listTagNames as listTagNamesApi,
   listMessageTemplates, getTemplateCategories, createMessageTemplate,
-  updateMessageTemplate, deleteMessageTemplate
+  updateMessageTemplate, deleteMessageTemplate,
+  transcribeVoiceAsr, translateAsrText
 } from '@/api'
 
 const auth = useAuthStore()
@@ -911,8 +933,12 @@ const aiTone = ref('friendly')
 const aiSuggestions = ref([])
 const aiLoading = ref(false)
 
-const originalExpandedSet = reactive(new Set())
-const translatingSet = reactive(new Set())
+// 使用 ref 对象代替 Set 以确保模板中的响应性
+const originalExpandedSet = ref({})
+const translatingSet = ref({})
+const asrLoadingSet = ref({})
+// 语音消息"查看原文"展开状态（在译文下方展开，不是切换）
+const originalBelowExpanded = ref({})
 
 const targetLang = ref('zh')
 const detectedLang = ref('未知')
@@ -1245,8 +1271,8 @@ function hasOriginal(msg) {
 function originalContentOf(msg) { return msg.content || '' }
 
 function toggleOriginal(msgId) {
-  if (originalExpandedSet.has(msgId)) originalExpandedSet.delete(msgId)
-  else originalExpandedSet.add(msgId)
+  if (originalExpandedSet.value[msgId]) delete originalExpandedSet.value[msgId]
+  else originalExpandedSet.value[msgId] = true
 }
 
 function canTranslateInbound(msg) {
@@ -1271,8 +1297,8 @@ function getLanguageName(langCode) {
 }
 
 async function translateMsg(msg) {
-  if (translatingSet.has(msg.id)) return
-  translatingSet.add(msg.id)
+  if (translatingSet.value[msg.id]) return
+  translatingSet.value[msg.id] = true
   try {
     const res = await translateMessage(conversations.currentConversationId, msg.id, targetLang.value)
     if (res?.translatedContent) {
@@ -1287,8 +1313,126 @@ async function translateMsg(msg) {
   } catch (e) {
     ElMessage.error('翻译失败')
   } finally {
-    translatingSet.delete(msg.id)
+    delete translatingSet.value[msg.id]
   }
+}
+
+/* ====== 语音转文字(ASR) 相关 ====== */
+
+function isAsrPending(msg) {
+  return msg?.asrStatus === 'pending' || asrLoadingSet.value[msg.id]
+}
+function asrFailed(msg) {
+  return msg?.asrStatus === 'failed' && !msg?.asrText
+}
+function hasAsrText(msg) {
+  return !!(msg?.asrText && msg.asrText.trim())
+}
+function hasAsrTranslated(msg) {
+  return !!(msg?.asrTranslated && msg.asrTranslated.trim())
+}
+function hasAsrTranslatedDifferent(msg) {
+  return !!(msg?.asrTranslated && msg.asrTranslated.trim() && msg.asrTranslated.trim() !== msg.asrText?.trim())
+}
+function hasAsrResult(msg) {
+  return hasAsrText(msg) || hasAsrTranslated(msg)
+}
+function hasAsrTextOnly(msg) {
+  return hasAsrText(msg) && !hasAsrTranslated(msg)
+}
+function canShowOriginalBelow(msg) {
+  // 有译文又有原文时，允许在下方展开显示原文
+  return hasAsrText(msg) && hasAsrTranslated(msg)
+}
+
+function toggleOriginalBelow(msg) {
+  if (originalBelowExpanded.value[msg.id]) {
+    delete originalBelowExpanded.value[msg.id]
+  } else {
+    originalBelowExpanded.value[msg.id] = true
+  }
+}
+
+/**
+ * 好友发来的语音消息（INBOUND）默认下面直接显示 ASR 卡片（转文字+译文或原文）；
+ * 自己发出去的语音（OUTBOUND）只有当：
+ *   - 已有转写结果 / pending / failed
+ *   - 或用户手动点击"转文字"后 set asrLoadingSet 让卡片先显示出来
+ * 才会出来，满足"自己发出去的保持原样"的要求。
+ */
+function shouldShowAsrCard(msg) {
+  if (!isVoiceMsg(msg)) return false
+  if (msg.direction === 'INBOUND') return true
+  // OUTBOUND：只有当存在结果或明确进行中时才展示
+  if (isAsrPending(msg)) return true
+  if (hasAsrResult(msg)) return true
+  if (asrFailed(msg)) return true
+  return false
+}
+
+function asrCardTitle(msg) {
+  if (isAsrPending(msg)) return '语音转文字中…'
+  if (asrFailed(msg)) return '转文字失败'
+  if (hasAsrResult(msg)) return '语音转文字'
+  return '语音转文字'
+}
+
+function asrStatusIconClass(msg) {
+  if (isAsrPending(msg)) return 'asr-ic asr-ic-pending'
+  if (asrFailed(msg)) return 'asr-ic asr-ic-fail'
+  return 'asr-ic asr-ic-done'
+}
+
+function asrDisplayText(msg) {
+  // 优先显示译文，没有译文时显示原文
+  if (hasAsrTranslated(msg)) return msg.asrTranslated
+  if (hasAsrText(msg)) return msg.asrText
+  return ''
+}
+
+/** 手动触发一次 ASR（对 INBOUND 自动同时翻译为中文） */
+async function triggerAsr(msg, autoTranslate) {
+  const id = msg.id
+  if (asrLoadingSet.value[id]) return
+  asrLoadingSet.value[id] = true
+  try {
+    const res = await transcribeVoiceAsr(conversations.currentConversationId, id, !!autoTranslate)
+    // 把接口返回值（最新的 asr 字段）合并回 msg 原对象
+    if (res) applyAsrFields(msg, res)
+  } catch (e) {
+    if (asrFailed(msg)) { /* 保留后端返回的错误 */ }
+    ElMessage.warning(e?.response?.data?.message || e?.message || '转文字失败')
+  } finally {
+    delete asrLoadingSet.value[id]
+  }
+}
+
+/** 对已转写出来的 asrText 触发单独翻译（INBOUND 默认译中文，目标语言用全局翻译框） */
+async function triggerTranslateAsr(msg) {
+  const key = msg.id + '|tr'
+  if (asrLoadingSet.value[key]) return
+  asrLoadingSet.value[key] = true
+  try {
+    const targetLangCode = targetLang.value === 'zh' ? 'zh-CN' : targetLang.value
+    const res = await translateAsrText(conversations.currentConversationId, msg.id, targetLangCode)
+    if (res) applyAsrFields(msg, res)
+  } catch (e) {
+    ElMessage.error('ASR翻译失败')
+  } finally {
+    delete asrLoadingSet.value[key]
+  }
+}
+
+/** 把接口返回的 MessageDto 中关于 asr 的字段写回到当前消息对象 */
+function applyAsrFields(msg, dto) {
+  if (dto.asrText != null) msg.asrText = dto.asrText
+  if (dto.asrTranslated != null) msg.asrTranslated = dto.asrTranslated
+  if (dto.asrLanguage != null) msg.asrLanguage = dto.asrLanguage
+  if (dto.asrStatus != null) msg.asrStatus = dto.asrStatus
+  if (dto.asrError != null) msg.asrError = dto.asrError
+  // 兼容：WebSocket 推过来的可能没带上面字段但直接有 translated / content 更新，也接收
+  if (dto.translatedContent != null) msg.translatedContent = dto.translatedContent
+  if (dto.content != null) msg.content = dto.content
 }
 
 function insertEmoji(e) {
@@ -1447,14 +1591,20 @@ async function selectConversation(c) {
   conversations.selectConversation(c.id)
   conversations.markAsRead(c.id)
   replyToMsg.value = null
-  if (!conversations.messagesMap[c.id]) {
-    await conversations.fetchMessages(c.id)
-  }
+  // 每次打开会话都强制只加载当天 20 条（避免缓存了历史消息时出现"打开看到非今天"、页面卡顿）
+  // 只有用户主动向上滚动，才会触发 loadMore() 拉取更早一页
+  await conversations.fetchMessages(c.id)
   if (showProfile.value) {
     await loadUserProfile(c)
   }
+  // 重置 lastCount：避免"旧会话 lastCount>0 新会话 currentMessages.length<旧值"导致 watcher 不再触发自动滚动
+  lastCount = (conversations.currentMessages || []).length
+  // 连续 3 帧重试：兼容消息条目渲染/异步资源高度变化后仍能滚到真正的底部
+  const forceBottom = () => scrollToBottom({ force: true, retries: 0 })
   await nextTick()
-  scrollToBottom()
+  forceBottom()
+  setTimeout(forceBottom, 80)
+  setTimeout(forceBottom, 220)
 }
 
 async function loadUserProfile(c) {
@@ -1537,25 +1687,103 @@ async function refreshMessages() {
   if (!conversations.currentConversationId) return
   await conversations.fetchMessages(conversations.currentConversationId)
   await nextTick()
-  scrollToBottom()
+  scrollToBottom({ force: true })
 }
 
 async function loadMore() {
   if (loadingMore.value) return
   loadingMore.value = true
   try {
-    await conversations.loadMore(conversations.currentConversationId)
+    const wrapEl = getScrollWrapEl()
+    const prevTop = wrapEl ? wrapEl.scrollTop : (msgScrollRef.value?.scrollTop ?? 0)
+    const prevHeight = wrapEl ? wrapEl.scrollHeight : 0
+    const added = await conversations.loadMore(conversations.currentConversationId)
+    if (added && added.length > 0) {
+      // 上滑加载历史后保持滚动位置，不让用户跳到刚才看的位置
+      await nextTick()
+      const wrapNow = getScrollWrapEl()
+      const newHeight = wrapNow ? wrapNow.scrollHeight : 0
+      const delta = newHeight - prevHeight
+      if (delta > 0 && wrapNow) {
+        // 直接操作 DOM，避免 element-plus setScrollTop 在某些情况下不生效
+        try {
+          wrapNow.scrollTop = prevTop + delta
+        } catch (e) {}
+        try {
+          if (msgScrollRef.value && typeof msgScrollRef.value.setScrollTop === 'function') {
+            msgScrollRef.value.setScrollTop(prevTop + delta)
+          }
+        } catch (e) {}
+      }
+    }
   } finally {
-    loadingMore.value = false
+    // 冷却 1 帧，避免 setScrollTop 后仍触发 onMsgScroll(top<120) 再次 loadMore
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        loadingMore.value = false
+      })
+    })
   }
 }
 
-function onMsgScroll() {}
+let scrollTickPending = false
+function onMsgScroll() {
+  if (scrollTickPending) return
+  scrollTickPending = true
+  requestAnimationFrame(() => {
+    scrollTickPending = false
+    const wrapEl = getScrollWrapEl()
+    if (!wrapEl) return
+    const top = wrapEl.scrollTop
+    if (top < 120 && hasMore.value && !loadingMore.value && !currentLoading.value) {
+      loadMore()
+    }
+  })
+}
 
-async function scrollToBottom() {
+/** 返回 el-scrollbar 的滚动容器 DOM（兼容写法） */
+function getScrollWrapEl() {
+  if (!msgScrollRef.value) return null
+  return msgScrollRef.value.wrapRef?.$el
+    || msgScrollRef.value.$el?.querySelector?.('.el-scrollbar__wrap')
+    || null
+}
+
+/** 当前滚动位置是否处于底部附近（threshold px） */
+function isNearBottom(threshold = 120) {
+  const wrapEl = getScrollWrapEl()
+  if (!wrapEl) return false
+  const { scrollTop, scrollHeight, clientHeight } = wrapEl
+  return scrollHeight - scrollTop - clientHeight <= threshold
+}
+
+async function scrollToBottom({ force = false, retries = 0 } = {}) {
   await nextTick()
-  if (msgScrollRef.value && scrollAnchor.value) {
-    try { msgScrollRef.value.setScrollTop(99999999) } catch (e) {}
+  if (!msgScrollRef.value) {
+    if (retries < 3) {
+      setTimeout(() => scrollToBottom({ force, retries: retries + 1 }), 60)
+    }
+    return
+  }
+  // force=false 时：只在用户本来就已经靠近底部时才自动滚到底，避免打断用户阅读历史 / 听语音
+  if (!force && !isNearBottom()) return
+  // 三重保险：1) anchor scrollIntoView；2) 直接操作 wrap DOM；3) setScrollTop API
+  try {
+    const anchor = scrollAnchor?.value
+    if (anchor && typeof anchor.scrollIntoView === 'function') {
+      anchor.scrollIntoView({ block: 'end', behavior: 'auto' })
+    }
+  } catch (e) {}
+  try {
+    const wrapEl = getScrollWrapEl()
+    if (wrapEl) {
+      wrapEl.scrollTop = wrapEl.scrollHeight
+    }
+  } catch (e) {}
+  try { msgScrollRef.value.setScrollTop(99999999) } catch (e) {}
+  // force=true：再补 2 次重试（渲染后期图片/音频条可能改变高度，避免第一次只滚到半截）
+  if (force && retries < 2) {
+    setTimeout(() => scrollToBottom({ force: true, retries: retries + 1 }), 120)
   }
 }
 
@@ -1612,7 +1840,8 @@ async function send() {
     replyToMsg.value = null
     conversations.markCurrentAsRead()
     await nextTick()
-    scrollToBottom()
+    // 自己发送完成：强制滚到底部，看到刚发出去的消息
+    scrollToBottom({ force: true })
   } catch (e) {
     const errorMsg = e?.response?.data?.message || e?.message || '发送失败'
     ElMessage.error(errorMsg)
@@ -1629,16 +1858,40 @@ watch(() => conversations.currentMessages.length, (cnt) => {
   updateDetectedLang()
 })
 
-watch(() => conversations.currentConversationId, () => {
+watch(() => conversations.currentConversationId, (newId, oldId) => {
   replyToMsg.value = null
-  // 切换会话时重置用户手动修改标记
   userChangedTargetLang = false
   if (showProfile.value && conversations.currentConversation) {
     loadUserProfile(conversations.currentConversation)
   }
-  // 更新检测语言
   updateDetectedLang()
+  if (newId && (conversations.currentMessages || []).length > 0) {
+    nextTick().then(() => scrollToBottom({ force: true }))
+  }
+  lastCount = (conversations.currentMessages || []).length
+  nextTick().then(() => autoTriggerPendingAsr())
 })
+
+// 轮询或 WebSocket 更新消息后，自动触发未处理的语音消息 ASR
+watch(() => conversations.currentMessages?.length, (newLen, oldLen) => {
+  if (newLen && newLen !== oldLen) {
+    nextTick().then(() => autoTriggerPendingAsr())
+  }
+})
+
+/** 扫描已加载的 INBOUND 语音消息，对没有 ASR 数据且非 pending 的自动触发转写 */
+function autoTriggerPendingAsr() {
+  const msgs = conversations.currentMessages
+  if (!msgs || msgs.length === 0) return
+  for (const msg of msgs) {
+    if (!isVoiceMsg(msg)) continue
+    if (msg.direction !== 'INBOUND') continue
+    if (isAsrPending(msg)) continue
+    if (hasAsrResult(msg)) continue
+    if (asrFailed(msg)) continue
+    triggerAsr(msg, true)
+  }
+}
 
 function updateDetectedLang() {
   const msgs = conversations.currentMessages
@@ -1693,28 +1946,134 @@ function heuristicDetectLang(text) {
 let pollTimer = null
 let lastPollCount = 0
 
+/** 把两组消息按 msg.id / discordMessageId 合并去重，返回升序合并结果 */
+function mergeMessageLists(olderOrCurrent, newerOrRemote) {
+  const map = new Map()
+  for (const m of olderOrCurrent || []) {
+    const key = m.id != null ? `id:${m.id}` : `dmid:${m.discordMessageId || ''}`
+    map.set(key, m)
+  }
+  for (const m of newerOrRemote || []) {
+    const key = m.id != null ? `id:${m.id}` : `dmid:${m.discordMessageId || ''}`
+    // 远端同 key：覆盖（因为 ASR/翻译字段可能更新了）
+    map.set(key, m)
+  }
+  const merged = Array.from(map.values())
+  merged.sort((a, b) => {
+    const ta = new Date(a.discordCreatedAt || a.createdAt || 0).getTime()
+    const tb = new Date(b.discordCreatedAt || b.createdAt || 0).getTime()
+    return ta - tb || (a.id || 0) - (b.id || 0)
+  })
+  return merged
+}
+
 async function pollCurrentMessages() {
   const convId = conversations.currentConversationId
   if (!convId) return
+  // 正在加载更多历史时不要 poll 覆盖 messagesMap，避免游标回滚 / 闪烁
+  if (loadingMore.value) return
   try {
-    const res = await listMessages(convId)
-    const msgs = Array.isArray(res) ? res : (res?.data || [])
-    msgs.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    // 轮询也使用只返回当天 20 条的分页接口，避免页面卡顿
+    const res = await listMessages(convId, { daysBack: 1, pageSize: 20 })
+    const page = !Array.isArray(res) && res && (Array.isArray(res?.messages) || Array.isArray(res?.data)) ? res : null
+    const msgs = page ? (res.messages || res.data || []) : (Array.isArray(res) ? res : (res?.data || []))
+    msgs.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
     const current = conversations.messagesMap[convId] || []
-    if (msgs.length > current.length) {
-      conversations.messagesMap[convId] = msgs
-      const conv = conversations.conversations.find(c => c.id === convId)
-      if (conv && msgs.length > 0) {
-        const lastMsg = msgs[msgs.length - 1]
-        conv.lastMessagePreview = (lastMsg.translatedContent || lastMsg.content || '').slice(0, 60)
-        conv.lastMessageSnippet = conv.lastMessagePreview
-        conv.lastMessageAt = lastMsg.createdAt
-        conv.lastMessageTime = lastMsg.createdAt
-      }
-      await nextTick()
-      scrollToBottom()
+    const todayStart = new Date()
+    todayStart.setHours(0, 0, 0, 0)
+
+    const newestRemote = msgs.length > 0 ? msgs[msgs.length - 1] : null
+    const newestLocal = current.length > 0 ? current[current.length - 1] : null
+    const remoteNewerTs = newestRemote ? new Date(newestRemote.createdAt || 0).getTime() : 0
+    const localNewerTs = newestLocal ? new Date(newestLocal.createdAt || 0).getTime() : 0
+    const hasOldInLocal = current.length > 0 && current.some(m => new Date(m.discordCreatedAt || m.createdAt || 0) < todayStart)
+
+    // 计算远端页面内最早和最晚时间，用于判断游标是否需要更新
+    const remoteOldestTs = msgs.length > 0 ? new Date(msgs[0].discordCreatedAt || msgs[0].createdAt || 0).getTime() : Infinity
+    const existingCursor = conversations.oldestCursorMap?.[convId]
+    const existingCursorTs = existingCursor?.createdAt
+      ? new Date(existingCursor.createdAt).getTime()
+      : Infinity
+
+    const hasNewRemoteMessage = newestRemote && (!newestLocal || remoteNewerTs > localNewerTs)
+    const fieldUpdated = (() => {
+      // ASR/翻译字段变化（比如 pending→done、翻译文本补填）也需要更新
+      if (current.length === 0 || msgs.length === 0) return false
+      const localMap = new Map(current.map(m => [m.id != null ? `id:${m.id}` : `dmid:${m.discordMessageId || ''}`, m]))
+      return msgs.some(r => {
+        const key = r.id != null ? `id:${r.id}` : `dmid:${r.discordMessageId || ''}`
+        const l = localMap.get(key)
+        if (!l) return false
+        return (l.asrStatus || '') !== (r.asrStatus || '')
+          || (l.asrText || '') !== (r.asrText || '')
+          || (l.translatedContent || '') !== (r.translatedContent || '')
+      })
+    })()
+
+    // 情况 A：本地已经加载过历史（含非今天）→ 不允许用轮询返回的"当天页"覆盖整个 messagesMap，只做增量合并
+    if (!hasOldInLocal && current.length === 0 && msgs.length === 0) {
+      // 完全空，无需处理
+      return
     }
-  } catch (e) {}
+
+    if (!hasOldInLocal && !hasNewRemoteMessage && !fieldUpdated && msgs.length <= current.length) {
+      // 没有新消息，也没有字段更新，直接跳过
+      return
+    }
+
+    const conv = conversations.conversations.find(c => c.id === convId)
+    if (newestRemote) {
+      if (conv) {
+        conv.lastMessagePreview = (newestRemote.translatedContent || newestRemote.content || '').slice(0, 60)
+        conv.lastMessageSnippet = conv.lastMessagePreview
+        conv.lastMessageAt = newestRemote.createdAt
+        conv.lastMessageTime = newestRemote.createdAt
+      }
+    }
+
+    if (hasOldInLocal || hasNewRemoteMessage || fieldUpdated) {
+      // 合并：保留本地已加载的历史（包括 loadMore 加载的更早页），远端当天页更新对应 ID 的字段
+      const merged = mergeMessageLists(current, msgs)
+
+      // 过滤：如果 merged 里 50% 以上是非今天，说明用户一直在看历史，不应把它们删掉
+      conversations.messagesMap[convId] = merged
+
+      // 游标规则：轮询绝不允许把游标推得更晚（只能向前=更早推进，或保持不动）
+      const cursorFromPage = (page?.oldestId != null && page?.oldestCreatedAt)
+        ? { createdAt: page.oldestCreatedAt, id: page.oldestId }
+        : (msgs.length > 0
+          ? { createdAt: msgs[0].discordCreatedAt || msgs[0].createdAt, id: msgs[0].id }
+          : null)
+      if (cursorFromPage) {
+        const pageCursorTs = new Date(cursorFromPage.createdAt).getTime()
+        if (!existingCursor || pageCursorTs < existingCursorTs) {
+          // 只有新游标更早（向前推进）才更新
+          conversations.oldestCursorMap = conversations.oldestCursorMap || {}
+          conversations.oldestCursorMap[convId] = cursorFromPage
+        }
+        // 否则：保留 existingCursor（更老），避免被回滚到当天 → 触发反复 loadMore
+      }
+      if (merged.length > 0) {
+        // earliestIdMap 保持为 merged[0]（整页最早），用于兼容老接口
+        conversations.earliestIdMap[convId] = merged[0].id
+      }
+      // hasMore：如果本地已有更早消息（merged[0].createdAt < todayStart），那肯定有更多
+      const mergedOldestTs = merged.length > 0
+        ? new Date(merged[0].discordCreatedAt || merged[0].createdAt || 0).getTime()
+        : Infinity
+      const backendHasMore = page ? !!res.hasMore : msgs.length >= 20
+      conversations.hasMoreMap[convId] = backendHasMore
+        || mergedOldestTs < todayStart.getTime()
+        || backendHasMore
+
+      await nextTick()
+      // 轮询更新消息时，只在用户本来就已经在底部附近时才自动滚到底，避免打断听语音/看历史
+      scrollToBottom({ force: false })
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('[pollCurrentMessages] error', e)
+  }
 }
 
 let convPollTimer = null
@@ -2031,20 +2390,32 @@ function accountColor(accountId) {
 // ===== 好友在线状态（原生 Discord Presence + 活跃时间兜底） =====
 function presenceClass(c) {
   const p = c?.friendPresence
+  // 1. 有明确在线状态（online/idle/dnd）直接返回在线
   if (p === 'online' || p === 'idle' || p === 'dnd') return 'online'
-  if (p === 'offline') return 'offline'
-  // 兜底：用 lastActiveAt 5 分钟内视为在线
+  // 2. 即使 presence 显示 offline，如果最近 5 分钟内活跃过，也视为在线（兜底）
   const t = c?.friendLastActiveAt
+  if (t) {
+    const diff = Date.now() - new Date(t).getTime()
+    if (diff < 5 * 60 * 1000) return 'online'
+  }
+  // 3. 明确 offline 且没有最近活跃
+  if (p === 'offline') return 'offline'
+  // 4. 都没有数据时兜底
   if (!t) return 'offline'
-  const diff = Date.now() - new Date(t).getTime()
-  return diff < 5 * 60 * 1000 ? 'online' : 'offline'
+  const diff2 = Date.now() - new Date(t).getTime()
+  return diff2 < 5 * 60 * 1000 ? 'online' : 'offline'
 }
 
 function presenceTitle(c) {
   const p = c?.friendPresence
   const map = { online: '在线', idle: '空闲', dnd: '请勿打扰', offline: '离线' }
-  if (p && map[p]) return map[p]
+  // 如果最近活跃，优先显示在线
   const t = c?.friendLastActiveAt
+  if (t) {
+    const diff = Date.now() - new Date(t).getTime()
+    if (diff < 5 * 60 * 1000 && (p === 'offline' || !map[p])) return '在线'
+  }
+  if (p && map[p]) return map[p]
   if (!t) return '离线'
   const diff = Date.now() - new Date(t).getTime()
   if (diff < 5 * 60 * 1000) return '最近活跃'
@@ -2291,8 +2662,8 @@ onMounted(async () => {
   if (conversations.conversations.length === 0) {
     try { await conversations.fetchConversations() } catch (e) {}
   }
-  pollTimer = setInterval(pollCurrentMessages, 5000)
-  convPollTimer = setInterval(pollConversations, 10000)
+  pollTimer = setInterval(pollCurrentMessages, 1000)
+  convPollTimer = setInterval(pollConversations, 2000)
 })
 
 onUnmounted(() => {
@@ -3759,6 +4130,124 @@ onUnmounted(() => {
   color: var(--color-text-3);
   font-size: 12px;
 }
+
+/* ====== ASR 语音转文字卡片 ====== */
+.msg-asr-card {
+  margin-top: 2px;
+  margin-bottom: 6px;
+  padding: 9px 11px 10px 11px;
+  border-radius: 11px;
+  border: 1px solid var(--color-border-soft, #e5e7eb);
+  background:
+    radial-gradient(100% 140% at 0% 0%, rgba(139,92,246,0.05), transparent 60%),
+    linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(255,255,255,1) 100%);
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.7) inset,
+    0 4px 12px -10px rgba(15,23,42,.12);
+  min-width: 180px;
+  max-width: 100%;
+}
+.asr-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.asr-title {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #475569;
+  min-width: 0;
+}
+.asr-lang {
+  margin-left: 8px;
+  font-weight: 500;
+  color: #64748b;
+}
+.asr-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.asr-card-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #0f172a;
+  min-height: 26px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.asr-text {
+  padding: 2px 2px 1px;
+}
+/* 简化版 ASR 卡片：移除标题/分段控件后，卡片更紧凑；右下角提供单链接切换原文/译文 */
+.msg-asr-card.asr-card-simple {
+  padding: 7px 10px 8px 10px;
+}
+.asr-toggle-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 1px 2px 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #64748b;   /* 去掉蓝色：改为灰色小字，和普通文本一致不抢视觉 */
+  cursor: pointer;
+  user-select: none;
+  opacity: .9;
+}
+.asr-toggle-wrap {
+  text-align: right;
+}
+.asr-original-wrap {
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px dashed #e2e8f0;
+}
+.asr-original-text {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(148, 163, 184, 0.08);
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+.asr-toggle-link:hover {
+  color: #0f172a;
+  text-decoration: underline;
+  opacity: 1;
+}
+.asr-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #b91c1c;
+  background: rgba(254, 202, 202, 0.35);
+  border: 1px solid rgba(252, 165, 165, 0.55);
+  padding: 5px 8px;
+  border-radius: 8px;
+  line-height: 1.5;
+}
+.asr-error span { flex: 1; }
+.asr-ic { font-size: 13px; line-height: 1; }
+.asr-ic-done    { color: #2563eb; }
+.asr-ic-pending { color: #ca8a04; animation: asrPulse 1s ease-in-out infinite; }
+.asr-ic-fail    { color: #dc2626; }
+@keyframes asrPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.2); opacity: .7; }
+}
+/* ASR 卡片在"气泡"里做适配：INBOUND 默认左对齐气泡里的卡片样式一致 */
+.msg-item-left  .msg-asr-card { border-color: #e2e8f0; background: linear-gradient(180deg, #ffffff, #f8fafc); }
+.msg-item-right .msg-asr-card { border-color: #e0e7ff; background: linear-gradient(180deg, #ffffff, #f5f3ff); }
 
 /* AI Panel */
 .ai-panel {

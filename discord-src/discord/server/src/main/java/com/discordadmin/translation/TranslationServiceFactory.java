@@ -27,11 +27,14 @@ public class TranslationServiceFactory {
     private AISettingRepository aiSettingRepository;
 
     /**
-     * 翻译文本 - 根据配置选择翻译渠道
-     * @param text 要翻译的文本
-     * @param targetLanguage 目标语言 (e.g., "zh-CN", "en")
-     * @param merchantId 商户ID
-     * @return 翻译后的文本
+     * 翻译文本 - 根据配置动态选择翻译渠道
+     *
+     * 优先级：
+     *  1) 若商户已配置 AI 翻译（provider != free 且有 apiKey）→ 走 Qianwen（内部已自带 model + endpoint 回退）
+     *     只有当 Qianwen 两次回退都拿不到译文时，才兜底尝试免费翻译（免费翻译在国内网络经常超时/302，基本不可用）
+     *  2) 未配置 AI → 直接走免费翻译
+     *
+     * 注意：绝不允许"译文 == 原文"糊弄（有些免费翻译在失败后直接 return Optional.of(原文)），调用方若发现译文 == 原文应视为翻译失败。
      */
     public Optional<String> translate(String text, String targetLanguage, Long merchantId) {
         if (text == null || text.isBlank()) {
@@ -43,25 +46,37 @@ public class TranslationServiceFactory {
         if (merchantId != null) {
             setting = aiSettingRepository.findByMerchantIdAndFeature(merchantId, "translate").orElse(null);
         }
-        
-        // 如果配置了 AI 翻译且已启用，尝试使用 AI
-        if (setting != null && Boolean.TRUE.equals(setting.getEnabled()) 
-                && setting.getProvider() != null 
+
+        boolean hasAiSetting = setting != null && Boolean.TRUE.equals(setting.getEnabled())
+                && setting.getProvider() != null
                 && !"free".equals(setting.getProvider())
-                && setting.getApiKey() != null && !setting.getApiKey().isBlank()) {
+                && setting.getApiKey() != null && !setting.getApiKey().isBlank();
+
+        Optional<String> aiResult = Optional.empty();
+        if (hasAiSetting) {
             try {
-                Optional<String> result = qianwenService.translate(text, targetLanguage, setting);
-                if (result.isPresent()) {
-                    return result;
+                aiResult = qianwenService.translate(text, targetLanguage, setting);
+                if (aiResult.isPresent() && !aiResult.get().isBlank()
+                        && !aiResult.get().equalsIgnoreCase(text.trim())) {
+                    return aiResult;
                 }
-                log.debug("AI翻译失败，降级到免费翻译");
+                log.info("AI翻译未产出有效译文(空或等于原文): merchant={} provider={} model={}",
+                        merchantId, setting.getProvider(), setting.getModel());
             } catch (Exception e) {
-                log.warn("AI翻译异常: {}, 降级到免费翻译", e.getMessage());
+                log.warn("AI翻译异常 merchant={}: {}, 继续尝试免费翻译", merchantId, e.getMessage());
             }
         }
 
-        // 使用免费翻译（Google + MyMemory）
-        return freeGoogleService.translate(text, targetLanguage);
+        // 兜底：免费翻译（仅"未配置 AI"或"AI 明确失败"时用；失败后仍可能返回原文，由调用方处理）
+        Optional<String> free = freeGoogleService.translate(text, targetLanguage);
+        if (free.isPresent() && !free.get().isBlank() && !free.get().equalsIgnoreCase(text.trim())) {
+            log.debug("免费翻译兜底成功 merchant={}", merchantId);
+            return free;
+        }
+        // 如果 AI 返回过"等于原文"的结果，至少保留原文避免展示为空
+        if (aiResult.isPresent() && !aiResult.get().isBlank()) return aiResult;
+        if (free.isPresent() && !free.get().isBlank()) return free;
+        return Optional.empty();
     }
 
     /**

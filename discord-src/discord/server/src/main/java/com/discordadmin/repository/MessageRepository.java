@@ -3,6 +3,8 @@ package com.discordadmin.repository;
 import com.discordadmin.dto.UserStatsDtos.ActiveCustomerDto;
 import com.discordadmin.entity.Conversation;
 import com.discordadmin.entity.Message;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -15,6 +17,22 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
 
     @Query("SELECT m FROM Message m WHERE m.conversation = :conversation AND (m.isDeleted IS NULL OR m.isDeleted = false) ORDER BY m.createdAt ASC")
     List<Message> findByConversationOrderByCreatedAtAsc(@Param("conversation") Conversation conversation);
+
+    /**
+     * 按倒序取最新一批消息（默认 50 条，走 createdAt 索引，避免大列表加载缓慢）。
+     * 返回类型 Slice 可判断是否还有更早的消息让前端继续"加载更多"。
+     */
+    @Query("SELECT m FROM Message m WHERE m.conversation = :conversation AND (m.isDeleted IS NULL OR m.isDeleted = false) ORDER BY m.createdAt DESC, m.id DESC")
+    Slice<Message> findLatestByConversation(@Param("conversation") Conversation conversation, Pageable pageable);
+
+    /** 游标分页：取 createdAt < before（或id < beforeId）的更早一批消息 */
+    @Query("SELECT m FROM Message m WHERE m.conversation = :conversation AND (m.isDeleted IS NULL OR m.isDeleted = false) " +
+            "AND (m.createdAt < :before OR (m.createdAt = :before AND m.id < :beforeId)) " +
+            "ORDER BY m.createdAt DESC, m.id DESC")
+    Slice<Message> findOlderByConversation(@Param("conversation") Conversation conversation,
+                                            @Param("before") Instant before,
+                                            @Param("beforeId") Long beforeId,
+                                            Pageable pageable);
 
     Optional<Message> findByDiscordMessageId(String discordMessageId);
 
@@ -106,14 +124,27 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     @Query("SELECT COUNT(m) FROM Message m JOIN m.conversation c WHERE c.merchantId = :merchantId")
     long countByMerchantId(@Param("merchantId") Long merchantId);
 
-    /** 批量统计会话的未读消息数（基于lastReadAt或最后一条OUTBOUND消息时间） */
+    /** 批量统计会话的未读消息数
+     * 基准时间 = MAX(lastReadAt, 最后一条OUTBOUND消息时间)：
+     *   - 客服在后台markAsRead（lastReadAt更新） → 以该时间为准；
+     *   - 客服在后台发过OUTBOUND消息（比lastReadAt更晚），说明客服已看过之前消息 → 以最后OUTBOUND时间为准；
+     *   - 从未看过也从未回复 → 基准为1970，所有INBOUND算未读。
+     * 统计 INBOUND 消息中 created_at > 基准时间 的数量。
+     */
     @Query("""
         SELECT c.id, COUNT(m) FROM Message m JOIN m.conversation c
         WHERE c.id IN :convIds AND m.direction = 'INBOUND'
-        AND m.createdAt > COALESCE(c.lastReadAt, (
-            SELECT COALESCE(MAX(m2.createdAt), '1970-01-01T00:00:00Z') FROM Message m2
-            WHERE m2.conversation = c AND m2.direction = 'OUTBOUND'
-        ))
+        AND m.createdAt > CASE
+            WHEN c.lastReadAt IS NULL AND (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND') IS NULL
+                THEN '1970-01-01T00:00:00Z'
+            WHEN c.lastReadAt IS NULL
+                THEN (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND')
+            WHEN (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND') IS NULL
+                THEN c.lastReadAt
+            WHEN c.lastReadAt > (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND')
+                THEN c.lastReadAt
+            ELSE (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND')
+        END
         GROUP BY c.id
         """)
     List<Object[]> countUnreadByConversationIds(@Param("convIds") List<Long> convIds);
@@ -122,10 +153,17 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     @Query("""
         SELECT COUNT(m) FROM Message m JOIN m.conversation c
         WHERE c.id = :convId AND m.direction = 'INBOUND'
-        AND m.createdAt > COALESCE(c.lastReadAt, (
-            SELECT COALESCE(MAX(m2.createdAt), '1970-01-01T00:00:00Z') FROM Message m2
-            WHERE m2.conversation = c AND m2.direction = 'OUTBOUND'
-        ))
+        AND m.createdAt > CASE
+            WHEN c.lastReadAt IS NULL AND (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND') IS NULL
+                THEN '1970-01-01T00:00:00Z'
+            WHEN c.lastReadAt IS NULL
+                THEN (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND')
+            WHEN (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND') IS NULL
+                THEN c.lastReadAt
+            WHEN c.lastReadAt > (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND')
+                THEN c.lastReadAt
+            ELSE (SELECT MAX(m2.createdAt) FROM Message m2 WHERE m2.conversation = c AND m2.direction = 'OUTBOUND')
+        END
         """)
     int countUnreadByConversationId(@Param("convId") Long convId);
 
@@ -146,6 +184,14 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     long countOutboundMessages(@Param("conversation") Conversation conversation);
 
     /** 平台级：统计账号所属商户为null的会话中的活跃客户数 */
-    @Query("SELECT COUNT(DISTINCT c.discordUser.id) FROM Message m JOIN m.conversation c WHERE m.createdAt >= :start AND c.merchantId IS NULL")
+    @Query("SELECT COUNT(DISTINCT c.discordUser.id) FROM Message m JOIN m.conversation c WHERE m.createdAt >= :start AND c.discordAccount.merchantId IS NULL")
     long countPlatformActiveCustomersSince(@Param("start") Instant start);
+
+    /** 取会话里 discordMessageId 最小的一条（即最早的消息）；用于历史回填翻页时判断是否已衔接上已有旧数据 */
+    @Query("SELECT MIN(m.discordMessageId) FROM Message m WHERE m.conversation = :conversation AND m.discordMessageId IS NOT NULL")
+    Optional<String> findMinDiscordMessageIdByConversation(@Param("conversation") Conversation conversation);
+
+    /** 取会话里 discordMessageId 最大的一条（即最新的消息）；用于轮询增量时判断 Discord 返回的消息里是否已进入"已入库"范围 */
+    @Query("SELECT MAX(m.discordMessageId) FROM Message m WHERE m.conversation = :conversation AND m.discordMessageId IS NOT NULL")
+    Optional<String> findMaxDiscordMessageIdByConversation(@Param("conversation") Conversation conversation);
 }

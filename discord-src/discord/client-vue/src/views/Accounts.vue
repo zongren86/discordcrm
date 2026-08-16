@@ -158,27 +158,43 @@
     </div>
 
     <!-- 添加/编辑账号（手工添加） -->
-    <el-dialog v-model="botDialog.visible" :title="botDialog.editId ? '编辑账号' : '手工添加账号'" width="480px" @close="resetBotDialog">
-      <el-form :model="botDialog.form" label-width="100px">
+    <el-dialog v-model="botDialog.visible" :title="botDialog.editId ? '编辑账号' : '手工添加账号'" width="560px" @close="resetBotDialog">
+      <template v-if="!botDialog.editId">
+        <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px;">
+          <template #title>
+            粘贴格式：<b>用户名|邮箱|ID|Token</b>，使用竖线分隔。示例：<code style="user-select:all;">张三|zhangsan@example.com|123456789012345678|mfa.xxxxxx</code>
+          </template>
+        </el-alert>
+        <el-input
+          v-model="botDialog.pasteText"
+          type="textarea"
+          :rows="3"
+          placeholder="点击此处后粘贴（Ctrl/⌘+V），将自动解析到下方字段"
+          @paste="onPasteAccountText"
+          @change="parsePasteText"
+        />
+        <div style="margin: 8px 0 0; font-size:12px; color: var(--color-text-3);">
+          解析后会自动填写下方字段。相同 ID 再次保存会<strong>更新已有账号</strong>，不存在则新增。
+        </div>
+        <el-divider style="margin: 16px 0 8px;">解析结果（可手动调整）</el-divider>
+      </template>
+      <el-form :model="botDialog.form" label-width="90px">
+        <el-form-item v-if="!botDialog.editId" label="Discord ID" required>
+          <el-input v-model="botDialog.form.discordId" placeholder="从粘贴文本自动解析，或手动输入" />
+        </el-form-item>
         <el-form-item label="账号名称" required>
           <el-input v-model="botDialog.form.nickname" placeholder="请输入账号名称" />
+        </el-form-item>
+        <el-form-item label="邮箱">
+          <el-input v-model="botDialog.form.email" placeholder="邮箱（选填）" />
         </el-form-item>
         <el-form-item label="Token" required>
           <el-input v-model="botDialog.form.token" type="password" show-password placeholder="请输入 Token" />
         </el-form-item>
-        <el-form-item label="账号类型">
-          <el-select v-model="botDialog.form.accountType" placeholder="请选择账号类型" style="width:100%;">
-            <el-option value="BOT" label="BOT" />
-            <el-option value="USER" label="USER" />
-          </el-select>
-        </el-form-item>
         <el-form-item label="所属商户">
-          <el-select v-model="botDialog.form.merchantId" placeholder="请选择商户" filterable clearable style="width:100%;" :loading="merchantsLoading">
+          <el-select v-model="botDialog.form.merchantId" placeholder="请选择商户" filterable clearable style="width:100%;" :loading="merchantsLoading" :disabled="merchantDisabled">
             <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="邮箱">
-          <el-input v-model="botDialog.form.email" placeholder="邮箱（选填）" />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="botDialog.form.remark" type="textarea" :rows="2" placeholder="备注（选填）" />
@@ -278,7 +294,15 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Upload, Refresh, Edit, Delete, Search, OfficeBuilding, Download, Key } from '@element-plus/icons-vue'
-import { listAccounts, createAccount, updateAccount, deleteAccount, batchImport, syncAccountRelationships, listMerchants, refreshAccountToken } from '@/api'
+import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountRelationships, listMerchants, refreshAccountToken } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+
+/** 平台管理员才可以选择/切换商户；商户身份用户默认填自己的 merchantId 并禁用 */
+const isPlatformAdmin = computed(() => auth.agent?.role === 'PLATFORM_ADMIN')
+const merchantDisabled = computed(() => !isPlatformAdmin.value)
+const defaultMerchantId = computed(() => auth.agent?.merchantId ?? null)
 
 const allAccounts = ref([])
 const loading = ref(false)
@@ -364,19 +388,31 @@ async function syncAccount(acc) {
 function openAddAccount() {
   botDialog.visible = true
   botDialog.editId = null
-  botDialog.form = { nickname: '', token: '', accountType: 'BOT', email: '', remark: '', merchantId: null }
+  botDialog.pasteText = ''
+  botDialog.form = {
+    nickname: '',
+    token: '',
+    accountType: 'USER',
+    email: '',
+    remark: '',
+    merchantId: merchantDisabled.value ? defaultMerchantId.value : null,
+    discordId: ''
+  }
 }
 
 function openEdit(acc) {
   botDialog.visible = true
   botDialog.editId = acc.id
+  botDialog.pasteText = ''
   botDialog.form = {
     nickname: acc.name || acc.discordName || acc.nickname || '',
     token: '',
-    accountType: acc.accountType || 'BOT',
+    accountType: 'USER',
     email: acc.email || '',
     remark: acc.remark || '',
-    merchantId: acc.merchantId || null
+    // 商户身份：仅可编辑自己商户下的账号，保持原 merchantId（禁用不可改）
+    merchantId: merchantDisabled.value ? (acc.merchantId || defaultMerchantId.value) : (acc.merchantId || null),
+    discordId: acc.discordId || ''
   }
 }
 
@@ -384,18 +420,76 @@ const botDialog = reactive({
   visible: false,
   editId: null,
   saving: false,
-  form: { nickname: '', token: '', accountType: 'BOT', email: '', remark: '', merchantId: null }
+  pasteText: '',
+  form: {
+    nickname: '',
+    token: '',
+    accountType: 'USER',
+    email: '',
+    remark: '',
+    merchantId: merchantDisabled.value ? defaultMerchantId.value : null,
+    discordId: ''
+  }
 })
 
 function resetBotDialog() {
   botDialog.editId = null
-  botDialog.form = { nickname: '', token: '', accountType: 'BOT', email: '', remark: '', merchantId: null }
+  botDialog.pasteText = ''
+  botDialog.form = {
+    nickname: '',
+    token: '',
+    accountType: 'USER',
+    email: '',
+    remark: '',
+    merchantId: merchantDisabled.value ? defaultMerchantId.value : null,
+    discordId: ''
+  }
   botDialog.saving = false
 }
 
+/** 粘贴后自动解析 用户名|邮箱|ID|Token */
+function onPasteAccountText(e) {
+  let text = ''
+  try {
+    text = (e.clipboardData || window.clipboardData).getData('text') || ''
+  } catch (err) { text = '' }
+  if (text) botDialog.pasteText = text
+  parsePasteText()
+}
+
+function parsePasteText() {
+  const raw = (botDialog.pasteText || '').trim()
+  if (!raw) return
+  // 取首行，兼容多行粘贴场景
+  const firstLine = raw.split(/\r?\n/).map(l => l.trim()).find(l => l) || raw
+  const parts = firstLine.split(/[|｜\t]/).map(s => s.trim())
+  // 按顺序取 用户名 邮箱 ID Token；超过4段且含空格时做简单回退
+  const [username, email, discordId, ...rest] = parts
+  const token = rest.length > 0 ? rest.join('|') : ''
+  if (username) botDialog.form.nickname = username
+  if (email) botDialog.form.email = email
+  if (discordId) botDialog.form.discordId = discordId
+  if (token) botDialog.form.token = token
+  if (username && !botDialog.form.accountType) botDialog.form.accountType = 'USER'
+  // 校验
+  if (!botDialog.form.discordId) {
+    ElMessage.warning('未解析到 Discord ID，请检查格式：用户名|邮箱|ID|Token')
+  } else if (!botDialog.form.token) {
+    ElMessage.warning('未解析到 Token，请检查格式')
+  } else {
+    ElMessage.success('解析成功，请确认字段后保存')
+  }
+}
+
 async function saveBot() {
-  if (!botDialog.form.nickname) { ElMessage.warning('请输入账号名称'); return }
-  if (!botDialog.form.token) { ElMessage.warning('请输入 Token'); return }
+  if (!botDialog.editId) {
+    if (!botDialog.form.discordId) { ElMessage.warning('请粘贴文本或手动填写 Discord ID'); return }
+    if (!botDialog.form.nickname) { ElMessage.warning('账号名称不能为空'); return }
+    if (!botDialog.form.token) { ElMessage.warning('Token 不能为空'); return }
+  } else {
+    if (!botDialog.form.nickname) { ElMessage.warning('请输入账号名称'); return }
+    if (!botDialog.form.token) { ElMessage.warning('请输入 Token'); return }
+  }
   botDialog.saving = true
   try {
     if (botDialog.editId) {
@@ -407,15 +501,16 @@ async function saveBot() {
       })
       ElMessage.success('已更新')
     } else {
-      await createAccount({
-        name: botDialog.form.nickname,
+      await upsertAccountByDiscordId({
+        username: botDialog.form.nickname,
+        email: botDialog.form.email,
+        discordId: botDialog.form.discordId,
         token: botDialog.form.token,
         accountType: botDialog.form.accountType,
-        email: botDialog.form.email,
         remark: botDialog.form.remark,
         merchantId: botDialog.form.merchantId
       })
-      ElMessage.success('已添加')
+      ElMessage.success('已保存（同ID已存在则更新，否则新增）')
     }
     botDialog.visible = false
     await fetchAccounts()

@@ -73,12 +73,35 @@ public class Message {
     @Column(name = "audio_mime_type", length = 64)
     private String audioMimeType;
 
-    /** 发送方本地保存的音频 base64（用于前端回放自己发送的语音） */
+    /** 发送方本地保存的音频 base64（用于前端回放自己发送的语音）。
+     *  懒加载：默认列表查询不读取，避免序列化大对象导致响应变慢。 */
+    @org.hibernate.annotations.LazyToOne(org.hibernate.annotations.LazyToOneOption.NO_PROXY)
+    @jakarta.persistence.Basic(fetch = jakarta.persistence.FetchType.LAZY)
     @Column(name = "audio_data", columnDefinition = "LONGTEXT")
     private String audioData;
 
     @Column(name = "attachments_json", columnDefinition = "TEXT")
     private String attachmentsJson;
+
+    /** 语音转文字(ASR)的原文：语音识别后的原始文字，用于前端"查看原文" */
+    @Column(name = "asr_text", columnDefinition = "TEXT")
+    private String asrText;
+
+    /** asrText 的翻译结果：把语音识别原文翻译为目标语言 */
+    @Column(name = "asr_translated", columnDefinition = "TEXT")
+    private String asrTranslated;
+
+    /** asrText 的原始语言（检测到的），如 ja / en / ko */
+    @Column(name = "asr_language", length = 16)
+    private String asrLanguage;
+
+    /** asr 转写状态：pending / done / failed */
+    @Column(name = "asr_status", length = 16)
+    private String asrStatus;
+
+    /** asr 转写失败的错误信息（方便前端提示） */
+    @Column(name = "asr_error", length = 512)
+    private String asrError;
 
     @Column(name = "referenced_message_id")
     private Long referencedMessageId;

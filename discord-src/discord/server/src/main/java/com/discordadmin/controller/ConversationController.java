@@ -8,6 +8,7 @@ import com.discordadmin.dto.ConversationDtos.UpdateStageRequest;
 import com.discordadmin.dto.ConversationDtos.UpdateStatusRequest;
 import com.discordadmin.dto.MessageDtos.MessageDto;
 import com.discordadmin.dto.MessageDtos.SendMessageRequest;
+import com.discordadmin.dto.MessagePageDto;
 import com.discordadmin.security.JwtAuthFilter.AuthenticatedAgent;
 import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.ConversationService;
@@ -16,6 +17,7 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -50,8 +52,19 @@ public class ConversationController {
     }
 
     @GetMapping("/{id}/messages")
-    public List<MessageDto> listMessages(@PathVariable Long id) {
-        return conversationService.listMessages(id);
+    public MessagePageDto listMessages(@PathVariable Long id,
+                                       @RequestParam(required = false) Integer daysBack,
+                                       @RequestParam(required = false) Integer pageSize) {
+        return conversationService.listMessagesRecent(id, daysBack, pageSize);
+    }
+
+    /** 上滑加载更早一页（游标分页） */
+    @GetMapping("/{id}/messages/older")
+    public MessagePageDto listOlderMessages(@PathVariable Long id,
+                                             @RequestParam Instant oldestCreatedAt,
+                                             @RequestParam Long oldestId,
+                                             @RequestParam(required = false) Integer pageSize) {
+        return conversationService.listMessagesOlder(id, oldestCreatedAt, oldestId, pageSize);
     }
 
     @GetMapping("/{id}/messages/before/{msgId}")
@@ -122,6 +135,23 @@ public class ConversationController {
                                         @RequestParam(defaultValue = "zh-CN") String targetLanguage) {
         conversationService.loadOwnedConversation(id);
         return conversationService.translateMessage(messageId, targetLanguage);
+    }
+
+    /** 语音转文字：触发一次转写，INBOUND 自动翻译为中文 */
+    @PostMapping("/{id}/messages/{messageId}/asr")
+    public MessageDto transcribeVoice(@PathVariable Long id, @PathVariable Long messageId,
+                                      @RequestParam(defaultValue = "false") Boolean autoTranslate) {
+        conversationService.loadOwnedConversation(id);
+        boolean at = Boolean.TRUE.equals(autoTranslate);
+        return conversationService.transcribeAsr(messageId, at);
+    }
+
+    /** 对 ASR 出来的原文单独翻译 */
+    @PostMapping("/{id}/messages/{messageId}/asr/translate")
+    public MessageDto translateAsr(@PathVariable Long id, @PathVariable Long messageId,
+                                   @RequestParam(defaultValue = "zh-CN") String targetLanguage) {
+        conversationService.loadOwnedConversation(id);
+        return conversationService.translateAsrText(messageId, targetLanguage);
     }
 
     @PostMapping("/detect-language")

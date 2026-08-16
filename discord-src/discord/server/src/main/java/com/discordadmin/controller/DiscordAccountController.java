@@ -27,6 +27,12 @@ public class DiscordAccountController {
         return accountService.createAccount(request);
     }
 
+    /** 手工添加：粘贴解析后按 Discord ID 做 upsert（存在=更新，不存在=新增） */
+    @PostMapping("/upsert-by-discord-id")
+    public AccountDto upsertByDiscordId(@RequestBody UpsertAccountByDiscordIdRequest request) {
+        return accountService.upsertByDiscordId(request);
+    }
+
     @PostMapping("/import-token")
     public ImportTokenResponse importToken(@RequestBody ImportTokenRequest request) {
         return accountService.importToken(request);

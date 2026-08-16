@@ -7,11 +7,17 @@ import java.util.List;
 public class DiscordAccountDtos {
 
     public record CreateAccountRequest(String name, String token, String email, String remark,
-                                       Long merchantId, String accountType) {
+                                       Long merchantId, String accountType, String discordId) {
     }
 
     public record UpdateAccountRequest(String name, String token, String status, String remark,
                                        Long merchantId) {
+    }
+
+    /** 手工添加-粘贴解析：ID存在则更新，不存在则新增。 格式：用户名|邮箱|ID|Token */
+    public record UpsertAccountByDiscordIdRequest(String username, String email, String discordId,
+                                                   String token, Long merchantId, String remark,
+                                                   String accountType) {
     }
 
     public record ImportTokenRequest(String name, String token, String accountType,

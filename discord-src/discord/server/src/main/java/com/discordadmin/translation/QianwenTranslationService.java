@@ -43,6 +43,10 @@ public class QianwenTranslationService {
 
     /**
      * 使用千问AI翻译文本
+     * 调用策略：
+     *  1) 优先按用户配置的 model + endpoint 调用；
+     *  2) 若结果为空 / 返回非 200 / 抛异常：自动回退到 compatible-mode chat/completions + 通用 qwen-plus 模型
+     *     （DashScope 账号在开通 qwen-mt-plus 权限时往往也开通 qwen-plus；且 qwen-plus 的聊天接口 prompt 翻译稳定）
      * @param text 要翻译的文本
      * @param targetLanguage 目标语言
      * @param setting AI配置
@@ -52,45 +56,82 @@ public class QianwenTranslationService {
         if (text == null || text.isBlank()) {
             return Optional.empty();
         }
+        final String sourceLang = detectLanguageHint(text);
+        final String targetName = getTargetLanguageName(targetLanguage);
 
+        // 1) 按用户配置尝试
+        String apiKey = setting.getApiKey();
+        String model = setting.getModel() != null ? setting.getModel() : MODEL_QWEN_PLUS;
+        String endpoint = setting.getApiEndpoint() != null ? setting.getApiEndpoint() : COMPATIBLE_ENDPOINT;
+
+        Optional<String> r1 = tryTranslateOnce(apiKey, model, endpoint, setting, text, sourceLang, targetName, "config[" + model + "]");
+        if (r1.isPresent()) return r1;
+
+        // 2) 回退：compatible-mode + qwen-plus 通用模型（翻译 prompt 稳定）
+        String fallbackModel = MODEL_QWEN_PLUS;
+        if (fallbackModel.equals(model) && COMPATIBLE_ENDPOINT.equals(endpoint)) {
+            // 已经是 qwen-plus + compatible，再用 qwen-turbo 试一次
+            fallbackModel = MODEL_QWEN_TURBO;
+        }
+        return tryTranslateOnce(apiKey, fallbackModel, COMPATIBLE_ENDPOINT, setting, text, sourceLang, targetName, "fallback[" + fallbackModel + "]");
+    }
+
+    private Optional<String> tryTranslateOnce(String apiKey, String model, String endpoint, AISetting setting,
+                                              String text, String sourceLang, String targetName, String tag) {
         try {
-            String apiKey = setting.getApiKey();
-            String model = setting.getModel() != null ? setting.getModel() : MODEL_QWEN_MT_PLUS;
-            String endpoint = setting.getApiEndpoint() != null ? setting.getApiEndpoint() : COMPATIBLE_ENDPOINT;
-
-            // 构建翻译提示词
-            String sourceLang = detectLanguageHint(text);
-            String prompt = String.format(
-                "请将以下%s文本翻译成%s，只返回翻译结果，不要添加任何解释：\n\n%s",
-                sourceLang, getTargetLanguageName(targetLanguage), text);
-
-            // 根据端点类型构建请求
             String requestBody;
-            if (endpoint.contains("compatible-mode")) {
+            if (isQwenMtModel(model)) {
+                // Qwen-MT 翻译专用模型协议（兼容模式）：
+                //  - messages 仅包含一条 user 消息（禁止 system 消息 / 多轮）
+                //  - 通过顶层 translation_options 显式指定 source_lang / target_lang，
+                //    避免把翻译 prompt 当普通文本一起送入，也避免 system 消息被 MT 模型拒绝
+                // 参考：https://help.aliyun.com/zh/model-studio/
+                requestBody = buildQwenMtRequestBody(model, text, sourceLang, targetName, setting);
+            } else if (endpoint.contains("compatible-mode")) {
+                String prompt = String.format(
+                    "将以下%s文本翻译成%s，直接输出翻译结果，不要任何前缀、解释、引号或重复原文：\n\n%s",
+                    sourceLang, targetName, text);
                 requestBody = buildCompatibleRequestBody(model, prompt, setting);
             } else {
+                String prompt = String.format(
+                    "将以下%s文本翻译成%s，直接输出翻译结果，不要任何前缀、解释、引号或重复原文：\n\n%s",
+                    sourceLang, targetName, text);
                 requestBody = buildNativeRequestBody(model, prompt, setting);
             }
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(endpoint))
-                    .timeout(Duration.ofSeconds(15))
+                    .timeout(Duration.ofSeconds(20))
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .build();
 
+            long startMs = System.currentTimeMillis();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            long cost = System.currentTimeMillis() - startMs;
 
             if (response.statusCode() != 200) {
-                log.warn("千问翻译API返回非200状态码: {}, body: {}", response.statusCode(), response.body());
+                log.warn("[{}] 千问翻译非200: status={} cost={}ms body(200)={}",
+                        tag, response.statusCode(), cost,
+                        response.body() == null ? "" : response.body().substring(0, Math.min(200, response.body().length())));
                 return Optional.empty();
             }
 
-            return parseResponse(response.body());
-
+            Optional<String> translated = parseResponse(response.body());
+            if (!translated.isPresent() || translated.get().isBlank()) {
+                log.warn("[{}] 千问翻译返回空: cost={}ms body={}", tag, cost,
+                        response.body() == null ? "" : response.body().substring(0, Math.min(300, response.body().length())));
+                return Optional.empty();
+            }
+            // 剔除模型偶尔返回的 "翻译结果：" 前缀和首尾换行
+            String cleaned = translated.get()
+                    .replaceAll("(?i)^\\s*(翻译结果|译文|translation|result)\\s*[:：\\-]?\\s*", "")
+                    .trim();
+            log.info("[{}] 千问翻译成功: textLen={} target={} cost={}ms", tag, text.length(), targetName, cost);
+            return Optional.of(cleaned);
         } catch (Exception e) {
-            log.error("千问翻译服务异常: {}", e.getMessage());
+            log.warn("[{}] 千问翻译异常: {}", tag, e.toString());
             return Optional.empty();
         }
     }
@@ -151,6 +192,116 @@ public class QianwenTranslationService {
             return String.format(
                 "{\"model\":\"%s\",\"input\":{\"messages\":[{\"role\":\"user\",\"content\":\"%s\"}]}}",
                 model, prompt.replace("\"", "\\\"").replace("\n", "\\n"));
+        }
+    }
+
+    /**
+     * 构建 Qwen-MT 翻译专用模型的请求体（兼容模式）
+     * 重要约束（阿里云文档）：
+     *   - messages 数组必须只包含 1 条 user 角色消息，禁止 system 角色和多轮
+     *   - 源/目标语种通过顶层 translation_options 指定，
+     *     translation_options.source_lang 若为 "auto" 则自动检测
+     */
+    private String buildQwenMtRequestBody(String model, String text, String sourceLangHint, String targetName, AISetting setting) {
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("model", model);
+
+            Map<String, Object> userMessage = new HashMap<>();
+            userMessage.put("role", "user");
+            userMessage.put("content", text);
+            body.put("messages", new Object[]{userMessage});
+
+            // Qwen-MT 翻译专用参数（兼容模式下位于顶层，对应 OpenAI SDK 的 extra_body）
+            Map<String, String> translationOpts = new HashMap<>();
+            translationOpts.put("source_lang", convertToMtLanguage(sourceLangHint));
+            translationOpts.put("target_lang", convertToMtLanguage(targetName));
+            body.put("translation_options", translationOpts);
+
+            if (setting.getTemperature() != null) {
+                body.put("temperature", setting.getTemperature());
+            }
+            if (setting.getMaxTokens() != null) {
+                body.put("max_tokens", setting.getMaxTokens());
+            }
+            return objectMapper.writeValueAsString(body);
+        } catch (Exception e) {
+            log.error("构建Qwen-MT请求体失败", e);
+            return String.format(
+                "{\"model\":\"%s\",\"messages\":[{\"role\":\"user\",\"content\":\"%s\"}],\"translation_options\":{\"source_lang\":\"%s\",\"target_lang\":\"%s\"}}",
+                model,
+                text.replace("\"", "\\\"").replace("\n", "\\n"),
+                convertToMtLanguage(sourceLangHint),
+                convertToMtLanguage(targetName));
+        }
+    }
+
+    /**
+     * 判断是否为 Qwen-MT 系列翻译模型
+     */
+    private static boolean isQwenMtModel(String model) {
+        return model != null && model.startsWith("qwen-mt");
+    }
+
+    /**
+     * 将语言显示名/标签转换为 Qwen-MT 识别的语种代码（常用映射，其余透传）
+     * Qwen-MT 同时支持显示名（如 "Chinese"/"English"）和 ISO 两字母代码
+     */
+    private String convertToMtLanguage(String lang) {
+        if (lang == null) return "auto";
+        switch (lang.toLowerCase().replace("-", "")) {
+            case "zh":
+            case "zhcn":
+            case "简体中文":
+            case "中文":
+            case "chinese":
+            case "simplified chinese":
+                return "Chinese";
+            case "en":
+            case "enus":
+            case "eng":
+            case "英文":
+            case "英语":
+            case "english":
+                return "English";
+            case "ja":
+            case "jpn":
+            case "日文":
+            case "日语":
+            case "japanese":
+                return "Japanese";
+            case "ko":
+            case "kor":
+            case "韩文":
+            case "韩语":
+            case "korean":
+                return "Korean";
+            case "fr":
+            case "fra":
+            case "法文":
+            case "法语":
+            case "french":
+                return "French";
+            case "de":
+            case "deu":
+            case "德文":
+            case "德语":
+            case "german":
+                return "German";
+            case "es":
+            case "spa":
+            case "西文":
+            case "西班牙语":
+            case "spanish":
+                return "Spanish";
+            case "ru":
+            case "rus":
+            case "俄文":
+            case "俄语":
+            case "russian":
+                return "Russian";
+            default:
+                return lang;
         }
     }
 
