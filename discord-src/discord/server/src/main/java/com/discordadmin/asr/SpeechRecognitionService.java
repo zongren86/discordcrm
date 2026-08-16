@@ -326,6 +326,7 @@ public class SpeechRecognitionService {
         // parameters.format 放这里（官方要求的位置）
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("format", fmt);
+        parameters.put("language", "auto");
         // 某些后端版本仍认 asr_options；为兼容性同时带上（不作为 format 的主要位置）
         Map<String, Object> asrOpts = new LinkedHashMap<>();
         asrOpts.put("enable_lid", true);
@@ -420,13 +421,15 @@ public class SpeechRecognitionService {
         asrOpts.put("enable_lid", true);
         asrOpts.put("enable_itn", true);
         asrOpts.put("format", fmt);
+        asrOpts.put("language", "auto");
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", model);
         body.put("messages", Collections.singletonList(userMsg));
         body.put("asr_options", asrOpts);
-        // 再兜底：部分后端实现要求 format 与 messages 同级
+        // 再兜底：部分后端实现要求 format / language 与 messages 同级
         body.put("format", fmt);
+        body.put("language", "auto");
 
         String bodyStr = objectMapper.writeValueAsString(body);
         String bodyForLog = bodyStr.replaceAll("\"input_audio\":\"data:[^\"]{60,}?\"",
@@ -629,7 +632,7 @@ public class SpeechRecognitionService {
             if (MODEL_SENSEVOICE_V1.equalsIgnoreCase(model)) {
                 params.put("language_hints", Collections.singletonList("auto"));
             } else {
-                params.put("language_hints", Arrays.asList("zh", "en"));
+                params.put("language_hints", Arrays.asList("zh", "en", "ja"));
             }
             params.put("disfluency_removal_enabled", false);
             b.put("parameters", params);
