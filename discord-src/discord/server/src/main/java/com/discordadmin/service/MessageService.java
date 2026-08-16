@@ -674,8 +674,10 @@ public class MessageService {
                     m.setAsrTranslated(m.getAsrText());
                     needTranslate = false;
                 }
-                // 启发式：如果 asr_text 里包含中文（即使语言检测返回 null/英文），也当作中文原文，避免浪费翻译配额
-                if (needTranslate && containsChinese(m.getAsrText())) {
+                // 启发式：仅当语言检测未识别（null/空）时，才用 containsChinese 兜底
+                // 如果已经检测为非中文（如 ja/en/ko 等），必须翻译，不能被 containsChinese 误判
+                if (needTranslate && (m.getAsrLanguage() == null || m.getAsrLanguage().isBlank())
+                        && containsChinese(m.getAsrText())) {
                     m.setAsrTranslated(m.getAsrText());
                     needTranslate = false;
                 }

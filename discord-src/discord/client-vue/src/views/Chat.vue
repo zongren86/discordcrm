@@ -1341,8 +1341,8 @@ function hasAsrTextOnly(msg) {
   return hasAsrText(msg) && !hasAsrTranslated(msg)
 }
 function canShowOriginalBelow(msg) {
-  // 有译文又有原文时，允许在下方展开显示原文
-  return hasAsrText(msg) && hasAsrTranslated(msg)
+  // 有译文又有原文且两者不同时，才允许在下方展开显示原文
+  return hasAsrText(msg) && hasAsrTranslatedDifferent(msg)
 }
 
 function toggleOriginalBelow(msg) {
