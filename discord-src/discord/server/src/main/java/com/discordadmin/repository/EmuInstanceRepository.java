@@ -1,0 +1,26 @@
+package com.discordadmin.repository;
+
+import com.discordadmin.entity.EmuInstance;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+import java.util.Optional;
+
+@Repository
+public interface EmuInstanceRepository extends JpaRepository<EmuInstance, Long> {
+
+    List<EmuInstance> findByMerchantId(Long merchantId);
+
+    List<EmuInstance> findByMerchantIdAndUserId(Long merchantId, String userId);
+
+    Optional<EmuInstance> findByMerchantIdAndInstanceIndex(Long merchantId, Integer instanceIndex);
+
+    List<EmuInstance> findByStatus(EmuInstance.EmuStatus status);
+
+    long countByMerchantId(Long merchantId);
+
+    void deleteByMerchantId(Long merchantId);
+
+    void deleteByMerchantIdAndInstanceIndex(Long merchantId, Integer instanceIndex);
+}

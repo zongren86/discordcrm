@@ -152,6 +152,82 @@
             </div>
           </el-card>
 
+          <!-- 好友号池 -->
+          <el-card class="panel" shadow="hover" style="margin-top: 16px">
+            <template #header>
+              <div class="panel-header">
+                <el-icon><Friends /></el-icon>
+                <span>好友号池</span>
+                <el-button size="small" @click="loadFriendPoolStats" :disabled="friendPoolLoading">
+                  刷新
+                </el-button>
+              </div>
+            </template>
+            <div class="panel-body">
+              <div v-if="friendPoolLoading" class="loading-hint">加载中...</div>
+              <div v-else>
+                <!-- 统计卡片 -->
+                <el-row :gutter="8" class="friend-pool-stats">
+                  <el-col :span="6">
+                    <div class="stat-card">
+                      <div class="stat-value">{{ friendPoolStats.total || 0 }}</div>
+                      <div class="stat-label">总数</div>
+                    </div>
+                  </el-col>
+                  <el-col :span="6">
+                    <div class="stat-card stat-pending">
+                      <div class="stat-value">{{ friendPoolStats.pending || 0 }}</div>
+                      <div class="stat-label">待添加</div>
+                    </div>
+                  </el-col>
+                  <el-col :span="6">
+                    <div class="stat-card stat-assigned">
+                      <div class="stat-value">{{ friendPoolStats.assigned || 0 }}</div>
+                      <div class="stat-label">已分配</div>
+                    </div>
+                  </el-col>
+                  <el-col :span="6">
+                    <div class="stat-card stat-success">
+                      <div class="stat-value">{{ friendPoolStats.success || 0 }}</div>
+                      <div class="stat-label">成功</div>
+                    </div>
+                  </el-col>
+                </el-row>
+
+                <!-- 状态筛选 -->
+                <div class="friend-pool-filter">
+                  <el-radio-group v-model="friendPoolFilter" size="small" @change="loadFriendPool">
+                    <el-radio-button label="">全部</el-radio-button>
+                    <el-radio-button label="PENDING">待添加</el-radio-button>
+                    <el-radio-button label="ASSIGNED">已分配</el-radio-button>
+                    <el-radio-button label="SUCCESS">成功</el-radio-button>
+                    <el-radio-button label="FAILED">失败</el-radio-button>
+                  </el-radio-group>
+                </div>
+
+                <!-- 好友列表 -->
+                <div v-if="friendPool.length === 0" class="empty-hint">
+                  暂无好友，请到服务器管理中同步成员
+                </div>
+                <el-table v-else :data="friendPool.slice(0, 50)" size="small" style="width: 100%">
+                  <el-table-column prop="username" label="用户名" width="150" />
+                  <el-table-column prop="globalName" label="全局名称" width="150" />
+                  <el-table-column label="状态" width="100">
+                    <template #default="{ row }">
+                      <el-tag :type="friendStatusTag(row.status)" size="small">
+                        {{ row.statusText }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="lastError" label="错误信息" show-overflow-tooltip />
+                </el-table>
+                <div v-if="friendPool.length > 50" class="more-hint">
+                  仅显示前50条，共 {{ friendPool.length }} 条记录
+                </div>
+              </div>
+            </div>
+          </el-card>
+
           <el-card class="panel" shadow="hover" style="margin-top: 16px">
             <template #header>
               <div class="panel-header">
@@ -418,7 +494,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
-  ChatDotRound, Setting, Key, Promotion, CircleCheck, User
+  ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Friends
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
@@ -452,6 +528,12 @@ const availableServers = ref([])
 const availableServersLoading = ref(false)
 const serverSearch = ref('')
 const showServerDialog = ref(false)
+
+// 好友号池
+const friendPool = ref([])
+const friendPoolStats = ref({ total: 0, pending: 0, assigned: 0, success: 0, failed: 0 })
+const friendPoolLoading = ref(false)
+const friendPoolFilter = ref('')
 
 // API 基础 URL
 const API_BASE = '/api/emu'
@@ -639,7 +721,9 @@ onMounted(async () => {
       loadAddedServers(),
       loadAvailableServers(),
       loadAutoConfig(),
-      checkApkStatus()
+      checkApkStatus(),
+      loadFriendPoolStats(),
+      loadFriendPool()
     ])
   }
   startHealthCheck()
@@ -836,9 +920,41 @@ async function syncFriends(server) {
   try {
     const resp = await axios.post(`${API_BASE}/servers/${server.serverId}/sync-friends`)
     ElMessage.success(`已同步 ${resp.data.addedCount} 个好友到好友号池`)
+    await loadFriendPoolStats()
+    await loadFriendPool()
   } catch (e) {
     ElMessage.error('同步失败: ' + (e.response?.data?.message || e.message))
   }
+}
+
+// ========== 好友号池 ==========
+
+async function loadFriendPool() {
+  friendPoolLoading.value = true
+  try {
+    const resp = await axios.get(`${API_BASE}/friend-pool`, {
+      params: { status: friendPoolFilter.value || undefined }
+    })
+    friendPool.value = resp.data || []
+  } catch { friendPool.value = [] }
+  finally { friendPoolLoading.value = false }
+}
+
+async function loadFriendPoolStats() {
+  try {
+    const resp = await axios.get(`${API_BASE}/friend-pool/stats`)
+    friendPoolStats.value = resp.data || { total: 0, pending: 0, assigned: 0, success: 0, failed: 0 }
+  } catch {}
+}
+
+function friendStatusTag(status) {
+  const map = {
+    'PENDING': 'info',
+    'ASSIGNED': 'warning',
+    'SUCCESS': 'success',
+    'FAILED': 'danger'
+  }
+  return map[status] || 'info'
 }
 
 // ========== 模拟器操作 ==========
@@ -1244,5 +1360,61 @@ function formatCountdown(timestamp) {
   text-align: center;
   color: #909399;
   padding: 20px;
+}
+
+/* 好友号池样式 */
+.friend-pool-stats {
+  margin-bottom: 12px;
+}
+
+.stat-card {
+  background: #f5f7fa;
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 4px;
+}
+
+.stat-pending {
+  background: #fdf6ec;
+}
+.stat-pending .stat-value {
+  color: #e6a23c;
+}
+
+.stat-assigned {
+  background: #faecd8;
+}
+.stat-assigned .stat-value {
+  color: #e6a23c;
+}
+
+.stat-success {
+  background: #f0f9eb;
+}
+.stat-success .stat-value {
+  color: #67c23a;
+}
+
+.friend-pool-filter {
+  margin-bottom: 12px;
+}
+
+.more-hint {
+  text-align: center;
+  color: #909399;
+  font-size: 12px;
+  margin-top: 8px;
 }
 </style>

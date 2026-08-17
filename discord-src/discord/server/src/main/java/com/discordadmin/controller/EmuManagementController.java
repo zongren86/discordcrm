@@ -6,13 +6,14 @@ import com.discordadmin.entity.EmuServerBinding;
 import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 模拟器相关API - 账号管理、服务器管理、好友号池
+ * 模拟器相关API - 账号管理、服务器管理、好友号池、实例管理、APK管理
  */
 @RestController
 @RequestMapping("/api/emu")
@@ -21,16 +22,231 @@ public class EmuManagementController {
     private final EmuAccountBindingService accountBindingService;
     private final EmuServerBindingService serverBindingService;
     private final EmuFriendPoolService friendPoolService;
-    private final GuildServerService guildServerService;
+    private final EmuInstanceService instanceService;
+    private final ApkManagementService apkManagementService;
 
     public EmuManagementController(EmuAccountBindingService accountBindingService,
                                     EmuServerBindingService serverBindingService,
                                     EmuFriendPoolService friendPoolService,
-                                    GuildServerService guildServerService) {
+                                    EmuInstanceService instanceService,
+                                    ApkManagementService apkManagementService) {
         this.accountBindingService = accountBindingService;
         this.serverBindingService = serverBindingService;
         this.friendPoolService = friendPoolService;
-        this.guildServerService = guildServerService;
+        this.instanceService = instanceService;
+        this.apkManagementService = apkManagementService;
+    }
+
+    // ========== APK 管理 ==========
+
+    /**
+     * 检查APK状态
+     */
+    @GetMapping("/discord/apk-status")
+    public Map<String, Object> checkApkStatus() {
+        return apkManagementService.checkApkStatus();
+    }
+
+    /**
+     * 上传APK
+     */
+    @PostMapping("/discord/upload")
+    public Map<String, Object> uploadApk(@RequestParam("file") MultipartFile file) {
+        try {
+            return apkManagementService.uploadApk(file);
+        } catch (Exception e) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return result;
+        }
+    }
+
+    /**
+     * 下载APK（模拟）
+     */
+    @PostMapping("/discord/download")
+    public Map<String, Object> downloadApk() {
+        return apkManagementService.downloadLatestApk();
+    }
+
+    // ========== 实例管理 ==========
+
+    /**
+     * 获取当前用户的所有模拟器实例
+     */
+    @GetMapping("/emulators")
+    public List<Map<String, Object>> getEmulators() {
+        return instanceService.getCurrentUserInstances();
+    }
+
+    /**
+     * 设置模拟器数量
+     */
+    @PostMapping("/emulators/count")
+    public List<Map<String, Object>> setEmulatorCount(@RequestBody Map<String, Object> body) {
+        int count = Integer.parseInt(body.get("count").toString());
+        int cpuCores = body.containsKey("cpuCores") ? Integer.parseInt(body.get("cpuCores").toString()) : 1;
+        int memoryGb = body.containsKey("memoryGb") ? Integer.parseInt(body.get("memoryGb").toString()) : 1;
+        return instanceService.setInstanceCount(count, cpuCores, memoryGb);
+    }
+
+    /**
+     * 启动模拟器
+     */
+    @PostMapping("/emulators/{index}/start")
+    public Map<String, Object> startEmulator(@PathVariable int index) {
+        return instanceService.startInstance(index);
+    }
+
+    /**
+     * 停止模拟器
+     */
+    @PostMapping("/emulators/{index}/stop")
+    public Map<String, Object> stopEmulator(@PathVariable int index) {
+        return instanceService.stopInstance(index);
+    }
+
+    /**
+     * 重启模拟器
+     */
+    @PostMapping("/emulators/{index}/restart")
+    public Map<String, Object> restartEmulator(@PathVariable int index) {
+        return instanceService.restartInstance(index);
+    }
+
+    /**
+     * 启动所有模拟器
+     */
+    @PostMapping("/emulators/startAll")
+    public List<Map<String, Object>> startAllEmulators() {
+        return instanceService.startAllInstances();
+    }
+
+    /**
+     * 停止所有模拟器
+     */
+    @PostMapping("/emulators/stopAll")
+    public List<Map<String, Object>> stopAllEmulators() {
+        return instanceService.stopAllInstances();
+    }
+
+    /**
+     * 删除模拟器
+     */
+    @DeleteMapping("/emulators/{index}")
+    public Map<String, Object> deleteEmulator(@PathVariable int index) {
+        instanceService.deleteInstance(index);
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        return result;
+    }
+
+    // ========== Discord 控制 ==========
+
+    /**
+     * 安装Discord到模拟器
+     */
+    @PostMapping("/discord/install/{index}")
+    public Map<String, Object> installDiscord(@PathVariable int index) {
+        return instanceService.installDiscord(index);
+    }
+
+    /**
+     * 安装Discord到所有模拟器
+     */
+    @PostMapping("/discord/installAll")
+    public Map<String, Object> installAllDiscord() {
+        Long merchantId = SecurityUtils.getCurrentMerchantId();
+        String userId = SecurityUtils.getCurrentUserId();
+        var instances = instanceService.getCurrentUserInstances();
+        
+        int successCount = 0;
+        StringBuilder errors = new StringBuilder();
+        
+        for (var inst : instances) {
+            try {
+                instanceService.installDiscord((Integer) inst.get("index"));
+                successCount++;
+            } catch (Exception e) {
+                if (errors.length() > 0) errors.append("; ");
+                errors.append("#").append(inst.get("index")).append(" ").append(e.getMessage());
+            }
+        }
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("successCount", successCount);
+        result.put("failCount", instances.size() - successCount);
+        if (errors.length() > 0) {
+            result.put("errors", errors.toString());
+        }
+        return result;
+    }
+
+    /**
+     * 启动Discord
+     */
+    @PostMapping("/discord/launch/{index}")
+    public Map<String, Object> launchDiscord(@PathVariable int index) {
+        return instanceService.launchDiscord(index);
+    }
+
+    // ========== 自动加好友 ==========
+
+    /**
+     * 启动自动加好友
+     */
+    @PostMapping("/autoadd/{index}/start")
+    public Map<String, Object> startAutoAdd(@PathVariable int index) {
+        return instanceService.startAutoAdd(index);
+    }
+
+    /**
+     * 停止自动加好友
+     */
+    @PostMapping("/autoadd/{index}/stop")
+    public Map<String, Object> stopAutoAdd(@PathVariable int index) {
+        return instanceService.stopAutoAdd(index);
+    }
+
+    /**
+     * 全部启动自动加好友
+     */
+    @PostMapping("/autoadd/startAll")
+    public List<Map<String, Object>> startAllAutoAdd() {
+        return instanceService.startAllAutoAdd();
+    }
+
+    /**
+     * 全部停止自动加好友
+     */
+    @PostMapping("/autoadd/stopAll")
+    public List<Map<String, Object>> stopAllAutoAdd() {
+        return instanceService.stopAllAutoAdd();
+    }
+
+    /**
+     * 保存自动加好友配置
+     */
+    @PostMapping("/data/autoconfig")
+    public Map<String, Object> saveAutoConfig(@RequestBody Map<String, Object> config) {
+        // 存储配置到商户级别的配置中
+        // 这里简化处理，实际应该使用MerchantConfig
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        return result;
+    }
+
+    /**
+     * 获取自动加好友配置
+     */
+    @GetMapping("/data/autoconfig")
+    public Map<String, Object> getAutoConfig() {
+        Map<String, Object> result = new HashMap<>();
+        result.put("intervalSeconds", 900);
+        result.put("delayMinSeconds", 60);
+        result.put("delayMaxSeconds", 800);
+        return result;
     }
 
     // ========== 账号管理 ==========

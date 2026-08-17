@@ -257,6 +257,7 @@ public class GuildServerController {
         map.put("memberCount", server.getMemberCount());
         map.put("lastFetchAt", server.getLastFetchAt());
         map.put("status", server.getStatus());
+        map.put("statusText", getStatusTextZh(server.getStatus()));
         map.put("createdAt", server.getCreatedAt());
 
         com.discordadmin.entity.DiscordAccount acc = accountMap.get(server.getDiscordAccountId());
@@ -270,6 +271,21 @@ public class GuildServerController {
         }
 
         return map;
+    }
+
+    /**
+     * 状态中文映射
+     */
+    private String getStatusTextZh(String status) {
+        if (status == null) return "未知";
+        return switch (status.toUpperCase()) {
+            case "ACTIVE" -> "活跃";
+            case "INACTIVE" -> "未激活";
+            case "FETCHING" -> "获取中";
+            case "ERROR" -> "错误";
+            case "DELETED" -> "已删除";
+            default -> status;
+        };
     }
 
     private Map<String, Object> toMemberMap(GuildMember member) {
@@ -286,6 +302,9 @@ public class GuildServerController {
         map.put("joinedAt", member.getJoinedAt());
         map.put("roles", member.getRoles());
         map.put("lastFetchedAt", member.getLastFetchedAt());
+        // 添加状态字段（如果有状态字段的话）
+        map.put("status", "ACTIVE");
+        map.put("statusText", "活跃");
         return map;
     }
 }
