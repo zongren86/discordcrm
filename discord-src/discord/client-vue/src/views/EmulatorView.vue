@@ -30,19 +30,19 @@
                 <label>模拟器数量</label>
                 <el-input-number v-model="targetCount" :min="1" :max="50" size="small" />
               </div>
-              <div class="form-row">
-                <label>CPU核心</label>
-                <el-select v-model="emuConfig.cpuCores" size="small" style="width: 120px">
-                  <el-option v-for="n in 8" :key="n" :label="String(n)" :value="n" />
-                </el-select>
-              </div>
-              <div class="form-row">
-                <label>内存(GB)</label>
-                <el-select v-model="emuConfig.memoryGb" size="small" style="width: 120px">
-                  <el-option v-for="n in 8" :key="n" :label="n + 'G'" :value="n" />
-                </el-select>
-              </div>
-              <div class="form-row">
+              <div class="form-row inline-row">
+                <div class="inline-item">
+                  <label>CPU</label>
+                  <el-select v-model="emuConfig.cpuCores" size="small" style="width: 90px">
+                    <el-option v-for="n in 8" :key="n" :label="String(n)" :value="n" />
+                  </el-select>
+                </div>
+                <div class="inline-item">
+                  <label>内存</label>
+                  <el-select v-model="emuConfig.memoryGb" size="small" style="width: 90px">
+                    <el-option v-for="n in 8" :key="n" :label="n + 'G'" :value="n" />
+                  </el-select>
+                </div>
                 <el-button type="primary" size="small" @click="applyCount" :disabled="emuLoading">
                   {{ emuLoading ? '处理中...' : '应用' }}
                 </el-button>
@@ -85,19 +85,6 @@
                   全部安装 Discord
                 </el-button>
               </div>
-              <div class="form-row">
-                <label>Discord 邮箱</label>
-                <el-input v-model="discordEmail" type="email" placeholder="邮箱" size="small" />
-              </div>
-              <div class="form-row">
-                <label>密码</label>
-                <el-input v-model="discordPassword" type="password" placeholder="密码" size="small" show-password />
-              </div>
-              <div class="form-row">
-                <el-button type="primary" size="small" @click="loginAllDiscord" :disabled="!discordEmail || !discordPassword">
-                  全部登录
-                </el-button>
-              </div>
             </div>
           </el-card>
         </el-col>
@@ -108,23 +95,27 @@
             <template #header>
               <div class="panel-header">
                 <el-icon><Key /></el-icon>
-                <span>Discord 账号管理（{{ accounts.length }} 个）</span>
-                <el-button link type="primary" size="small" @click="showAccountsPanel = !showAccountsPanel">
-                  {{ showAccountsPanel ? '收起' : '展开' }}
+                <span>Discord 账号管理（{{ addedAccounts.length }} 个）</span>
+                <el-button type="primary" size="small" @click="showAccountDialog = true">
+                  添加账号
                 </el-button>
               </div>
             </template>
-            <div v-show="showAccountsPanel" class="panel-body">
-              <div class="hint">每行一个：邮箱,密码（按行号顺序分配给模拟器 1、2、3…）</div>
-              <el-input
-                v-model="accountsText"
-                type="textarea"
-                :rows="4"
-                placeholder="alice@discord.com,password123&#10;bob@discord.com,pass456"
-              />
-              <div class="form-row">
-                <el-button type="primary" size="small" @click="saveAccounts">保存账号</el-button>
-                <el-button size="small" @click="loadAccounts">重新加载</el-button>
+            <div class="panel-body">
+              <div v-if="addedAccounts.length === 0" class="empty-hint">
+                暂未添加账号，点击上方"添加账号"按钮开始
+              </div>
+              <div v-else class="account-list">
+                <div v-for="acc in addedAccounts" :key="acc.id" class="account-item">
+                  <div class="account-info">
+                    <el-tag size="small" :type="acc.status === 'ADDED' ? 'success' : 'warning'">
+                      {{ acc.statusText }}
+                    </el-tag>
+                    <span class="account-name">{{ acc.accountName || acc.discordName || '-' }}</span>
+                    <span class="account-email" v-if="acc.email">{{ acc.email }}</span>
+                  </div>
+                  <el-button type="danger" size="small" link @click="removeAccount(acc.id)">删除</el-button>
+                </div>
               </div>
             </div>
           </el-card>
@@ -133,18 +124,30 @@
             <template #header>
               <div class="panel-header">
                 <el-icon><User /></el-icon>
-                <span>好友清单（{{ friends.length }} 个）</span>
-                <el-button link type="primary" size="small" @click="showFriendsPanel = !showFriendsPanel">
-                  {{ showFriendsPanel ? '收起' : '展开' }}
+                <span>服务器管理（{{ addedServers.length }} 个）</span>
+                <el-button type="primary" size="small" @click="showServerDialog = true">
+                  添加服务器
                 </el-button>
               </div>
             </template>
-            <div v-show="showFriendsPanel" class="panel-body">
-              <div class="hint">每行一个 Discord 用户名（不带 @），全局共用一份清单</div>
-              <el-input v-model="friendsText" type="textarea" :rows="4" placeholder="friend_user_1&#10;friend_user_2" />
-              <div class="form-row">
-                <el-button type="primary" size="small" @click="saveFriends">保存好友清单</el-button>
-                <el-button size="small" @click="loadFriends">重新加载</el-button>
+            <div class="panel-body">
+              <div v-if="addedServers.length === 0" class="empty-hint">
+                暂未添加服务器，点击上方"添加服务器"按钮开始
+              </div>
+              <div v-else class="server-list">
+                <div v-for="srv in addedServers" :key="srv.id" class="server-item">
+                  <div class="server-info">
+                    <el-tag size="small" :type="srv.status === 'ADDED' ? 'success' : 'warning'">
+                      {{ srv.statusText }}
+                    </el-tag>
+                    <span class="server-name">{{ srv.serverName || srv.name || '-' }}</span>
+                    <span class="server-count" v-if="srv.memberCount">{{ srv.memberCount }} 成员</span>
+                  </div>
+                  <div class="server-actions">
+                    <el-button type="primary" size="small" link @click="syncFriends(srv)">同步成员</el-button>
+                    <el-button type="danger" size="small" link @click="removeServer(srv.id)">删除</el-button>
+                  </div>
+                </div>
               </div>
             </div>
           </el-card>
@@ -249,6 +252,12 @@
         <el-table-column label="名称" width="120">
           <template #default="{ row }">{{ row.name || `模拟器${row.index}` }}</template>
         </el-table-column>
+        <el-table-column label="CPU/内存" width="100">
+          <template #default="{ row }">
+            <span v-if="row.cpuCores || row.memoryGb">{{ row.cpuCores || '-' }}核 / {{ row.memoryGb || '-' }}G</span>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
@@ -260,12 +269,18 @@
         <el-table-column label="分辨率" width="120">
           <template #default="{ row }">{{ row.resolution || '-' }}</template>
         </el-table-column>
-        <el-table-column label="Discord状态" width="180">
+        <el-table-column label="登录账号" width="150">
+          <template #default="{ row }">
+            <span v-if="row.discordAccount">{{ row.discordAccount }}</span>
+            <span v-else style="color: #909399">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Discord状态" width="150">
           <template #default="{ row }">
             <div v-if="row.discordInstalled">
               <el-tag type="success" size="small" style="margin-right: 4px">已安装</el-tag>
-              <span v-if="row.discordAccount">{{ row.discordAccount }}</span>
-              <span v-else style="color: #909399">未登录</span>
+              <span v-if="row.discordLoggedIn">已登录</span>
+              <span v-else style="color: #f56c6c">未登录</span>
             </div>
             <el-tag v-else-if="row.status === 'RUNNING'" type="warning" size="small">未安装</el-tag>
             <span v-else style="color: #909399">-</span>
@@ -289,7 +304,7 @@
             <span v-else style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="320" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <template v-if="row.status !== 'RUNNING'">
               <el-button type="success" size="small" @click="startEmulator(row.index)">启动</el-button>
@@ -304,11 +319,6 @@
                 <el-icon color="#67c23a"><CircleCheck /></el-icon>
               </el-button>
               <el-button size="small" @click="launchDiscord(row.index)">启动DS</el-button>
-              <el-button
-                v-if="discordEmail && discordPassword"
-                type="primary" size="small"
-                @click="loginDiscord(row.index)"
-              >登录</el-button>
               <el-button
                 v-if="!row.autoRunning && row.discordInstalled"
                 type="success" size="small"
@@ -327,14 +337,88 @@
 
       <el-empty v-else-if="!loading" description="暂无模拟器，在上方设置数量后点击「应用」创建" />
     </div>
+
+    <!-- 添加账号弹窗 -->
+    <el-dialog v-model="showAccountDialog" title="添加 Discord 账号" width="600px">
+      <div class="dialog-section">
+        <h4>已添加的账号</h4>
+        <div v-if="addedAccounts.length === 0" class="empty-hint">暂无已添加账号</div>
+        <div v-else class="dialog-list">
+          <div v-for="acc in addedAccounts" :key="acc.id" class="dialog-item">
+            <span>{{ acc.accountName || acc.discordName }}</span>
+            <el-button type="danger" size="small" link @click="removeAccount(acc.id)">移除</el-button>
+          </div>
+        </div>
+      </div>
+      <el-divider />
+      <div class="dialog-section">
+        <div class="dialog-header">
+          <h4>可添加的账号</h4>
+          <el-input v-model="accountSearch" size="small" placeholder="搜索账号" clearable style="width: 200px" />
+        </div>
+        <div v-if="availableAccountsLoading" class="loading-hint">加载中...</div>
+        <div v-else-if="filteredAvailableAccounts.length === 0" class="empty-hint">
+          没有可添加的账号
+        </div>
+        <div v-else class="dialog-list">
+          <div v-for="acc in filteredAvailableAccounts" :key="acc.id" class="dialog-item">
+            <div class="item-info">
+              <span class="item-name">{{ acc.accountName || acc.discordName }}</span>
+              <span class="item-email" v-if="acc.email">{{ acc.email }}</span>
+              <el-tag v-if="!acc.canAdd" size="small" type="warning">已占用</el-tag>
+            </div>
+            <el-button type="primary" size="small" :disabled="!acc.canAdd" @click="addAccount(acc.id)">
+              添加
+            </el-button>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 添加服务器弹窗 -->
+    <el-dialog v-model="showServerDialog" title="添加服务器" width="600px">
+      <div class="dialog-section">
+        <h4>已添加的服务器</h4>
+        <div v-if="addedServers.length === 0" class="empty-hint">暂无已添加服务器</div>
+        <div v-else class="dialog-list">
+          <div v-for="srv in addedServers" :key="srv.id" class="dialog-item">
+            <span>{{ srv.serverName }}</span>
+            <el-button type="danger" size="small" link @click="removeServer(srv.id)">移除</el-button>
+          </div>
+        </div>
+      </div>
+      <el-divider />
+      <div class="dialog-section">
+        <div class="dialog-header">
+          <h4>可添加的服务器</h4>
+          <el-input v-model="serverSearch" size="small" placeholder="搜索服务器" clearable style="width: 200px" />
+        </div>
+        <div v-if="availableServersLoading" class="loading-hint">加载中...</div>
+        <div v-else-if="filteredAvailableServers.length === 0" class="empty-hint">
+          没有可添加的服务器
+        </div>
+        <div v-else class="dialog-list">
+          <div v-for="srv in filteredAvailableServers" :key="srv.id" class="dialog-item">
+            <div class="item-info">
+              <span class="item-name">{{ srv.name || srv.guildId }}</span>
+              <span class="item-count" v-if="srv.memberCount">{{ srv.memberCount }} 成员</span>
+              <el-tag v-if="srv.accountOccupied" size="small" type="warning">账号已占用</el-tag>
+            </div>
+            <el-button type="primary" size="small" :disabled="srv.accountOccupied" @click="addServer(srv)">
+              添加
+            </el-button>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
-  Loading, WarningFilled, Monitor, User, VideoPlay, VideoPause, Refresh,
-  ChatDotRound, Setting, Key, Promotion, CircleCheck
+  Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
+  ChatDotRound, Setting, Key, Promotion, CircleCheck, User
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
@@ -348,23 +432,29 @@ const emuLoading = ref(false)
 
 const apkDownloaded = ref(false)
 const apkLoading = ref(false)
-const discordEmail = ref('')
-const discordPassword = ref('')
 const apkInput = ref(null)
 
-const accounts = ref([])
-const accountsText = ref('')
-const showAccountsPanel = ref(false)
-
-const friends = ref([])
-const friendsText = ref('')
-const showFriendsPanel = ref(false)
-
+const emuConfig = ref({ cpuCores: 1, memoryGb: 1 })
 const autoConfig = ref({ intervalSeconds: 900, delayMinSeconds: 60, delayMaxSeconds: 800 })
 
-const emuConfig = ref({ cpuCores: 1, memoryGb: 1 })
-
 const selectedEmulators = ref([])
+
+// 账号管理
+const addedAccounts = ref([])
+const availableAccounts = ref([])
+const availableAccountsLoading = ref(false)
+const accountSearch = ref('')
+const showAccountDialog = ref(false)
+
+// 服务器管理
+const addedServers = ref([])
+const availableServers = ref([])
+const availableServersLoading = ref(false)
+const serverSearch = ref('')
+const showServerDialog = ref(false)
+
+// API 基础 URL
+const API_BASE = '/api/emu'
 
 const isAllSelected = computed(() => 
   emulators.value.length > 0 && selectedEmulators.value.length === emulators.value.length
@@ -416,20 +506,32 @@ const canBatchStopAuto = computed(() =>
   })
 )
 
+// 过滤可用账号
+const filteredAvailableAccounts = computed(() => {
+  if (!accountSearch.value) return availableAccounts.value
+  const keyword = accountSearch.value.toLowerCase()
+  return availableAccounts.value.filter(acc => 
+    (acc.accountName && acc.accountName.toLowerCase().includes(keyword)) ||
+    (acc.email && acc.email.toLowerCase().includes(keyword)) ||
+    (acc.discordName && acc.discordName.toLowerCase().includes(keyword))
+  )
+})
+
+// 过滤可用服务器
+const filteredAvailableServers = computed(() => {
+  if (!serverSearch.value) return availableServers.value
+  const keyword = serverSearch.value.toLowerCase()
+  return availableServers.value.filter(srv => 
+    (srv.name && srv.name.toLowerCase().includes(keyword)) ||
+    (srv.guildId && srv.guildId.toLowerCase().includes(keyword))
+  )
+})
+
 let healthCheckTimer = null
 
 const emuApi = axios.create({ baseURL: '/emu-api', timeout: 15000 })
 
 const sortedEmulators = computed(() => [...emulators.value].sort((a, b) => a.index - b.index))
-
-function toggleSelect(index) {
-  const idx = selectedEmulators.value.indexOf(index)
-  if (idx > -1) {
-    selectedEmulators.value.splice(idx, 1)
-  } else {
-    selectedEmulators.value.push(index)
-  }
-}
 
 function handleSelectionChange(selection) {
   selectedEmulators.value = selection.map(item => item.index)
@@ -464,17 +566,17 @@ async function batchAction(action) {
     delete: { confirm: '确定要批量删除选中的模拟器吗？此操作不可恢复！', method: 'delete' }
   }
   
-  const config = actionMap[action]
-  if (!config) return
+  const actionConfig = actionMap[action]
+  if (!actionConfig) return
   
   try {
-    await ElMessageBox.confirm(config.confirm, '确认', { type: 'warning' })
+    await ElMessageBox.confirm(actionConfig.confirm, '确认', { type: 'warning' })
     
     const results = []
     for (const index of selectedEmulators.value) {
       try {
         let resp
-        switch (config.method) {
+        switch (actionConfig.method) {
           case 'start':
             resp = await emuApi.post(`/emulators/${index}/start`)
             break
@@ -532,8 +634,10 @@ onMounted(async () => {
   if (backendAvailable.value) {
     await Promise.all([
       fetchEmulators(),
-      loadAccounts(),
-      loadFriends(),
+      loadAddedAccounts(),
+      loadAvailableAccounts(),
+      loadAddedServers(),
+      loadAvailableServers(),
       loadAutoConfig(),
       checkApkStatus()
     ])
@@ -543,6 +647,19 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null }
+})
+
+// 监听弹窗打开时加载数据
+watch(showAccountDialog, async (val) => {
+  if (val) {
+    await loadAvailableAccounts()
+  }
+})
+
+watch(showServerDialog, async (val) => {
+  if (val) {
+    await loadAvailableServers()
+  }
 })
 
 async function checkService() {
@@ -632,68 +749,99 @@ async function installAllDiscord() {
   }
 }
 
-async function loginAllDiscord() {
-  if (!discordEmail.value || !discordPassword.value) {
-    ElMessage.warning('请输入邮箱和密码')
-    return
-  }
+// ========== 账号管理 ==========
+
+async function loadAddedAccounts() {
   try {
-    const promises = emulators.value
-      .filter(e => e.status === 'RUNNING' && e.discordInstalled)
-      .map(e => emuApi.post(`/discord/login/${e.index}`, {
-        email: discordEmail.value, password: discordPassword.value
-      }))
-    await Promise.all(promises)
-    ElMessage.success('已发送登录指令')
-    await fetchEmulators()
+    const resp = await axios.get(`${API_BASE}/accounts/added`)
+    addedAccounts.value = resp.data || []
+  } catch { addedAccounts.value = [] }
+}
+
+async function loadAvailableAccounts() {
+  availableAccountsLoading.value = true
+  try {
+    const resp = await axios.get(`${API_BASE}/accounts/available`, {
+      params: { keyword: accountSearch.value || undefined }
+    })
+    availableAccounts.value = resp.data || []
+  } catch { availableAccounts.value = [] }
+  finally { availableAccountsLoading.value = false }
+}
+
+async function addAccount(discordAccountId) {
+  try {
+    await axios.post(`${API_BASE}/accounts/add`, { discordAccountId })
+    ElMessage.success('账号已添加')
+    await Promise.all([loadAddedAccounts(), loadAvailableAccounts()])
   } catch (e) {
-    ElMessage.error('登录失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error('添加失败: ' + (e.response?.data?.message || e.message))
   }
 }
 
-async function loadAccounts() {
+async function removeAccount(bindingId) {
   try {
-    const resp = await emuApi.get('/data/accounts')
-    accounts.value = resp.data || []
-    accountsText.value = accounts.value.map(a => `${a.email}|${a.password}`).join('\n')
-  } catch {}
-}
-
-async function saveAccounts() {
-  const lines = accountsText.value.split('\n').map(l => l.trim()).filter(Boolean)
-  const parsed = []
-  for (const line of lines) {
-    const [email, password] = line.split('|')
-    if (email && password) parsed.push({ email: email.trim(), password: password.trim() })
-  }
-  try {
-    await emuApi.post('/data/accounts', parsed)
-    accounts.value = parsed
-    ElMessage.success('账号已保存')
+    await axios.delete(`${API_BASE}/accounts/${bindingId}`)
+    ElMessage.success('账号已移除')
+    await Promise.all([loadAddedAccounts(), loadAvailableAccounts()])
   } catch (e) {
-    ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error('移除失败: ' + (e.response?.data?.message || e.message))
   }
 }
 
-async function loadFriends() {
+// ========== 服务器管理 ==========
+
+async function loadAddedServers() {
   try {
-    const resp = await emuApi.get('/data/friends')
-    friends.value = resp.data || []
-    friendsText.value = friends.value.map(f => f.username).join('\n')
-  } catch {}
+    const resp = await axios.get(`${API_BASE}/servers/added`)
+    addedServers.value = resp.data || []
+  } catch { addedServers.value = [] }
 }
 
-async function saveFriends() {
-  const list = friendsText.value.split('\n').map(l => l.trim()).filter(Boolean)
-  const parsed = list.map(username => ({ username }))
+async function loadAvailableServers() {
+  availableServersLoading.value = true
   try {
-    await emuApi.post('/data/friends', parsed)
-    friends.value = parsed
-    ElMessage.success('好友清单已保存')
+    const resp = await axios.get(`${API_BASE}/servers/available`, {
+      params: { keyword: serverSearch.value || undefined }
+    })
+    availableServers.value = resp.data || []
+  } catch { availableServers.value = [] }
+  finally { availableServersLoading.value = false }
+}
+
+async function addServer(server) {
+  try {
+    await axios.post(`${API_BASE}/servers/add`, {
+      serverId: server.id,
+      discordAccountId: server.discordAccountId || null
+    })
+    ElMessage.success('服务器已添加')
+    await Promise.all([loadAddedServers(), loadAvailableServers()])
   } catch (e) {
-    ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error('添加失败: ' + (e.response?.data?.message || e.message))
   }
 }
+
+async function removeServer(bindingId) {
+  try {
+    await axios.delete(`${API_BASE}/servers/${bindingId}`)
+    ElMessage.success('服务器已移除')
+    await Promise.all([loadAddedServers(), loadAvailableServers()])
+  } catch (e) {
+    ElMessage.error('移除失败: ' + (e.response?.data?.message || e.message))
+  }
+}
+
+async function syncFriends(server) {
+  try {
+    const resp = await axios.post(`${API_BASE}/servers/${server.serverId}/sync-friends`)
+    ElMessage.success(`已同步 ${resp.data.addedCount} 个好友到好友号池`)
+  } catch (e) {
+    ElMessage.error('同步失败: ' + (e.response?.data?.message || e.message))
+  }
+}
+
+// ========== 模拟器操作 ==========
 
 async function loadAutoConfig() {
   try {
@@ -874,22 +1022,6 @@ async function launchDiscord(index) {
   }
 }
 
-async function loginDiscord(index) {
-  if (!discordEmail.value || !discordPassword.value) {
-    ElMessage.warning('请先在左侧配置邮箱和密码')
-    return
-  }
-  try {
-    await emuApi.post(`/discord/login/${index}`, {
-      email: discordEmail.value, password: discordPassword.value
-    })
-    ElMessage.success(`模拟器 #${index} 登录中...`)
-    await fetchEmulators()
-  } catch (e) {
-    ElMessage.error('登录失败: ' + (e.response?.data?.message || e.message))
-  }
-}
-
 function statusText(status) {
   return { RUNNING: '运行中', STOPPED: '已停止', CREATING: '创建中', ERROR: '错误' }[status] || status || '未知'
 }
@@ -928,6 +1060,20 @@ function formatCountdown(timestamp) {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+.form-row.inline-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: nowrap;
+}
+
+.inline-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .form-row.inline label { min-width: 70px; font-size: 13px; }
 .form-row label { min-width: 70px; font-size: 13px; color: #606266; }
 
@@ -984,5 +1130,119 @@ function formatCountdown(timestamp) {
   padding: 10px 16px;
   border-radius: 6px;
   font-size: 13px;
+}
+
+/* 账号列表样式 */
+.account-list,
+.server-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-item,
+.server-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.account-info,
+.server-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-name,
+.server-name {
+  font-weight: 500;
+}
+
+.account-email {
+  color: #909399;
+  font-size: 12px;
+}
+
+.server-count {
+  color: #67c23a;
+  font-size: 12px;
+}
+
+.server-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.empty-hint {
+  text-align: center;
+  color: #909399;
+  padding: 20px;
+  font-size: 13px;
+}
+
+/* 弹窗样式 */
+.dialog-section {
+  margin-bottom: 16px;
+}
+
+.dialog-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #303133;
+}
+
+.dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.dialog-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dialog-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+
+.item-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.item-name {
+  font-weight: 500;
+}
+
+.item-email {
+  color: #909399;
+  font-size: 12px;
+}
+
+.item-count {
+  color: #67c23a;
+  font-size: 12px;
+}
+
+.loading-hint {
+  text-align: center;
+  color: #909399;
+  padding: 20px;
 }
 </style>
