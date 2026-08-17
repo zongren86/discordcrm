@@ -23,8 +23,8 @@ public class EmuInstanceService {
      * 获取当前用户的所有模拟器实例
      */
     public List<Map<String, Object>> getCurrentUserInstances() {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
-        String userId = SecurityUtils.getCurrentUserId();
+        Long merchantId = SecurityUtils.currentMerchantId();
+        String userId = SecurityUtils.currentUserId();
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         return instances.stream()
             .map(this::convertToMap)
@@ -36,8 +36,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> setInstanceCount(int count, int cpuCores, int memoryGb) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
-        String userId = SecurityUtils.getCurrentUserId();
+        Long merchantId = SecurityUtils.currentMerchantId();
+        String userId = SecurityUtils.currentUserId();
 
         List<EmuInstance> existing = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
 
@@ -83,8 +83,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> startInstance(int index) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
-        String userId = SecurityUtils.getCurrentUserId();
+        Long merchantId = SecurityUtils.currentMerchantId();
+        String userId = SecurityUtils.currentUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -101,6 +101,13 @@ public class EmuInstanceService {
         instance.setStatus(EmuInstance.EmuStatus.RUNNING);
         instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());
+        
+        // 如果已安装Discord，默认打开Discord应用
+        if (instance.getDiscordInstalled()) {
+            instance.setDiscordOnHome(false); // 启动时需要检查是否在首页
+            instance.setLastError("模拟器已启动，请打开Discord应用");
+        }
+        
         instanceRepository.save(instance);
 
         return convertToMap(instance);
@@ -111,7 +118,7 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> stopInstance(int index) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
+        Long merchantId = SecurityUtils.currentMerchantId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -129,7 +136,7 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> restartInstance(int index) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
+        Long merchantId = SecurityUtils.currentMerchantId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -147,8 +154,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> startAllInstances() {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
-        String userId = SecurityUtils.getCurrentUserId();
+        Long merchantId = SecurityUtils.currentMerchantId();
+        String userId = SecurityUtils.currentUserId();
 
         boolean apkExists = checkApkExists();
         if (!apkExists) {
@@ -173,8 +180,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> stopAllInstances() {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
-        String userId = SecurityUtils.getCurrentUserId();
+        Long merchantId = SecurityUtils.currentMerchantId();
+        String userId = SecurityUtils.currentUserId();
 
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         for (EmuInstance inst : instances) {
@@ -194,7 +201,7 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> installDiscord(int index) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
+        Long merchantId = SecurityUtils.currentMerchantId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -220,7 +227,7 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> launchDiscord(int index) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
+        Long merchantId = SecurityUtils.currentMerchantId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -235,7 +242,10 @@ public class EmuInstanceService {
             throw new RuntimeException("Discord未登录，请先在模拟器中登录Discord");
         }
 
-        // 设置Discord首页状态
+        // 启动Discord后，需要用户确保进入首页
+        // 首页是指有好友列表和添加好友按钮的页面
+        instance.setDiscordOnHome(false); // 重置首页状态，需要模拟器检查
+        instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());
         instanceRepository.save(instance);
 
@@ -245,11 +255,54 @@ public class EmuInstanceService {
     }
 
     /**
+     * 更新Discord首页状态（由模拟器调用）
+     */
+    @Transactional
+    public Map<String, Object> updateDiscordHomeStatus(int index, boolean onHome) {
+        Long merchantId = SecurityUtils.currentMerchantId();
+
+        EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
+            .orElseThrow(() -> new RuntimeException("模拟器不存在"));
+
+        instance.setDiscordOnHome(onHome);
+        instance.setUpdatedAt(Instant.now());
+        instanceRepository.save(instance);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("onHome", onHome);
+        result.put("success", true);
+        return result;
+    }
+
+    /**
+     * 标记Discord登录状态（由模拟器调用）
+     */
+    @Transactional
+    public Map<String, Object> updateDiscordLoginStatus(int index, boolean loggedIn) {
+        Long merchantId = SecurityUtils.currentMerchantId();
+
+        EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
+            .orElseThrow(() -> new RuntimeException("模拟器不存在"));
+
+        instance.setDiscordLoggedIn(loggedIn);
+        if (!loggedIn) {
+            instance.setDiscordOnHome(false); // 退出登录后重置首页状态
+        }
+        instance.setUpdatedAt(Instant.now());
+        instanceRepository.save(instance);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("loggedIn", loggedIn);
+        result.put("success", true);
+        return result;
+    }
+
+    /**
      * 启动自动加好友
      */
     @Transactional
     public Map<String, Object> startAutoAdd(int index) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
+        Long merchantId = SecurityUtils.currentMerchantId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -271,6 +324,13 @@ public class EmuInstanceService {
             throw new RuntimeException("Discord未登录，请先在模拟器中登录Discord");
         }
 
+        // 检查是否在首页
+        if (!instance.getDiscordOnHome()) {
+            instance.setLastError("Discord未在首页，请先跳转到首页（有好友列表和添加好友按钮的页面）");
+            instanceRepository.save(instance);
+            throw new RuntimeException("Discord未在首页，请先跳转到首页");
+        }
+
         instance.setAutoRunning(true);
         instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());
@@ -284,7 +344,7 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> stopAutoAdd(int index) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
+        Long merchantId = SecurityUtils.currentMerchantId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -301,8 +361,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> startAllAutoAdd() {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
-        String userId = SecurityUtils.getCurrentUserId();
+        Long merchantId = SecurityUtils.currentMerchantId();
+        String userId = SecurityUtils.currentUserId();
 
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         List<String> errors = new ArrayList<>();
@@ -335,8 +395,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> stopAllAutoAdd() {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
-        String userId = SecurityUtils.getCurrentUserId();
+        Long merchantId = SecurityUtils.currentMerchantId();
+        String userId = SecurityUtils.currentUserId();
 
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         for (EmuInstance inst : instances) {
@@ -355,7 +415,7 @@ public class EmuInstanceService {
      */
     @Transactional
     public void deleteInstance(int index) {
-        Long merchantId = SecurityUtils.getCurrentMerchantId();
+        Long merchantId = SecurityUtils.currentMerchantId();
         instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index)
             .ifPresent(instanceRepository::delete);
     }
@@ -383,6 +443,7 @@ public class EmuInstanceService {
         item.put("adbPort", instance.getAdbPort());
         item.put("discordInstalled", instance.getDiscordInstalled());
         item.put("discordLoggedIn", instance.getDiscordLoggedIn());
+        item.put("discordOnHome", instance.getDiscordOnHome());
         item.put("discordAccount", instance.getDiscordAccountId());
         item.put("autoRunning", instance.getAutoRunning());
         item.put("addedCount", instance.getAddedCount());

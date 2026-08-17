@@ -58,6 +58,9 @@ public class EmuInstance {
     @Column(name = "discord_logged_in")
     private Boolean discordLoggedIn = false;
 
+    @Column(name = "discord_on_home")
+    private Boolean discordOnHome = false;
+
     @Column(name = "discord_account_id")
     private Long discordAccountId;
 

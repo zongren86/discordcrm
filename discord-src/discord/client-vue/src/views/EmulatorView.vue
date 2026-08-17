@@ -112,7 +112,6 @@
                       {{ acc.statusText }}
                     </el-tag>
                     <span class="account-name">{{ acc.accountName || acc.discordName || '-' }}</span>
-                    <span class="account-email" v-if="acc.email">{{ acc.email }}</span>
                   </div>
                   <el-button type="danger" size="small" link @click="removeAccount(acc.id)">删除</el-button>
                 </div>
@@ -351,12 +350,16 @@
             <span v-else style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="Discord状态" width="150">
+        <el-table-column label="Discord状态" width="180">
           <template #default="{ row }">
             <div v-if="row.discordInstalled">
               <el-tag type="success" size="small" style="margin-right: 4px">已安装</el-tag>
-              <span v-if="row.discordLoggedIn">已登录</span>
+              <span v-if="row.discordLoggedIn" style="color: #67c23a">已登录</span>
               <span v-else style="color: #f56c6c">未登录</span>
+              <span v-if="row.discordLoggedIn" style="margin-left: 4px">
+                <el-tag v-if="row.discordOnHome" type="success" size="small" style="margin-left: 4px">首页</el-tag>
+                <el-tag v-else type="info" size="small" style="margin-left: 4px">非首页</el-tag>
+              </span>
             </div>
             <el-tag v-else-if="row.status === 'RUNNING'" type="warning" size="small">未安装</el-tag>
             <span v-else style="color: #909399">-</span>

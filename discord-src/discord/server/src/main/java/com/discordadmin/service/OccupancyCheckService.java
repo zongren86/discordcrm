@@ -4,8 +4,8 @@ import com.discordadmin.entity.AutoAddTask;
 import com.discordadmin.repository.AutoAddTaskRepository;
 import org.springframework.stereotype.Service;
 
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class OccupancyCheckService {
@@ -53,5 +53,27 @@ public class OccupancyCheckService {
     
     public List<AutoAddTask> getActiveTasksByAccount(Long discordAccountId) {
         return taskRepository.findByDiscordAccountIdAndStatusIn(discordAccountId, ACTIVE_STATUSES);
+    }
+    
+    /**
+     * 获取所有被占用的Discord账号ID集合
+     */
+    public Set<Long> getOccupiedDiscordAccountIds() {
+        List<AutoAddTask> activeTasks = taskRepository.findByStatusIn(ACTIVE_STATUSES);
+        return activeTasks.stream()
+            .map(AutoAddTask::getDiscordAccountId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    }
+    
+    /**
+     * 获取所有被占用的服务器ID集合
+     */
+    public Set<Long> getOccupiedServerIds() {
+        List<AutoAddTask> activeTasks = taskRepository.findByStatusIn(ACTIVE_STATUSES);
+        return activeTasks.stream()
+            .map(AutoAddTask::getServerId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
     }
 }

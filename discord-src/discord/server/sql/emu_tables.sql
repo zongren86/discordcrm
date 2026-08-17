@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS emu_instances (
     adb_port INT,
     discord_installed TINYINT DEFAULT 0,
     discord_logged_in TINYINT DEFAULT 0,
+    discord_on_home TINYINT DEFAULT 0,
     discord_account_id BIGINT,
     auto_running TINYINT DEFAULT 0,
     added_count INT DEFAULT 0,

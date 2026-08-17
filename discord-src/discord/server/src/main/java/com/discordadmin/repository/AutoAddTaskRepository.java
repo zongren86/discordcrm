@@ -39,4 +39,6 @@ public interface AutoAddTaskRepository extends JpaRepository<AutoAddTask, Long> 
     long countByMerchantId(Long merchantId);
     
     long countByMerchantIdAndStatus(Long merchantId, AutoAddTask.TaskStatus status);
+    
+    List<AutoAddTask> findByStatusIn(List<AutoAddTask.TaskStatus> statuses);
 }
