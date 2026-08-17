@@ -109,7 +109,7 @@ public class MessageService {
         return listRecentOrAll(conversationId, null, oldestCreatedAt, oldestId, size);
     }
 
-    public static final int DEFAULT_PAGE_SIZE = 20;
+    public static final int DEFAULT_PAGE_SIZE = 10;
 
     /**
      * 统一的消息列表加载：

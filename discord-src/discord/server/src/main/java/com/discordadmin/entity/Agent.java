@@ -35,6 +35,12 @@ public class Agent {
     @Column(name = "display_name", length = 64)
     private String displayName;
 
+    @Column(name = "email", length = 128)
+    private String email;
+
+    @Column(name = "notes", length = 500)
+    private String notes;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "role", length = 32)
     private AgentRole role = AgentRole.SALES;

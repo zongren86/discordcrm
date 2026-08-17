@@ -38,6 +38,9 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
     /** 根据账号ID查询绑定的编号 */
     List<DiscordAccountNumber> findByDiscordAccountId(Long discordAccountId);
 
+    /** 根据多个账号ID查询绑定的编号 */
+    List<DiscordAccountNumber> findByDiscordAccountIdIn(java.util.Set<Long> discordAccountIds);
+
     /** 根据创建人ID查询 */
     List<DiscordAccountNumber> findByCreatorId(Long creatorId);
 

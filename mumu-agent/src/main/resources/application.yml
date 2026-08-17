@@ -1,0 +1,40 @@
+server:
+  port: 8089
+
+spring:
+  application:
+    name: mumu-agent
+
+# Agent 配置
+agent:
+  # 云端服务器 WebSocket 地址
+  cloud-websocket-url: ws://localhost:8090/ws/agent
+  # Agent 自己的 HTTP 端口（用于本地调试）
+  local-http-port: 8089
+  # 设备ID（自动生成或手动配置）
+  device-id: ${AGENT_DEVICE_ID:}
+  # 用户ID（从云端获取或手动配置）
+  user-id: ${AGENT_USER_ID:}
+  # 心跳间隔（秒）
+  heartbeat-interval: 30
+
+# MuMu 模拟器配置
+mumu:
+  # MuMu 安装路径（空则自动检测）
+  path: ${MUMU_PATH:}
+  # ADB 端口起始值
+  adb-port-start: 16384
+  # 最大模拟器实例数
+  max-instances: 200
+
+# APK 缓存配置
+apk:
+  # APK 缓存目录
+  cache-dir: ${user.home}/.mumu-agent/cache/apk
+  # APK 下载超时（秒）
+  download-timeout: 300
+
+logging:
+  level:
+    com.mumu.agent: DEBUG
+    org.springframework.web: INFO

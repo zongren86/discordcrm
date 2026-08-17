@@ -5,6 +5,53 @@ import {
   updateConversationRemark, markConversationAsRead
 } from '@/api'
 
+// 排序规则优先级：
+// 1. 置顶用户
+// 2. 通过客户且没消息（PROSPECT阶段 + 无消息）
+// 3. 有未读消息的好友
+// 4. 其他
+// 5. 归档好友永远排在最下面
+function getConvTime(c) {
+  if (!c) return 0
+  const ts = c.lastMessageAt || c.createdAt || c.stageChangedAt
+  if (!ts) return 0
+  const time = new Date(ts)
+  return isNaN(time.getTime()) ? 0 : time.getTime()
+}
+
+function conversationSortScore(c) {
+  if (!c) return 50
+  const stage = c.stage || ''
+  const isPinned = c.pinned === true || c.pinned === 'true'
+  const hasMessages = !!c.lastMessageAt
+  const hasUnread = (c.unreadCount && c.unreadCount > 0)
+
+  // 归档排最底
+  if (stage === 'ARCHIVED') return 50
+
+  // 置顶排最顶
+  if (isPinned) return 10
+
+  // 通过客户（PROSPECT）且无消息
+  if (stage === 'PROSPECT' && !hasMessages) return 20
+
+  // 有未读消息
+  if (hasUnread) return 30
+
+  return 40
+}
+
+function sortConversations(list) {
+  return list.sort((a, b) => {
+    const sa = conversationSortScore(a)
+    const sb = conversationSortScore(b)
+    if (sa !== sb) return sa - sb
+
+    // 同一分组内按有效时间倒序（最新排最上）
+    return getConvTime(b) - getConvTime(a)
+  })
+}
+
 export const useConversationsStore = defineStore('conversations', {
   state: () => ({
     conversations: [],
@@ -45,12 +92,7 @@ export const useConversationsStore = defineStore('conversations', {
           this.mergeConversations(newData)
         } else {
           // 全量替换（首次加载或手动刷新）
-          this.conversations = newData
-          this.conversations.sort((a, b) => {
-            const ta = (a.lastMessageAt || a.lastMessageTime) ? new Date(a.lastMessageAt || a.lastMessageTime).getTime() : 0
-            const tb = (b.lastMessageAt || b.lastMessageTime) ? new Date(b.lastMessageAt || b.lastMessageTime).getTime() : 0
-            return tb - ta
-          })
+          this.conversations = sortConversations(newData)
         }
         this.initialLoadDone = true
         return this.conversations
@@ -87,13 +129,7 @@ export const useConversationsStore = defineStore('conversations', {
       }
 
       // 排序
-      merged.sort((a, b) => {
-        const ta = (a.lastMessageAt || a.lastMessageTime) ? new Date(a.lastMessageAt || a.lastMessageTime).getTime() : 0
-        const tb = (b.lastMessageAt || b.lastMessageTime) ? new Date(b.lastMessageAt || b.lastMessageTime).getTime() : 0
-        return tb - ta
-      })
-
-      this.conversations = merged
+      this.conversations = sortConversations(merged)
     },
     selectConversation(id) {
       this.currentConversationId = id
@@ -102,7 +138,7 @@ export const useConversationsStore = defineStore('conversations', {
     async fetchMessages(convId) {
       this.loadingMessagesMap[convId] = true
       try {
-        const res = await listMessages(convId, { daysBack: 1, pageSize: 20 })
+        const res = await listMessages(convId, { daysBack: 1, pageSize: 10 })
         // 兼容新结构 MessagePageDto { messages, hasMore, oldestId, oldestCreatedAt } 与老结构 List<MessageDto>
         const page = !Array.isArray(res) && res && (Array.isArray(res?.messages) || Array.isArray(res?.data))
           ? res
@@ -127,7 +163,7 @@ export const useConversationsStore = defineStore('conversations', {
           this.earliestIdMap[convId] = null
           if (this.oldestCursorMap) delete this.oldestCursorMap[convId]
         }
-        this.hasMoreMap[convId] = page ? !!res.hasMore : msgs.length >= 50
+        this.hasMoreMap[convId] = page ? !!res.hasMore : msgs.length >= 10
         // eslint-disable-next-line no-console
         console.log(`[fetchMessages] conv=${convId} got=${msgs.length} hasMore=${this.hasMoreMap[convId]} oldestId=${this.oldestCursorMap?.[convId]?.id}`, msgs[0] ? { firstAt: msgs[0].createdAt, lastAt: msgs[msgs.length - 1].createdAt } : null)
         return msgs
@@ -146,12 +182,12 @@ export const useConversationsStore = defineStore('conversations', {
           // 走新的游标分页：按时间倒序加载更早一页（性能更好）
           // eslint-disable-next-line no-console
           console.log(`[loadMore] conv=${convId} cursor(c) => oldestCreatedAt=${cursor.createdAt} oldestId=${cursor.id}`)
-          const res = await listOlderMessages(convId, cursor.createdAt, cursor.id, 20)
+          const res = await listOlderMessages(convId, cursor.createdAt, cursor.id, 10)
           const page = !Array.isArray(res) && res && (Array.isArray(res?.messages) || Array.isArray(res?.data))
             ? res
             : null
           msgs = page ? (res.messages || res.data || []) : (Array.isArray(res) ? res : (res?.data || []))
-          pageHasMore = page ? !!res.hasMore : msgs.length >= 50
+          pageHasMore = page ? !!res.hasMore : msgs.length >= 10
           this.hasMoreMap[convId] = pageHasMore
         } else if (earliest) {
           // 兼容老接口（discord 账号级拉历史）
@@ -159,13 +195,13 @@ export const useConversationsStore = defineStore('conversations', {
           console.log(`[loadMore] conv=${convId} fallback(earliest) => earliestId=${earliest}`)
           const res = await loadMoreMessages(convId, earliest)
           msgs = Array.isArray(res) ? res : (res?.data || [])
-          this.hasMoreMap[convId] = msgs.length >= 50
+          this.hasMoreMap[convId] = msgs.length >= 10
         } else if (this.hasMoreMap[convId]) {
           // 没有游标但还有更多（典型是"当天没消息"，后端已返回空+hasMore=true）：
-          // 用"近30天/最近20条"重新拉一次，保证能把最后一天有消息的内容拉出来
+          // 用"近30天/最近10条"重新拉一次，保证能把最后一天有消息的内容拉出来
           // eslint-disable-next-line no-console
-          console.log(`[loadMore] conv=${convId} fallback(30d) => no cursor/earliest, re-fetch 30d/20`)
-          const res = await listMessages(convId, { daysBack: 30, pageSize: 20 })
+          console.log(`[loadMore] conv=${convId} fallback(30d) => no cursor/earliest, re-fetch 30d/10`)
+          const res = await listMessages(convId, { daysBack: 30, pageSize: 10 })
           const page = !Array.isArray(res) && res && (Array.isArray(res?.messages) || Array.isArray(res?.data))
             ? res
             : null
@@ -194,7 +230,7 @@ export const useConversationsStore = defineStore('conversations', {
               id: res?.oldestId != null ? res.oldestId : msgs[0].id
             }
           }
-          this.hasMoreMap[convId] = page ? !!res.hasMore : msgs.length >= 50
+          this.hasMoreMap[convId] = page ? !!res.hasMore : msgs.length >= 10
           // eslint-disable-next-line no-console
           console.log(`[loadMore] fallback(30d) conv=${convId} got=${msgs.length} hasMore=${this.hasMoreMap[convId]}`)
           return msgs
@@ -212,7 +248,6 @@ export const useConversationsStore = defineStore('conversations', {
         if (msgs.length > 0) {
           const existing = this.messagesMap[convId] || []
           this.messagesMap[convId] = [...msgs, ...existing]
-          // 合并后再排一次，避免极端情况下乱序
           this.messagesMap[convId].sort((a, b) => {
             const ta = a.discordCreatedAt ? new Date(a.discordCreatedAt).getTime() : (a.createdAt ? new Date(a.createdAt).getTime() : 0)
             const tb = b.discordCreatedAt ? new Date(b.discordCreatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0)
@@ -223,9 +258,6 @@ export const useConversationsStore = defineStore('conversations', {
             createdAt: msgs[0].discordCreatedAt || msgs[0].createdAt,
             id: msgs[0].id
           }
-        } else if (pageHasMore && !(cursor && cursor.createdAt && cursor.id)) {
-          // 没拿到新消息，但 hasMore 为 true，说明可能是游标异常 → 关闭 hasMore 避免无限点
-          this.hasMoreMap[convId] = false
         }
         return msgs
       } catch (e) {

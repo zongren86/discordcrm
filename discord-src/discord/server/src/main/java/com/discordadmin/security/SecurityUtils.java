@@ -30,6 +30,11 @@ public final class SecurityUtils {
         return agent != null ? agent.agentId() : null;
     }
 
+    public static String currentUserId() {
+        JwtAuthFilter.AuthenticatedAgent agent = currentAgent();
+        return agent != null ? String.valueOf(agent.agentId()) : null;
+    }
+
     public static String currentRole() {
         JwtAuthFilter.AuthenticatedAgent agent = currentAgent();
         return agent != null ? agent.role() : null;
@@ -41,12 +46,19 @@ public final class SecurityUtils {
 
     /**
      * 校验资源所属商户与当前登录用户是否匹配。
-     * 平台管理员可访问所有资源；其他角色只能访问本商户的资源。
-     * @param resourceMerchantId 资源所属商户ID（可为 null，表示旧数据，非平台管理员将拒绝）
+     * 平台管理员可访问所有资源；商户管理员可访问本商户资源及无商户归属的资源；普通用户只能访问本商户的资源。
+     * @param resourceMerchantId 资源所属商户ID（可为 null，表示旧数据，商户管理员可访问）
      */
     public static void checkMerchantAccess(Long resourceMerchantId) {
         if (isPlatformAdmin()) return;
         Long merchantId = currentMerchantId();
+        // 商户管理员：可访问本商户资源及无商户归属的资源（向后兼容）
+        if ("MERCHANT_ADMIN".equals(currentRole())) {
+            if (resourceMerchantId == null || merchantId == null || merchantId.equals(resourceMerchantId)) {
+                return;
+            }
+        }
+        // 普通用户：严格校验商户归属
         if (merchantId == null || !merchantId.equals(resourceMerchantId)) {
             throw new AccessDeniedException("无权访问该资源");
         }

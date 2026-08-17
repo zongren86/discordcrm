@@ -29,6 +29,20 @@
               <div class="form-row">
                 <label>模拟器数量</label>
                 <el-input-number v-model="targetCount" :min="1" :max="50" size="small" />
+              </div>
+              <div class="form-row">
+                <label>CPU核心</label>
+                <el-select v-model="emuConfig.cpuCores" size="small" style="width: 120px">
+                  <el-option v-for="n in 8" :key="n" :label="String(n)" :value="n" />
+                </el-select>
+              </div>
+              <div class="form-row">
+                <label>内存(GB)</label>
+                <el-select v-model="emuConfig.memoryGb" size="small" style="width: 120px">
+                  <el-option v-for="n in 8" :key="n" :label="n + 'G'" :value="n" />
+                </el-select>
+              </div>
+              <div class="form-row">
                 <el-button type="primary" size="small" @click="applyCount" :disabled="emuLoading">
                   {{ emuLoading ? '处理中...' : '应用' }}
                 </el-button>
@@ -180,84 +194,138 @@
         </el-col>
       </el-row>
 
-      <!-- 模拟器卡片网格 -->
-      <el-row :gutter="16" style="margin-top: 16px">
-        <el-col v-for="emu in sortedEmulators" :key="emu.index" :span="8">
-          <el-card class="emu-card" :class="'status-' + emu.status.toLowerCase()" shadow="hover">
-            <div class="emu-header">
-              <div class="emu-title">
-                <span class="emu-name">#{{ emu.index }} {{ emu.name }}</span>
-                <el-tag :type="statusTagType(emu.status)" size="small">{{ statusText(emu.status) }}</el-tag>
-              </div>
-              <div class="emu-ports">
-                <span v-if="emu.adbPort">ADB: {{ emu.adbPort }}</span>
-                <span v-if="emu.resolution">{{ emu.resolution }}</span>
-              </div>
+      <!-- 批量操作工具栏 -->
+      <div class="batch-toolbar">
+        <div class="batch-info">
+          <el-checkbox 
+            :model-value="isAllSelected" 
+            :indeterminate="isIndeterminate"
+            @change="handleSelectAll"
+          >
+            全选
+          </el-checkbox>
+          <span class="batch-count">已选择 {{ selectedEmulators.length }} 个模拟器</span>
+          <el-button link type="primary" size="small" @click="clearSelection">清空选择</el-button>
+        </div>
+        <div class="batch-actions">
+          <el-button type="success" size="small" @click="batchAction('start')" :disabled="!canBatchStart">
+            <el-icon><VideoPlay /></el-icon> 批量启动
+          </el-button>
+          <el-button type="danger" size="small" @click="batchAction('stop')" :disabled="!canBatchStop">
+            <el-icon><VideoPause /></el-icon> 批量停止
+          </el-button>
+          <el-button type="warning" size="small" @click="batchAction('restart')" :disabled="!canBatchRestart">
+            <el-icon><Refresh /></el-icon> 批量重启
+          </el-button>
+          <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall">
+            批量安装 Discord
+          </el-button>
+          <el-button type="success" size="small" @click="batchAction('startAuto')" :disabled="!canBatchStartAuto">
+            <el-icon><VideoPlay /></el-icon> 批量启动加好友
+          </el-button>
+          <el-button type="warning" size="small" @click="batchAction('stopAuto')" :disabled="!canBatchStopAuto">
+            <el-icon><VideoPause /></el-icon> 批量停止加好友
+          </el-button>
+          <el-button type="danger" size="small" @click="batchAction('delete')" plain :disabled="selectedEmulators.length === 0">
+            批量删除
+          </el-button>
+        </div>
+      </div>
+
+      <!-- 模拟器列表 -->
+      <el-table 
+        v-if="emulators.length > 0" 
+        :data="sortedEmulators" 
+        style="margin-top: 16px; width: 100%"
+        @selection-change="handleSelectionChange"
+        :row-class-name="rowClassName"
+      >
+        <el-table-column type="selection" width="50" />
+        <el-table-column label="索引" width="80">
+          <template #default="{ row }">
+            <span class="emu-name">#{{ row.index }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="名称" width="120">
+          <template #default="{ row }">{{ row.name || `模拟器${row.index}` }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="ADB端口" width="100">
+          <template #default="{ row }">{{ row.adbPort || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="分辨率" width="120">
+          <template #default="{ row }">{{ row.resolution || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="Discord状态" width="180">
+          <template #default="{ row }">
+            <div v-if="row.discordInstalled">
+              <el-tag type="success" size="small" style="margin-right: 4px">已安装</el-tag>
+              <span v-if="row.discordAccount">{{ row.discordAccount }}</span>
+              <span v-else style="color: #909399">未登录</span>
             </div>
-
-            <div class="emu-info">
-              <template v-if="emu.discordInstalled">
-                <el-descriptions :column="2" size="small" border>
-                  <el-descriptions-item label="账号" :span="2">
-                    {{ emu.discordAccount || '未登录' }}
-                  </el-descriptions-item>
-                  <el-descriptions-item label="已添加">{{ emu.addedCount || 0 }}</el-descriptions-item>
-                  <el-descriptions-item label="下次添加">{{ formatCountdown(emu.nextAddAt) }}</el-descriptions-item>
-                </el-descriptions>
-                <div v-if="emu.autoLastResult" class="auto-result">{{ emu.autoLastResult }}</div>
-              </template>
-              <template v-else>
-                <div class="no-discord" v-if="emu.status === 'RUNNING'">Discord 未安装</div>
-              </template>
+            <el-tag v-else-if="row.status === 'RUNNING'" type="warning" size="small">未安装</el-tag>
+            <span v-else style="color: #909399">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="加好友状态" width="160">
+          <template #default="{ row }">
+            <div v-if="row.autoRunning" style="color: #67c23a">
+              运行中 · 已添加 {{ row.addedCount || 0 }}
             </div>
-
-            <div v-if="emu.lastError" class="emu-error">
-              <el-icon color="#f56c6c"><WarningFilled /></el-icon>
-              <span>{{ emu.lastError }}</span>
+            <div v-else-if="row.discordInstalled && row.status === 'RUNNING'">
+              已添加 {{ row.addedCount || 0 }} · {{ formatCountdown(row.nextAddAt) }}
             </div>
+            <span v-else style="color: #909399">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="错误信息" width="200">
+          <template #default="{ row }">
+            <span v-if="row.lastError" style="color: #f56c6c; font-size: 12px">{{ row.lastError }}</span>
+            <span v-else-if="row.autoLastResult" style="color: #409eff; font-size: 12px">{{ row.autoLastResult }}</span>
+            <span v-else style="color: #909399">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="320" fixed="right">
+          <template #default="{ row }">
+            <template v-if="row.status !== 'RUNNING'">
+              <el-button type="success" size="small" @click="startEmulator(row.index)">启动</el-button>
+            </template>
+            <template v-else>
+              <el-button type="danger" size="small" @click="stopEmulator(row.index)">停止</el-button>
+              <el-button type="warning" size="small" @click="restartEmulator(row.index)">重启</el-button>
+            </template>
+            <template v-if="row.status === 'RUNNING'">
+              <el-button v-if="!row.discordInstalled" size="small" @click="installDiscord(row.index)">安装DS</el-button>
+              <el-button v-else size="small" disabled>
+                <el-icon color="#67c23a"><CircleCheck /></el-icon>
+              </el-button>
+              <el-button size="small" @click="launchDiscord(row.index)">启动DS</el-button>
+              <el-button
+                v-if="discordEmail && discordPassword"
+                type="primary" size="small"
+                @click="loginDiscord(row.index)"
+              >登录</el-button>
+              <el-button
+                v-if="!row.autoRunning && row.discordInstalled"
+                type="success" size="small"
+                @click="startAuto(row.index)"
+              >▶ 加好友</el-button>
+              <el-button
+                v-else-if="row.autoRunning"
+                type="warning" size="small"
+                @click="stopAuto(row.index)"
+              >■ 停止</el-button>
+            </template>
+            <el-button size="small" type="danger" plain @click="deleteEmulator(row.index)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
 
-            <div class="emu-actions">
-              <template v-if="emu.status !== 'RUNNING'">
-                <el-button type="success" size="small" @click="startEmulator(emu.index)">启动</el-button>
-              </template>
-              <template v-else>
-                <el-button type="danger" size="small" @click="stopEmulator(emu.index)">停止</el-button>
-                <el-button type="warning" size="small" @click="restartEmulator(emu.index)">重启</el-button>
-              </template>
-
-              <template v-if="emu.status === 'RUNNING'">
-                <el-button v-if="!emu.discordInstalled" size="small" @click="installDiscord(emu.index)">
-                  安装 Discord
-                </el-button>
-                <el-button v-else size="small" disabled>
-                  <el-icon color="#67c23a"><CircleCheck /></el-icon> Discord ✓
-                </el-button>
-                <el-button size="small" @click="launchDiscord(emu.index)">启动 Discord</el-button>
-                <el-button
-                  v-if="discordEmail && discordPassword"
-                  type="primary" size="small"
-                  @click="loginDiscord(emu.index)"
-                >登录 Discord</el-button>
-
-                <el-button
-                  v-if="!emu.autoRunning && emu.discordInstalled"
-                  type="success" size="small"
-                  @click="startAuto(emu.index)"
-                >▶ 自动加好友</el-button>
-                <el-button
-                  v-else-if="emu.autoRunning"
-                  type="warning" size="small"
-                  @click="stopAuto(emu.index)"
-                >■ 停止自动</el-button>
-              </template>
-
-              <el-button size="small" type="danger" plain @click="deleteEmulator(emu.index)">删除</el-button>
-            </div>
-          </el-card>
-        </el-col>
-      </el-row>
-
-      <el-empty v-if="emulators.length === 0 && !loading" description="暂无模拟器，在上方设置数量后点击「应用」创建" />
+      <el-empty v-else-if="!loading" description="暂无模拟器，在上方设置数量后点击「应用」创建" />
     </div>
   </div>
 </template>
@@ -294,11 +362,170 @@ const showFriendsPanel = ref(false)
 
 const autoConfig = ref({ intervalSeconds: 900, delayMinSeconds: 60, delayMaxSeconds: 800 })
 
+const emuConfig = ref({ cpuCores: 1, memoryGb: 1 })
+
+const selectedEmulators = ref([])
+
+const isAllSelected = computed(() => 
+  emulators.value.length > 0 && selectedEmulators.value.length === emulators.value.length
+)
+
+const isIndeterminate = computed(() => 
+  selectedEmulators.value.length > 0 && selectedEmulators.value.length < emulators.value.length
+)
+
+const canBatchStart = computed(() => 
+  selectedEmulators.value.some(idx => {
+    const emu = emulators.value.find(e => e.index === idx)
+    return emu && emu.status !== 'RUNNING'
+  })
+)
+
+const canBatchStop = computed(() => 
+  selectedEmulators.value.some(idx => {
+    const emu = emulators.value.find(e => e.index === idx)
+    return emu && emu.status === 'RUNNING'
+  })
+)
+
+const canBatchRestart = computed(() => 
+  selectedEmulators.value.some(idx => {
+    const emu = emulators.value.find(e => e.index === idx)
+    return emu && emu.status === 'RUNNING'
+  })
+)
+
+const canBatchInstall = computed(() => 
+  selectedEmulators.value.some(idx => {
+    const emu = emulators.value.find(e => e.index === idx)
+    return emu && emu.status === 'RUNNING' && !emu.discordInstalled
+  })
+)
+
+const canBatchStartAuto = computed(() => 
+  selectedEmulators.value.some(idx => {
+    const emu = emulators.value.find(e => e.index === idx)
+    return emu && emu.status === 'RUNNING' && emu.discordInstalled && !emu.autoRunning
+  })
+)
+
+const canBatchStopAuto = computed(() => 
+  selectedEmulators.value.some(idx => {
+    const emu = emulators.value.find(e => e.index === idx)
+    return emu && emu.status === 'RUNNING' && emu.autoRunning
+  })
+)
+
 let healthCheckTimer = null
 
 const emuApi = axios.create({ baseURL: '/emu-api', timeout: 15000 })
 
 const sortedEmulators = computed(() => [...emulators.value].sort((a, b) => a.index - b.index))
+
+function toggleSelect(index) {
+  const idx = selectedEmulators.value.indexOf(index)
+  if (idx > -1) {
+    selectedEmulators.value.splice(idx, 1)
+  } else {
+    selectedEmulators.value.push(index)
+  }
+}
+
+function handleSelectionChange(selection) {
+  selectedEmulators.value = selection.map(item => item.index)
+}
+
+function rowClassName({ row }) {
+  return selectedEmulators.value.includes(row.index) ? 'selected-row' : ''
+}
+
+function handleSelectAll(value) {
+  if (value) {
+    selectedEmulators.value = emulators.value.map(e => e.index)
+  } else {
+    selectedEmulators.value = []
+  }
+}
+
+function clearSelection() {
+  selectedEmulators.value = []
+}
+
+async function batchAction(action) {
+  if (selectedEmulators.value.length === 0) return
+  
+  const actionMap = {
+    start: { confirm: '确定要批量启动选中的模拟器吗？', method: 'start' },
+    stop: { confirm: '确定要批量停止选中的模拟器吗？', method: 'stop' },
+    restart: { confirm: '确定要批量重启选中的模拟器吗？', method: 'restart' },
+    installDiscord: { confirm: '确定要批量安装 Discord 到选中的模拟器吗？', method: 'install' },
+    startAuto: { confirm: '确定要批量启动自动加好友吗？', method: 'startAuto' },
+    stopAuto: { confirm: '确定要批量停止自动加好友吗？', method: 'stopAuto' },
+    delete: { confirm: '确定要批量删除选中的模拟器吗？此操作不可恢复！', method: 'delete' }
+  }
+  
+  const config = actionMap[action]
+  if (!config) return
+  
+  try {
+    await ElMessageBox.confirm(config.confirm, '确认', { type: 'warning' })
+    
+    const results = []
+    for (const index of selectedEmulators.value) {
+      try {
+        let resp
+        switch (config.method) {
+          case 'start':
+            resp = await emuApi.post(`/emulators/${index}/start`)
+            break
+          case 'stop':
+            resp = await emuApi.post(`/emulators/${index}/stop`)
+            break
+          case 'restart':
+            resp = await emuApi.post(`/emulators/${index}/restart`)
+            break
+          case 'install':
+            resp = await emuApi.post(`/discord/install/${index}`)
+            break
+          case 'startAuto':
+            resp = await emuApi.post(`/autoadd/${index}/start`)
+            break
+          case 'stopAuto':
+            resp = await emuApi.post(`/autoadd/${index}/stop`)
+            break
+          case 'delete':
+            resp = await emuApi.delete(`/emulators/${index}`)
+            break
+        }
+        results.push({ index, success: true })
+      } catch (e) {
+        results.push({ index, success: false, error: e.response?.data?.message || e.message })
+      }
+    }
+    
+    const successCount = results.filter(r => r.success).length
+    const failCount = results.filter(r => !r.success).length
+    
+    if (failCount === 0) {
+      ElMessage.success(`批量操作完成，${successCount}个模拟器操作成功`)
+    } else {
+      ElMessage.warning(`批量操作完成，${successCount}个成功，${failCount}个失败`)
+      const failed = results.filter(r => !r.success).map(r => `#${r.index}`).join(', ')
+      ElMessage.error(`失败的模拟器: ${failed}`)
+    }
+    
+    if (action === 'delete') {
+      emulators.value = emulators.value.filter(e => !selectedEmulators.value.includes(e.index))
+      selectedEmulators.value = []
+    }
+    
+    await fetchEmulators()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error('批量操作失败')
+    }
+  }
+}
 
 onMounted(async () => {
   await checkService()
@@ -527,9 +754,13 @@ async function stopAuto(index) {
 async function applyCount() {
   emuLoading.value = true
   try {
-    const resp = await emuApi.post('/emulators/count', { count: targetCount.value })
+    const resp = await emuApi.post('/emulators/count', {
+      count: targetCount.value,
+      cpuCores: emuConfig.value.cpuCores,
+      memoryGb: emuConfig.value.memoryGb
+    })
     emulators.value = Array.isArray(resp.data) ? resp.data : []
-    ElMessage.success(`已设置 ${targetCount.value} 台模拟器`)
+    ElMessage.success(`已设置 ${targetCount.value} 台模拟器 (${emuConfig.value.cpuCores}核, ${emuConfig.value.memoryGb}G)`)
   } catch (e) {
     ElMessage.error('设置失败: ' + (e.response?.data?.message || e.message))
   } finally {
@@ -705,44 +936,34 @@ function formatCountdown(timestamp) {
 .hint { font-size: 12px; color: #909399; }
 .hint-sm { font-size: 11px; color: #c0c4cc; margin-left: 8px; }
 
-.emu-card { margin-bottom: 12px; transition: all 0.2s; }
-.emu-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-
-.emu-header { margin-bottom: 10px; }
-.emu-title { display: flex; justify-content: space-between; align-items: center; }
-.emu-name { font-weight: 600; font-size: 14px; }
-.emu-ports { display: flex; gap: 8px; font-size: 12px; color: #909399; }
-
-.emu-info { margin-bottom: 10px; }
-.no-discord { color: #909399; font-size: 13px; text-align: center; padding: 8px; }
-
-.auto-result {
-  margin-top: 8px;
-  padding: 4px 8px;
-  background: #f0f9ff;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #409eff;
-}
-
-.emu-error {
+.batch-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 6px;
-  margin-bottom: 10px;
-  padding: 6px 10px;
-  background: #fef0f0;
-  border-radius: 4px;
-  font-size: 12px;
-  color: #f56c6c;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
 }
 
-.emu-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding-top: 10px;
-  border-top: 1px solid var(--color-border, #ebeef5);
+.batch-info { display: flex; align-items: center; gap: 12px; }
+.batch-count { font-size: 14px; color: #606266; }
+
+.batch-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.emu-name { font-weight: 600; font-size: 14px; }
+
+:deep(.selected-row) {
+  background-color: #ecf5ff !important;
+}
+
+:deep(.el-table .cell) {
+  padding: 8px 12px;
 }
 
 .loading-wrap,

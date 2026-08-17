@@ -7,13 +7,17 @@ import com.discordadmin.dto.ConversationDtos.OpenDmRequest;
 import com.discordadmin.dto.MessageDtos.MessageDto;
 import com.discordadmin.dto.MessagePageDto;
 import com.discordadmin.entity.Agent;
+import com.discordadmin.entity.AgentAccountNumberRel;
 import com.discordadmin.entity.Conversation;
 import com.discordadmin.entity.DiscordAccount;
+import com.discordadmin.entity.DiscordAccountNumber;
 import com.discordadmin.entity.DiscordUser;
 import com.discordadmin.entity.Friend;
 import com.discordadmin.entity.Message;
+import com.discordadmin.repository.AgentAccountNumberRelRepository;
 import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.ConversationRepository;
+import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.DiscordUserRepository;
 import com.discordadmin.repository.FriendRepository;
@@ -30,11 +34,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class ConversationService {
@@ -53,6 +62,8 @@ public class ConversationService {
     private final TranslationService translationService;
     private final TranslationServiceFactory translationServiceFactory;
     private final LanguageDetectionService languageDetectionService;
+    private final AgentAccountNumberRelRepository agentAccountNumberRelRepository;
+    private final DiscordAccountNumberRepository discordAccountNumberRepository;
 
     public ConversationService(DiscordUserRepository discordUserRepository,
                                ConversationRepository conversationRepository,
@@ -65,7 +76,9 @@ public class ConversationService {
                                SimpMessagingTemplate messagingTemplate,
                                TranslationService translationService,
                                TranslationServiceFactory translationServiceFactory,
-                               LanguageDetectionService languageDetectionService) {
+                               LanguageDetectionService languageDetectionService,
+                               AgentAccountNumberRelRepository agentAccountNumberRelRepository,
+                               DiscordAccountNumberRepository discordAccountNumberRepository) {
         this.discordUserRepository = discordUserRepository;
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
@@ -78,6 +91,8 @@ public class ConversationService {
         this.translationService = translationService;
         this.translationServiceFactory = translationServiceFactory;
         this.languageDetectionService = languageDetectionService;
+        this.agentAccountNumberRelRepository = agentAccountNumberRelRepository;
+        this.discordAccountNumberRepository = discordAccountNumberRepository;
     }
 
     @Transactional
@@ -110,6 +125,12 @@ public class ConversationService {
                     c.setDiscordUser(savedUser);
                     c.setChannelId(inbound.channelId());
                     c.setType(inbound.isDirectMessage() ? Conversation.ConversationType.DM : Conversation.ConversationType.GUILD_TEXT);
+                    if (inbound.discordAccountId() != null) {
+                        Long ownerAgentId = findOwnerAgentIdByDiscordAccountId(inbound.discordAccountId());
+                        if (ownerAgentId != null) {
+                            c.setOwnerAgentId(ownerAgentId);
+                        }
+                    }
                     return c;
                 });
         if (conversation.getDiscordAccount() == null && inbound.discordAccountId() != null) {
@@ -121,6 +142,13 @@ public class ConversationService {
                             target.setMerchantId(acc.getMerchantId());
                         }
                     });
+        }
+        // 对于已存在的会话，如果没有ownerAgentId，则尝试查找并设置
+        if (conversation.getOwnerAgentId() == null && inbound.discordAccountId() != null) {
+            Long ownerAgentId = findOwnerAgentIdByDiscordAccountId(inbound.discordAccountId());
+            if (ownerAgentId != null) {
+                conversation.setOwnerAgentId(ownerAgentId);
+            }
         }
         conversation.setChannelName(inbound.channelName());
         conversation.setGuildId(inbound.guildId());
@@ -218,6 +246,45 @@ public class ConversationService {
         return 0;
     }
 
+    /**
+     * 通过DiscordAccountId查找关联的AgentId（ownerAgentId）
+     * 关系链：DiscordAccount -> DiscordAccountNumber -> AgentAccountNumberRel -> Agent
+     * 仅当有且仅有一个非管理员用户关联时才返回，避免将商户管理员设为会话归属
+     */
+    private Long findOwnerAgentIdByDiscordAccountId(Long discordAccountId) {
+        if (discordAccountId == null) return null;
+        try {
+            // 1. 查找绑定该DiscordAccount的DiscordAccountNumber
+            List<DiscordAccountNumber> numbers =
+                    discordAccountNumberRepository.findByDiscordAccountId(discordAccountId);
+            if (numbers.isEmpty()) return null;
+
+            // 2. 收集所有关联的Agent ID，过滤掉商户管理员和平台管理员
+            java.util.Set<Long> nonAdminAgentIds = new java.util.LinkedHashSet<>();
+            for (DiscordAccountNumber num : numbers) {
+                List<AgentAccountNumberRel> rels =
+                        agentAccountNumberRelRepository.findByAccountNumberId(num.getId());
+                for (AgentAccountNumberRel rel : rels) {
+                    Agent agent = agentRepository.findById(rel.getAgentId()).orElse(null);
+                    if (agent != null && agent.getRole() != null
+                            && agent.getRole() != Agent.AgentRole.MERCHANT_ADMIN
+                            && agent.getRole() != Agent.AgentRole.PLATFORM_ADMIN) {
+                        nonAdminAgentIds.add(agent.getId());
+                    }
+                }
+            }
+
+            // 3. 仅当有且仅有一个非管理员用户时才返回该ID
+            if (nonAdminAgentIds.size() == 1) {
+                return nonAdminAgentIds.iterator().next();
+            }
+            return null;
+        } catch (Exception e) {
+            log.warn("查找ownerAgentId失败: discordAccountId={}, error={}", discordAccountId, e.getMessage());
+            return null;
+        }
+    }
+
     private String truncate(String content) {
         if (content == null) return "";
         return content.length() > 200 ? content.substring(0, 200) : content;
@@ -290,6 +357,8 @@ public class ConversationService {
         conv.setStatus(Conversation.ConversationStatus.OPEN);
         conv.setMerchantId(account.getMerchantId());
         conv.setStage(Conversation.Stage.PROSPECT);
+        // 设置ownerAgentId为当前登录用户，用于权限控制
+        conv.setOwnerAgentId(SecurityUtils.currentAgentId());
         conv = conversationRepository.save(conv);
         return ConversationDto.from(conv);
     }
@@ -361,6 +430,7 @@ public class ConversationService {
 
     /**
      * 批量计算每个会话的未读消息数并构建DTO
+     * 关联用户显示逻辑：只显示 ownerAgentId 对应的用户名
      */
     private List<ConversationDto> buildConversationDtos(List<Conversation> convs) {
         if (convs.isEmpty()) {
@@ -378,56 +448,116 @@ public class ConversationService {
         } catch (Exception e) {
             // 未读计算失败时降级为0，不影响主流程
         }
+
+        // 收集所有会话的 ownerAgentId
+        Set<Long> ownerAgentIds = convs.stream()
+                .map(Conversation::getOwnerAgentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        // 批量查询 ownerAgentId 对应的用户名
+        Map<Long, String> agentNameMap = new HashMap<>();
+        if (!ownerAgentIds.isEmpty()) {
+            List<Agent> agents = agentRepository.findAllById(ownerAgentIds);
+            for (Agent agent : agents) {
+                String displayName = agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername();
+                if (displayName == null) displayName = "用户" + agent.getId();
+                agentNameMap.put(agent.getId(), displayName);
+            }
+        }
+
+        // 构建 DTO：只显示 ownerAgentId 对应的用户名
         return convs.stream()
-                .map(c -> ConversationDto.from(c, unreadMap.getOrDefault(c.getId(), 0)))
+                .map(c -> {
+                    String associatedName = null;
+                    if (c.getOwnerAgentId() != null) {
+                        associatedName = agentNameMap.get(c.getOwnerAgentId());
+                    }
+                    return ConversationDto.from(c, unreadMap.getOrDefault(c.getId(), 0), associatedName);
+                })
                 .toList();
     }
 
     /**
-     * 按分配客服过滤会话：所有角色仅能看到分配给自己的或未分配的会话。
+     * 权限过滤会话：
+     * - 平台管理员：不返回会话（消息中心不授权给平台管理员）
+     * - 商户管理员：可见本商户的全部
+     * - 普通用户：仅可见 ownerAgentId = 当前用户ID 的会话
      */
     private List<Conversation> filterByAgentAccess(List<Conversation> convs, Long currentAgentId) {
         if (convs.isEmpty()) return convs;
+
+        String role = SecurityUtils.currentRole();
+
+        // 平台管理员：不返回会话（消息中心不授权）
+        if ("PLATFORM_ADMIN".equals(role)) {
+            return List.of();
+        }
+
+        // 商户管理员：可见本商户的全部（已在queryConversations中按merchantId过滤）
+        if ("MERCHANT_ADMIN".equals(role)) {
+            return convs;
+        }
+
+        // 普通用户：仅可见 ownerAgentId = currentAgentId 的会话
         return convs.stream()
-                .filter(c -> c.getAssignedAgent() == null
-                        || (currentAgentId != null && currentAgentId.equals(c.getAssignedAgent().getId())))
+                .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
                 .toList();
     }
 
     private List<Conversation> queryConversations(Long accountId, String stage, Long merchantId) {
         boolean isPlatform = SecurityUtils.isPlatformAdmin();
-        Long effectiveMerchantId = isPlatform ? null : merchantId;
+        boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(SecurityUtils.currentRole());
 
+        // 平台管理员：不返回会话（消息中心不授权）
+        if (isPlatform) {
+            return List.of();
+        }
+
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
+        // 商户管理员：按merchantId过滤
+        if (isMerchantAdmin) {
+            Long effectiveMerchantId = merchantId;
+            if (accountId != null && stage != null && !stage.isBlank()) {
+                Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
+                return conversationRepository.findByMerchantIdAndDiscordAccount_IdAndStageOrderByLastMessageAtDesc(
+                        effectiveMerchantId, accountId, stageEnum);
+            } else if (accountId != null) {
+                return conversationRepository.findByMerchantIdAndDiscordAccount_IdOrderByLastMessageAtDesc(effectiveMerchantId, accountId);
+            } else if (stage != null && !stage.isBlank()) {
+                Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
+                return conversationRepository.findByMerchantIdAndStageOrderByLastMessageAtDesc(effectiveMerchantId, stageEnum);
+            } else {
+                return conversationRepository.findByMerchantIdOrderByPinnedAndLastMessageAtDesc(effectiveMerchantId);
+            }
+        }
+
+        // 普通用户：按merchantId和ownerAgentId过滤
+        Long effectiveMerchantId = merchantId;
         if (accountId != null && stage != null && !stage.isBlank()) {
             Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
-            if (isPlatform) {
-                return conversationRepository.findAllByOrderByLastMessageAtDesc().stream()
-                        .filter(c -> accountId.equals(c.getDiscordAccount() != null ? c.getDiscordAccount().getId() : null))
-                        .filter(c -> stageEnum.equals(c.getStage()))
-                        .toList();
-            }
-            return conversationRepository.findByMerchantIdAndDiscordAccount_IdAndStageOrderByLastMessageAtDesc(
+            List<Conversation> convs = conversationRepository.findByMerchantIdAndDiscordAccount_IdAndStageOrderByLastMessageAtDesc(
                     effectiveMerchantId, accountId, stageEnum);
+            return convs.stream()
+                    .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
+                    .toList();
         } else if (accountId != null) {
-            if (isPlatform) {
-                return conversationRepository.findAllByOrderByLastMessageAtDesc().stream()
-                        .filter(c -> accountId.equals(c.getDiscordAccount() != null ? c.getDiscordAccount().getId() : null))
-                        .toList();
-            }
-            return conversationRepository.findByMerchantIdAndDiscordAccount_IdOrderByLastMessageAtDesc(effectiveMerchantId, accountId);
+            List<Conversation> convs = conversationRepository.findByMerchantIdAndDiscordAccount_IdOrderByLastMessageAtDesc(effectiveMerchantId, accountId);
+            return convs.stream()
+                    .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
+                    .toList();
         } else if (stage != null && !stage.isBlank()) {
             Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
-            if (isPlatform) {
-                return conversationRepository.findAllByOrderByLastMessageAtDesc().stream()
-                        .filter(c -> stageEnum.equals(c.getStage()))
-                        .toList();
-            }
-            return conversationRepository.findByMerchantIdAndStageOrderByLastMessageAtDesc(effectiveMerchantId, stageEnum);
+            List<Conversation> convs = conversationRepository.findByMerchantIdAndStageOrderByLastMessageAtDesc(effectiveMerchantId, stageEnum);
+            return convs.stream()
+                    .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
+                    .toList();
         } else {
-            if (isPlatform) {
-                return conversationRepository.findAllByOrderByLastMessageAtDesc();
-            }
-            return conversationRepository.findByMerchantIdOrderByPinnedAndLastMessageAtDesc(effectiveMerchantId);
+            List<Conversation> convs = conversationRepository.findByMerchantIdOrderByPinnedAndLastMessageAtDesc(effectiveMerchantId);
+            return convs.stream()
+                    .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
+                    .toList();
         }
     }
 
@@ -436,12 +566,22 @@ public class ConversationService {
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
         SecurityUtils.checkMerchantAccess(conversation.getMerchantId());
 
-        // 所有角色：仅能访问分配给自己的或未分配的会话
-        if (conversation.getAssignedAgent() != null) {
-            Long currentAgentId = SecurityUtils.currentAgentId();
-            if (currentAgentId == null || !currentAgentId.equals(conversation.getAssignedAgent().getId())) {
-                throw new AccessDeniedException("无权访问该会话");
-            }
+        String role = SecurityUtils.currentRole();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
+        // 平台管理员：无权访问（消息中心不授权）
+        if ("PLATFORM_ADMIN".equals(role)) {
+            throw new AccessDeniedException("无权访问该会话");
+        }
+
+        // 商户管理员：可访问本商户所有会话
+        if ("MERCHANT_ADMIN".equals(role)) {
+            return conversation;
+        }
+
+        // 普通用户：仅能访问 ownerAgentId = 当前用户ID 的会话
+        if (conversation.getOwnerAgentId() == null || !currentAgentId.equals(conversation.getOwnerAgentId())) {
+            throw new AccessDeniedException("无权访问该会话");
         }
         return conversation;
     }
@@ -515,13 +655,23 @@ public class ConversationService {
         Conversation conversation = loadOwnedConversation(id);
         Agent targetAgent = agentRepository.findById(agentId)
                 .orElseThrow(() -> new IllegalArgumentException("目标客服不存在"));
-        SecurityUtils.checkMerchantAccess(targetAgent.getMerchantId());
+
+        // 检查目标客服是否属于当前商户（仅允许本商户内转移）
+        Long currentMerchantId = SecurityUtils.currentMerchantId();
+        String currentRole = SecurityUtils.currentRole();
+        if (!"PLATFORM_ADMIN".equals(currentRole)) {
+            if (targetAgent.getMerchantId() == null || !targetAgent.getMerchantId().equals(currentMerchantId)) {
+                throw new IllegalArgumentException("只能转移给本商户内的用户");
+            }
+        }
 
         String oldAgent = conversation.getAssignedAgent() != null
                 ? conversation.getAssignedAgent().getDisplayName()
                 : "未分配";
         String newAgent = targetAgent.getDisplayName();
         conversation.setAssignedAgent(targetAgent);
+        // 转移时更新ownerAgentId，使新归属用户可见
+        conversation.setOwnerAgentId(targetAgent.getId());
 
         String remark = conversation.getRemark() != null ? conversation.getRemark() : "";
         String transferNote = String.format("[转移记录: %s → %s, 原因: %s] ",
@@ -647,5 +797,26 @@ public class ConversationService {
         loadOwnedConversation(id);
         return MessageDto.from(messageService.sendReplyWithReference(id, content, targetLanguage,
                 messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName, messageId));
+    }
+
+    /**
+     * 修复所有没有ownerAgentId的会话，尝试通过DiscordAccount关联查找并设置ownerAgentId
+     * 返回更新的会话数量
+     */
+    @Transactional
+    public int repairOwnerAgentIds() {
+        List<Conversation> conversations = conversationRepository.findAll();
+        int updatedCount = 0;
+        for (Conversation conv : conversations) {
+            if (conv.getOwnerAgentId() == null && conv.getDiscordAccount() != null) {
+                Long ownerAgentId = findOwnerAgentIdByDiscordAccountId(conv.getDiscordAccount().getId());
+                if (ownerAgentId != null) {
+                    conv.setOwnerAgentId(ownerAgentId);
+                    conversationRepository.save(conv);
+                    updatedCount++;
+                }
+            }
+        }
+        return updatedCount;
     }
 }

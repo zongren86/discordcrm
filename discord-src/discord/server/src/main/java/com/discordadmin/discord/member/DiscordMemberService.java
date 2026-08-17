@@ -165,6 +165,20 @@ public class DiscordMemberService {
         public long lastRequestTimeMs = 0;
         /** 总耗时(ms) */
         public long elapsedMs = 0;
+        
+        // 重连策略相关字段
+        /** 最终重试次数（暂停后） */
+        public int finalReconnectAttempts = 0;
+        /** 是否处于暂停状态 */
+        public boolean isPaused = false;
+        /** 下一次重试时间戳 */
+        public long nextRetryAtMs = 0;
+        /** 初始最大重试次数 */
+        public int maxInitialReconnects = 5;
+        /** 最终最大重试次数 */
+        public int maxFinalReconnects = 3;
+        /** 暂停时长(ms) */
+        public long pauseDurationMs = 300000L;
     }
 
     /**
@@ -287,6 +301,24 @@ public class DiscordMemberService {
                 t.lastDeduped = safeInt(info, "ld");
                 t.lastRequestTimeMs = safeLong(info, "lrt");
                 t.elapsedMs = safeLong(info, "elapsed");
+                
+                // 重连策略相关字段
+                t.finalReconnectAttempts = safeInt(info, "finalReconnectAttempts");
+                t.isPaused = info.getOrDefault("isPaused", false) instanceof Boolean 
+                        ? (Boolean) info.get("isPaused") : false;
+                t.nextRetryAtMs = safeLong(info, "nextRetryAtMs");
+                t.maxInitialReconnects = safeInt(info, "maxInitialReconnects") > 0 
+                        ? safeInt(info, "maxInitialReconnects") : 5;
+                t.maxFinalReconnects = safeInt(info, "maxFinalReconnects") > 0 
+                        ? safeInt(info, "maxFinalReconnects") : 3;
+                t.pauseDurationMs = safeLong(info, "pauseDurationMs") > 0 
+                        ? safeLong(info, "pauseDurationMs") : 300000L;
+                
+                // 同步设置的最大限制值
+                int newMaxRequests = safeInt(info, "maxRequests");
+                if (newMaxRequests > 0) t.maxRequests = newMaxRequests;
+                int newMaxMembers = safeInt(info, "maxMembers");
+                if (newMaxMembers > 0) t.maxMembers = newMaxMembers;
                 
                 // 更新详细统计
                 t.totalRespondedMembers = respondedMembers;

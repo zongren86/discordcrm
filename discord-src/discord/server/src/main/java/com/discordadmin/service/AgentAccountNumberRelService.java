@@ -23,15 +23,18 @@ public class AgentAccountNumberRelService {
     private final AgentRepository agentRepository;
     private final DiscordAccountNumberRepository accountNumberRepository;
     private final DiscordAccountRepository accountRepository;
+    private final ConversationService conversationService;
 
     public AgentAccountNumberRelService(AgentAccountNumberRelRepository relRepository,
                                         AgentRepository agentRepository,
                                         DiscordAccountNumberRepository accountNumberRepository,
-                                        DiscordAccountRepository accountRepository) {
+                                        DiscordAccountRepository accountRepository,
+                                        ConversationService conversationService) {
         this.relRepository = relRepository;
         this.agentRepository = agentRepository;
         this.accountNumberRepository = accountNumberRepository;
         this.accountRepository = accountRepository;
+        this.conversationService = conversationService;
     }
 
     /** 获取用户关联的账号编号列表 */
@@ -68,6 +71,20 @@ public class AgentAccountNumberRelService {
         Agent agent = agentRepository.findById(agentId)
                 .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
 
+        // 检查是否已被其他用户关联
+        for (Long numberId : numberIds) {
+            List<AgentAccountNumberRel> existingRels = relRepository.findByAccountNumberId(numberId);
+            for (AgentAccountNumberRel rel : existingRels) {
+                if (!rel.getAgentId().equals(agentId)) {
+                    Agent otherAgent = agentRepository.findById(rel.getAgentId()).orElse(null);
+                    String ownerName = otherAgent != null && otherAgent.getDisplayName() != null 
+                            ? otherAgent.getDisplayName() 
+                            : (otherAgent != null ? otherAgent.getUsername() : "未知用户");
+                    throw new IllegalStateException("账号编号「" + numberId + "」已被用户「" + ownerName + "」关联，一个账号只能关联一个用户");
+                }
+            }
+        }
+
         // 查询已关联的编号ID
         List<Long> existingNumberIds = relRepository.findAccountNumberIdsByAgentId(agentId);
         Set<Long> existingSet = new HashSet<>(existingNumberIds);
@@ -95,6 +112,9 @@ public class AgentAccountNumberRelService {
         List<Long> numberIdsToKeep = new ArrayList<>(numberIds);
         numberIdsToKeep.add(0L); // 防止空列表问题
         relRepository.deleteByAgentIdAndAccountNumberIdNotIn(agentId, numberIdsToKeep);
+
+        // 修复关联的会话ownerAgentId
+        conversationService.repairOwnerAgentIds();
     }
 
     /** 删除单条关联 */

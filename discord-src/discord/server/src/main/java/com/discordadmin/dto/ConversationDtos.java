@@ -55,28 +55,28 @@ public class ConversationDtos {
             String agentName,
             String agentUsername,
             Long agentId,
-            Integer unreadCount
+            Integer unreadCount,
+            String associatedUserName,
+            Instant createdAt
     ) {
         public static ConversationDto from(Conversation c) {
-            return from(c, 0);
+            return from(c, 0, null);
         }
 
         public static ConversationDto from(Conversation c, int unreadCount) {
+            return from(c, unreadCount, null);
+        }
+
+        public static ConversationDto from(Conversation c, int unreadCount, String associatedUserName) {
             List<MessageDtos.MessageDto> emptyMessages = List.of();
             DiscordUser du = c.getDiscordUser();
             String agentName = null;
             String agentUsername = null;
             Long agentId = null;
 
-            // 优先使用会话分配的客服（转移后），否则用账号下的第一个客服
+            // 仅当会话有明确分配的客服（转移后）时才设置agent信息
             if (c.getAssignedAgent() != null) {
                 Agent agent = c.getAssignedAgent();
-                agentName = agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername();
-                agentUsername = agent.getUsername();
-                agentId = agent.getId();
-            } else if (c.getDiscordAccount() != null && c.getDiscordAccount().getAgents() != null 
-                    && !c.getDiscordAccount().getAgents().isEmpty()) {
-                Agent agent = c.getDiscordAccount().getAgents().iterator().next();
                 agentName = agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername();
                 agentUsername = agent.getUsername();
                 agentId = agent.getId();
@@ -108,7 +108,9 @@ public class ConversationDtos {
                     agentName,
                     agentUsername,
                     agentId,
-                    unreadCount
+                    unreadCount,
+                    associatedUserName,
+                    c.getCreatedAt()
             );
         }
 
@@ -119,7 +121,7 @@ public class ConversationDtos {
                     discordAccountId, discordAccountName, type, status,
                     lastMessagePreview, lastMessageAt, lastMessageDirection,
                     stage, stageChangedAt, pinned, remark, lastReadAt, messages,
-                    agentName, agentUsername, agentId, unreadCount
+                    agentName, agentUsername, agentId, unreadCount, associatedUserName, createdAt
             );
         }
 
@@ -130,7 +132,7 @@ public class ConversationDtos {
                     discordAccountId, discordAccountName, type, status,
                     lastMessagePreview, lastMessageAt, lastMessageDirection,
                     stage, stageChangedAt, pinned, remark, lastReadAt, messages,
-                    agentName, agentUsername, agentId, unread
+                    agentName, agentUsername, agentId, unread, associatedUserName, createdAt
             );
         }
     }

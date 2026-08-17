@@ -107,4 +107,10 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
     /** 按好友Discord用户ID+账号ID查找会话 */
     @Query("SELECT c FROM Conversation c JOIN c.discordUser u WHERE u.discordUserId = :friendDiscordUserId AND c.discordAccount.id = :accountId")
     List<Conversation> findByDiscordUserAndDiscordAccount(@Param("friendDiscordUserId") String friendDiscordUserId, @Param("accountId") Long accountId);
+
+    /** 按ownerAgentId查询会话（普通用户权限控制） */
+    List<Conversation> findByOwnerAgentId(Long ownerAgentId);
+
+    /** 按商户ID和ownerAgentId查询会话 */
+    List<Conversation> findByMerchantIdAndOwnerAgentId(Long merchantId, Long ownerAgentId);
 }

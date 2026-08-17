@@ -92,6 +92,9 @@ public class DiscordAccountDtos {
     public record ImportTokenResponse(AccountDto account, boolean alreadyExisted, String message) {
     }
 
+    public record UpsertResponse(AccountDto account, boolean created, String message) {
+    }
+
     public record RefreshTokenRequest(String email, String password) {
     }
 

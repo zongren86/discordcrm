@@ -98,12 +98,12 @@ export function listMessages(conversationId, params = {}) {
   return http.get('/conversations/' + conversationId + '/messages', {
     params: {
       daysBack: params.daysBack ?? 1,
-      pageSize: params.pageSize ?? 20
+      pageSize: params.pageSize ?? 10
     }
   })
 }
 /** 上滑加载更早一页（游标分页，传入当前加载消息中最早的一条 createdAt + id） */
-export function listOlderMessages(conversationId, oldestCreatedAt, oldestId, pageSize = 20) {
+export function listOlderMessages(conversationId, oldestCreatedAt, oldestId, pageSize = 10) {
   return http.get('/conversations/' + conversationId + '/messages/older', {
     params: { oldestCreatedAt, oldestId, pageSize }
   })

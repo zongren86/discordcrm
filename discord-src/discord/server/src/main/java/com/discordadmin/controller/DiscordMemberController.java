@@ -153,6 +153,13 @@ public class DiscordMemberController {
         r.put("completedAt", st.completedAt);
         r.put("lastPrefix", st.lastPrefix);
         r.put("failureReason", st.failureReason);
+        // 重连策略相关字段
+        r.put("finalReconnectAttempts", st.finalReconnectAttempts);
+        r.put("isPaused", st.isPaused);
+        r.put("nextRetryAtMs", st.nextRetryAtMs);
+        r.put("maxInitialReconnects", st.maxInitialReconnects);
+        r.put("maxFinalReconnects", st.maxFinalReconnects);
+        r.put("pauseDurationMs", st.pauseDurationMs);
         return r;
     }
 

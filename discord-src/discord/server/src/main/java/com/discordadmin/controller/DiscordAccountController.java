@@ -29,7 +29,7 @@ public class DiscordAccountController {
 
     /** 手工添加：粘贴解析后按 Discord ID 做 upsert（存在=更新，不存在=新增） */
     @PostMapping("/upsert-by-discord-id")
-    public AccountDto upsertByDiscordId(@RequestBody UpsertAccountByDiscordIdRequest request) {
+    public UpsertResponse upsertByDiscordId(@RequestBody UpsertAccountByDiscordIdRequest request) {
         return accountService.upsertByDiscordId(request);
     }
 

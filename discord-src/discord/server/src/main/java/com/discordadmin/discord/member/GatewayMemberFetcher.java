@@ -34,6 +34,10 @@ public class GatewayMemberFetcher {
 
     private static final double MIN_REQUEST_INTERVAL = 2.5;
     private static final int MAX_RECONNECT = 10;
+    // 重连策略常量：初始5次重试 → 暂停5分钟 → 3次重试
+    private static final int INITIAL_MAX_RECONNECTS = 5;
+    private static final long PAUSE_DURATION_MS = 300000L;  // 5分钟
+    private static final int FINAL_MAX_RECONNECTS = 3;
     private int maxPrefixDepth = 5;
 
     private static final Semaphore CONNECT_SEMAPHORE = new Semaphore(10);
@@ -60,6 +64,11 @@ public class GatewayMemberFetcher {
     private volatile String closeReason = null;
     private final AtomicBoolean reconnecting = new AtomicBoolean(false);
     private final AtomicInteger reconnects = new AtomicInteger(0);
+    // 重连策略：初始5次重试 → 暂停5分钟 → 3次重试 → 最终失败
+    private final AtomicInteger finalReconnectAttempts = new AtomicInteger(0);  // 暂停后的重试次数
+    private final AtomicLong pauseUntilMs = new AtomicLong(0);  // 暂停截止时间
+    private final AtomicBoolean isPaused = new AtomicBoolean(false);  // 是否处于暂停状态
+    private final AtomicLong nextRetryAtMs = new AtomicLong(0);  // 下一次重试时间（用于进度显示）
     private final AtomicBoolean hbStarted = new AtomicBoolean(false);
     private final AtomicBoolean disconnected = new AtomicBoolean(false);
     private final AtomicReference<GatewayException> lastError = new AtomicReference<>();
@@ -165,6 +174,10 @@ public class GatewayMemberFetcher {
         currentRequestComplete.set(true);
         chunksReceived.set(0);
         reconnects.set(0);
+        finalReconnectAttempts.set(0);
+        pauseUntilMs.set(0);
+        isPaused.set(false);
+        nextRetryAtMs.set(0);
         disconnected.set(false);
         seq.set(-1);
         hbStarted.set(false);
@@ -528,6 +541,16 @@ public class GatewayMemberFetcher {
             info.put("lrt", lastRequestTimeMs.get()); // 本次耗时(ms)
             long elapsed = fetchStartTimeMs.get() > 0 ? (System.currentTimeMillis() - fetchStartTimeMs.get()) : 0;
             info.put("elapsed", elapsed);              // 总耗时(ms)
+            // 同步设置的最大限制值
+            info.put("maxRequests", maxRequestsRef);   // 最大请求数
+            info.put("maxMembers", maxMembersRef);    // 最大成员数
+            // 新增重连策略相关字段
+            info.put("finalReconnectAttempts", finalReconnectAttempts.get()); // 最终重试次数
+            info.put("isPaused", isPaused.get());      // 是否处于暂停状态
+            info.put("nextRetryAtMs", nextRetryAtMs.get()); // 下一次重试时间戳
+            info.put("maxInitialReconnects", INITIAL_MAX_RECONNECTS); // 初始最大重试次数
+            info.put("maxFinalReconnects", FINAL_MAX_RECONNECTS);     // 最终最大重试次数
+            info.put("pauseDurationMs", PAUSE_DURATION_MS);           // 暂停时长
             progress.onProgress(info);
         } catch (Exception ignore) {
         }
@@ -845,9 +868,64 @@ public class GatewayMemberFetcher {
     }
 
     private void reconnectInternal() throws GatewayException {
-        int attempt = reconnects.incrementAndGet();
-        long backoff = Math.min(30, 1L << (attempt - 1));
-        log.info("连接断开，{} 秒后进行第 {} 次重连", backoff, attempt);
+        long now = System.currentTimeMillis();
+
+        // 检查是否处于暂停状态
+        if (isPaused.get()) {
+            if (now < pauseUntilMs.get()) {
+                // 仍在暂停期，等待到时间
+                long remainingPauseMs = pauseUntilMs.get() - now;
+                log.info("处于暂停状态，还有 {} 秒恢复重连", remainingPauseMs / 1000);
+                nextRetryAtMs.set(pauseUntilMs.get());
+                emitPauseCountdown(remainingPauseMs);
+                sleepQuietly(remainingPauseMs);
+                isPaused.set(false);
+                log.info("暂停结束，开始尝试重连");
+            } else {
+                // 暂停时间已到但未被正确恢复
+                isPaused.set(false);
+                log.info("暂停时间已到，恢复重连");
+            }
+        }
+
+        // 判断是否进入最终重试阶段
+        int initialAttempt = reconnects.get();
+        int finalAttempt = finalReconnectAttempts.get();
+
+        if (!isPaused.get() && initialAttempt >= INITIAL_MAX_RECONNECTS) {
+            // 初始5次重试已用完，进入暂停状态
+            if (finalAttempt == 0) {
+                log.info("初始 {} 次重试已全部用完，暂停 {} 秒后进行最终 {} 次重试",
+                        INITIAL_MAX_RECONNECTS, PAUSE_DURATION_MS / 1000, FINAL_MAX_RECONNECTS);
+                isPaused.set(true);
+                pauseUntilMs.set(now + PAUSE_DURATION_MS);
+                nextRetryAtMs.set(pauseUntilMs.get());
+                emitPauseCountdown(PAUSE_DURATION_MS);
+                sleepQuietly(PAUSE_DURATION_MS);
+                isPaused.set(false);
+            }
+        }
+
+        // 计算本次重试的次数和退避时间
+        int attempt;
+        long backoff;
+        if (initialAttempt < INITIAL_MAX_RECONNECTS) {
+            // 初始重试阶段
+            attempt = reconnects.incrementAndGet();
+            backoff = Math.min(30, 1L << (attempt - 1));
+            log.info("连接断开，{} 秒后进行初始阶段第 {}/{} 次重连", backoff, attempt, INITIAL_MAX_RECONNECTS);
+        } else {
+            // 最终重试阶段
+            attempt = finalReconnectAttempts.incrementAndGet();
+            if (attempt > FINAL_MAX_RECONNECTS) {
+                log.error("所有重连尝试已耗尽（初始{}次 + 最终{}次）", INITIAL_MAX_RECONNECTS, FINAL_MAX_RECONNECTS);
+                throw new GatewayException("重连失败：所有重试次数已耗尽", 503);
+            }
+            backoff = Math.min(30, 1L << (attempt - 1));
+            log.info("连接断开，{} 秒后进行最终阶段第 {}/{} 次重连", backoff, attempt, FINAL_MAX_RECONNECTS);
+        }
+
+        nextRetryAtMs.set(System.currentTimeMillis() + backoff * 1000);
 
         seq.set(-1);
         hbStarted.set(false);
@@ -862,9 +940,31 @@ public class GatewayMemberFetcher {
             disconnected.set(false);
             lastError.set(null);
             connect();
+            // 重连成功，重置最终重试计数
+            finalReconnectAttempts.set(0);
+            nextRetryAtMs.set(0);
+            log.info("重连成功");
         } catch (GatewayException e) {
             log.error("重连失败: {}", e.getMessage());
             throw e;
+        }
+    }
+
+    /**
+     * 发送暂停倒计时进度
+     */
+    private void emitPauseCountdown(long remainingMs) {
+        if (progress == null) return;
+        try {
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("stage", "paused");
+            info.put("pauseRemainingMs", remainingMs);
+            info.put("reconnects", reconnects.get());
+            info.put("finalReconnectAttempts", finalReconnectAttempts.get());
+            info.put("isPaused", true);
+            info.put("nextRetryAtMs", nextRetryAtMs.get());
+            progress.onProgress(info);
+        } catch (Exception ignore) {
         }
     }
 
@@ -872,9 +972,9 @@ public class GatewayMemberFetcher {
     private void reconnect() throws GatewayException {
         if (reconnecting.get()) {
             log.info("已在重连中，等待完成...");
-            // 等待重连完成
+            // 等待重连完成（最长等待 10 分钟，以适应暂停期）
             int waitCount = 0;
-            while (reconnecting.get() && waitCount < 60) {
+            while (reconnecting.get() && waitCount < 1200) {  // 1200 * 500ms = 10 分钟
                 sleepQuietly(500);
                 waitCount++;
             }

@@ -289,11 +289,9 @@
             </div>
             <div class="stat-info">
               <div class="stat-values">
-                <span class="stat-current">{{ formatMs(currentProgressTask.lastRequestTimeMs || 0) }}</span>
-                <span class="stat-sep">/</span>
-                <span class="stat-total">{{ formatMs(currentProgressTask.elapsedMs || 0) }}</span>
+                <span class="stat-current">{{ formatMs(currentProgressTask.elapsedMs || 0) }}</span>
               </div>
-              <div class="stat-label">本次耗时 / 总耗时</div>
+              <div class="stat-label">总耗时</div>
             </div>
           </div>
 
@@ -304,8 +302,22 @@
             <div class="stat-info">
               <div class="stat-values">
                 <span class="stat-current">{{ currentProgressTask.reconnects || 0 }}</span>
+                <template v-if="currentProgressTask.isPaused">
+                  <span class="stat-sep">/</span>
+                  <span class="stat-total">{{ currentProgressTask.maxInitialReconnects || 5 }}</span>
+                </template>
               </div>
-              <div class="stat-label">重连数</div>
+              <div class="stat-label">
+                <template v-if="currentProgressTask.isPaused">
+                  暂停中，{{ formatCountdown(currentProgressTask.nextRetryAtMs) }}
+                </template>
+                <template v-else-if="currentProgressTask.finalReconnectAttempts > 0">
+                  最终重试 {{ currentProgressTask.finalReconnectAttempts }}/{{ currentProgressTask.maxFinalReconnects || 3 }}
+                </template>
+                <template v-else>
+                  重连数 {{ currentProgressTask.reconnects || 0 }}/{{ currentProgressTask.maxInitialReconnects || 5 }}
+                </template>
+              </div>
             </div>
           </div>
         </div>
@@ -421,6 +433,22 @@
               <span class="fetching-item">本次响应 <strong>{{ currentProgressTask.lastResponded || 0 }}</strong></span>
               <span class="fetching-sep">·</span>
               <span class="fetching-item">本次去重 <strong>{{ currentProgressTask.lastDeduped || 0 }}</strong></span>
+              <span v-if="currentProgressTask.lastRequestTimeMs > 0" class="fetching-sep">·</span>
+              <span v-if="currentProgressTask.lastRequestTimeMs > 0" class="fetching-item">本次耗时 <strong>{{ formatMsShort(currentProgressTask.lastRequestTimeMs) }}</strong></span>
+            </div>
+          </div>
+          <!-- 暂停状态：显示重连倒计时 -->
+          <div v-else-if="currentProgressTask.isPaused" class="fetching-message paused-message">
+            <div class="fetching-message-header">
+              <el-icon style="color: var(--color-warning)"><Timer /></el-icon>
+              <span class="fetching-stage paused-stage">[paused]</span>
+            </div>
+            <div class="fetching-message-body">
+              <span class="fetching-item">连接不稳定，已暂停</span>
+              <span class="fetching-sep">·</span>
+              <span class="fetching-item">初始重试 {{ currentProgressTask.reconnects || 0 }}/{{ currentProgressTask.maxInitialReconnects || 5 }}</span>
+              <span class="fetching-sep">·</span>
+              <span class="fetching-item"><strong>{{ formatCountdown(currentProgressTask.nextRetryAtMs) }}</strong></span>
             </div>
           </div>
           <!-- 其他状态：显示原格式 -->
@@ -739,6 +767,29 @@ function formatMs(ms) {
   const hours = Math.floor(minutes / 60)
   const remainMinutes = minutes % 60
   return hours + 'h ' + remainMinutes + 'm ' + remainSeconds + 's'
+}
+
+/** 格式化倒计时显示（传入目标时间戳） */
+function formatCountdown(targetMs) {
+  if (!targetMs || targetMs <= 0) return '计算中...'
+  const now = Date.now()
+  const remaining = targetMs - now
+  if (remaining <= 0) return '即将重试...'
+  const seconds = Math.floor(remaining / 1000)
+  if (seconds < 60) return seconds + '秒后重试'
+  const minutes = Math.floor(seconds / 60)
+  const remainSeconds = seconds % 60
+  if (minutes < 60) return minutes + '分 ' + remainSeconds + '秒后重试'
+  const hours = Math.floor(minutes / 60)
+  const remainMinutes = minutes % 60
+  return hours + '时 ' + remainMinutes + '分后重试'
+}
+
+/** 格式化短耗时显示（低于1s显示毫秒） */
+function formatMsShort(ms) {
+  if (!ms || ms <= 0) return '-'
+  if (ms < 1000) return ms + 'ms'
+  return formatMs(ms)
 }
 
 // 方法

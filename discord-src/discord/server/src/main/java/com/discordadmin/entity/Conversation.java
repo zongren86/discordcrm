@@ -95,6 +95,12 @@ public class Conversation {
     @Column(name = "last_read_at")
     private Instant lastReadAt;
 
+    /** 当前归属的用户ID（用于权限控制）：
+     * 普通用户仅能看到 ownerAgentId = 当前用户ID 的会话；
+     * 商户管理员和平台管理员不受此限制 */
+    @Column(name = "owner_agent_id")
+    private Long ownerAgentId;
+
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 

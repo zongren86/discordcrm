@@ -204,6 +204,16 @@ public class ConversationController {
                 request.audioDuration(), request.audioFileName(), getCurrentUsername(), messageId);
     }
 
+    /** 修复所有没有ownerAgentId的会话，尝试通过DiscordAccount关联查找并设置ownerAgentId */
+    @PostMapping("/repair-owner-agent-ids")
+    public Map<String, Object> repairOwnerAgentIds() {
+        int updatedCount = conversationService.repairOwnerAgentIds();
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("updatedCount", updatedCount);
+        return response;
+    }
+
     private String getCurrentUsername() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth != null && auth.getPrincipal() instanceof AuthenticatedAgent agent) {

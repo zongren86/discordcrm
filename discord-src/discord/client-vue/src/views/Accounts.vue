@@ -499,9 +499,9 @@ async function saveBot() {
         remark: botDialog.form.remark,
         merchantId: botDialog.form.merchantId
       })
-      ElMessage.success('已更新')
+      ElMessage.success('更新成功')
     } else {
-      await upsertAccountByDiscordId({
+      const res = await upsertAccountByDiscordId({
         username: botDialog.form.nickname,
         email: botDialog.form.email,
         discordId: botDialog.form.discordId,
@@ -510,7 +510,11 @@ async function saveBot() {
         remark: botDialog.form.remark,
         merchantId: botDialog.form.merchantId
       })
-      ElMessage.success('已保存（同ID已存在则更新，否则新增）')
+      if (res && res.created) {
+        ElMessage.success(res.message || '新增成功')
+      } else {
+        ElMessage.success(res?.message || '更新成功')
+      }
     }
     botDialog.visible = false
     await fetchAccounts()

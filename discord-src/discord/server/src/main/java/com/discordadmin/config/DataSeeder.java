@@ -117,6 +117,12 @@ public class DataSeeder implements ApplicationRunner {
                         "account-numbers", "accounts", "customers", "guilds", "guild-members",
                         "friend-manage", "ai-settings", "audit"));
 
+        // merchant_admin: 商户管理员 - 商户级管理员，拥有好友管理全部权限
+        ensureMerchantRole(existingRoles, featureMap, "merchant_admin", "商户管理员", "商户管理员角色，可管理好友添加、服务器、账号等", true,
+                Arrays.asList("dashboard", "chat", "customer", "service",
+                        "account-numbers", "accounts", "customers", "guilds", "guild-members",
+                        "friend-manage"));
+
         // sales: 业务相关功能
         ensureRole(existingRoles, featureMap, "sales", "销售", "销售人员角色", true,
                 Arrays.asList("dashboard", "chat", "customer", "service",
@@ -132,6 +138,40 @@ public class DataSeeder implements ApplicationRunner {
                 Arrays.asList("dashboard", "chat", "guild-members"));
 
         log.info("角色权限初始化完成，共 {} 个角色", roleRepository.count());
+    }
+
+    private void ensureMerchantRole(List<Role> existingRoles, Map<String, SysFeature> featureMap,
+                                    String code, String name, String description, boolean builtin,
+                                    List<String> featureCodes) {
+        Role role = existingRoles.stream()
+                .filter(r -> code.equals(r.getCode()))
+                .findFirst()
+                .orElseGet(() -> {
+                    Role newRole = new Role();
+                    newRole.setCode(code);
+                    newRole.setName(name);
+                    newRole.setDescription(description);
+                    newRole.setBuiltin(builtin);
+                    newRole.setRoleType(Role.RoleType.MERCHANT);
+                    return roleRepository.save(newRole);
+                });
+
+        role.setName(name);
+        role.setDescription(description);
+        role.setBuiltin(builtin);
+        role.setRoleType(Role.RoleType.MERCHANT);
+
+        Set<SysFeature> features = new HashSet<>();
+        for (String code2 : featureCodes) {
+            SysFeature feature = featureMap.get(code2);
+            if (feature != null) {
+                features.add(feature);
+            }
+        }
+        role.setFeatures(features);
+        roleRepository.save(role);
+
+        log.info("  商户角色 [{}] 分配了 {} 个功能权限", name, features.size());
     }
 
     private void ensureRole(List<Role> existingRoles, Map<String, SysFeature> featureMap,

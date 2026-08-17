@@ -326,7 +326,7 @@ public class DiscordAccountService {
      * - 否则 → 新建 USER 账号
      */
     @Transactional
-    public AccountDto upsertByDiscordId(UpsertAccountByDiscordIdRequest req) {
+    public UpsertResponse upsertByDiscordId(UpsertAccountByDiscordIdRequest req) {
         if (req.discordId() == null || req.discordId().isBlank()) {
             throw new IllegalArgumentException("Discord ID (账号ID) 不能为空");
         }
@@ -340,10 +340,7 @@ public class DiscordAccountService {
 
         Optional<DiscordAccount> existOpt = accountRepository.findByDiscordId(discordId);
         Long currentMerchant = SecurityUtils.currentMerchantId();
-        // 商户：入参优先；否则用当前登录用户所属商户兜底
         Long merchantId = req.merchantId() != null ? req.merchantId() : currentMerchant;
-        // 统一为 USER 账号（不再区分 USER/BOT，忽略入参）
-        final String accType = "USER";
 
         DiscordAccount account;
         boolean created;
@@ -366,21 +363,20 @@ public class DiscordAccountService {
         }
         if (!email.isBlank()) account.setEmail(email);
         account.setToken(token);
-        // 统一设置为 USER（忽略入参中的 accountType）
         account.setAccountType(DiscordAccount.AccountType.USER);
         if (req.remark() != null) account.setRemark(req.remark().trim());
-        // 商户：已存在账号也允许更新 merchantId；入参为空则兜底当前商户
         if (req.merchantId() != null) {
             account.setMerchantId(req.merchantId());
         } else if (merchantId != null && !created) {
-            // 更新场景下，商户传空时若当前上下文有商户，则兜底填充（避免商户用户越权变空）
             account.setMerchantId(merchantId);
         }
 
         account = accountRepository.save(account);
         botManager.startAccount(account.getId());
+        AccountDto dto = AccountDto.from(account, botManager.isConnected(account.getId()), botManager.isConnecting(account.getId()));
         log.info("账号{}成功: discordId={} id={}", created ? "新增" : "更新", discordId, account.getId());
-        return AccountDto.from(account, botManager.isConnected(account.getId()), botManager.isConnecting(account.getId()));
+        String message = created ? "新增成功" : "更新成功（ID已存在）";
+        return new UpsertResponse(dto, created, message);
     }
 
     public ImportTokenResponse importToken(ImportTokenRequest request) {

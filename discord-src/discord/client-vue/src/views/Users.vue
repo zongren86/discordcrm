@@ -19,13 +19,21 @@
         <el-table-column label="#" width="60" align="center">
           <template #default="{ $index }">{{ $index + 1 }}</template>
         </el-table-column>
-        <el-table-column prop="username" label="用户名" min-width="140">
+        <el-table-column prop="displayName" label="姓名" min-width="120">
           <template #default="{ row }">
-            <span class="cell-strong">{{ row.username || '-' }}</span>
+            <span class="cell-strong">{{ row.displayName || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="displayName" label="显示名" min-width="120">
-          <template #default="{ row }">{{ row.displayName || '-' }}</template>
+        <el-table-column prop="username" label="登录账号" min-width="140">
+          <template #default="{ row }">
+            <span>{{ row.username || '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="email" label="邮箱" min-width="180">
+          <template #default="{ row }">{{ row.email || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="notes" label="备注" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.notes || '-' }}</template>
         </el-table-column>
         <el-table-column label="身份" width="100" align="center">
           <template #default="{ row }">
@@ -80,25 +88,37 @@
     <!-- 新增用户 -->
     <el-dialog v-model="createDialog.visible" title="新增用户" width="580px" @close="resetCreateDialog">
       <el-form :model="createDialog.form" label-width="100px">
-        <el-form-item label="用户名" required>
-          <el-input v-model="createDialog.form.username" placeholder="请输入用户名" />
+        <el-form-item label="登录账号" required>
+          <el-input v-model="createDialog.form.username" placeholder="请输入登录账号" />
+        </el-form-item>
+        <el-form-item label="姓名" required>
+          <el-input v-model="createDialog.form.displayName" placeholder="请输入姓名" />
         </el-form-item>
         <el-form-item label="密码" required>
           <el-input v-model="createDialog.form.password" type="password" show-password placeholder="请输入密码" />
         </el-form-item>
-        <el-form-item label="显示名">
-          <el-input v-model="createDialog.form.displayName" placeholder="请输入显示名" />
+        <el-form-item label="邮箱">
+          <el-input v-model="createDialog.form.email" placeholder="请输入邮箱" />
         </el-form-item>
-        <el-form-item label="身份" required>
+        <el-form-item label="备注">
+          <el-input v-model="createDialog.form.notes" type="textarea" :rows="2" placeholder="请输入备注" />
+        </el-form-item>
+        <el-form-item v-if="!isMerchantUser" label="身份" required>
           <el-radio-group v-model="createDialog.form.identity" @change="onCreateIdentityChange">
             <el-radio value="PLATFORM">平台</el-radio>
             <el-radio value="MERCHANT">商户</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="createDialog.form.identity === 'MERCHANT'" label="商户" required>
+        <el-form-item v-if="!isMerchantUser && createDialog.form.identity === 'MERCHANT'" label="商户" required>
           <el-select v-model="createDialog.form.merchantId" placeholder="请选择商户" style="width:100%" :loading="merchantsLoading">
             <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="isMerchantUser" label="身份">
+          <el-tag type="primary" size="small">商户</el-tag>
+        </el-form-item>
+        <el-form-item v-if="isMerchantUser" label="商户">
+          <el-tag type="primary" size="small">{{ auth.agent?.merchantName || '-' }}</el-tag>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -110,22 +130,34 @@
     <!-- 编辑用户 -->
     <el-dialog v-model="editDialog.visible" title="编辑用户" width="580px" @close="resetEditDialog">
       <el-form :model="editDialog.form" label-width="100px">
-        <el-form-item label="用户名">
+        <el-form-item label="登录账号">
           <el-input :model-value="editDialog.form.username" disabled />
         </el-form-item>
-        <el-form-item label="显示名">
-          <el-input v-model="editDialog.form.displayName" placeholder="请输入显示名" />
+        <el-form-item label="姓名" required>
+          <el-input v-model="editDialog.form.displayName" placeholder="请输入姓名" />
         </el-form-item>
-        <el-form-item label="身份" required>
+        <el-form-item label="邮箱">
+          <el-input v-model="editDialog.form.email" placeholder="请输入邮箱" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="editDialog.form.notes" type="textarea" :rows="2" placeholder="请输入备注" />
+        </el-form-item>
+        <el-form-item v-if="!isMerchantUser" label="身份" required>
           <el-radio-group v-model="editDialog.form.identity" @change="onEditIdentityChange">
             <el-radio value="PLATFORM">平台</el-radio>
             <el-radio value="MERCHANT">商户</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="editDialog.form.identity === 'MERCHANT'" label="商户" required>
+        <el-form-item v-if="!isMerchantUser && editDialog.form.identity === 'MERCHANT'" label="商户" required>
           <el-select v-model="editDialog.form.merchantId" placeholder="请选择商户" style="width:100%" :loading="merchantsLoading">
             <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item v-if="isMerchantUser" label="身份">
+          <el-tag type="primary" size="small">商户</el-tag>
+        </el-form-item>
+        <el-form-item v-if="isMerchantUser" label="商户">
+          <el-tag type="primary" size="small">{{ auth.agent?.merchantName || '-' }}</el-tag>
         </el-form-item>
         <el-form-item label="启用状态">
           <el-switch v-model="editDialog.form.enabled" active-text="启用" inactive-text="停用" />
@@ -140,7 +172,7 @@
     <!-- 重置密码 -->
     <el-dialog v-model="pwdDialog.visible" title="重置密码" width="440px" @close="resetPwdDialog">
       <el-form :model="pwdDialog.form" label-width="80px">
-        <el-form-item label="用户名">
+        <el-form-item label="登录账号">
           <el-input :model-value="pwdDialog.username" disabled />
         </el-form-item>
         <el-form-item label="新密码" required>
@@ -250,6 +282,10 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, Delete, Refresh, Key, User, Link } from '@element-plus/icons-vue'
 import { api, getUserAccountNumbers, batchLinkAccountNumbers, unlinkAccountNumber } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+
+const auth = useAuthStore()
+const isMerchantUser = computed(() => auth.agent?.role !== 'PLATFORM_ADMIN')
 
 const list = ref([])
 const loading = ref(false)
@@ -327,8 +363,10 @@ const createDialog = reactive({
   saving: false,
   form: {
     username: '',
-    password: '',
     displayName: '',
+    password: '',
+    email: '',
+    notes: '',
     identity: 'MERCHANT',
     merchantId: null
   }
@@ -342,42 +380,75 @@ function onCreateIdentityChange(val) {
 
 function openCreate() {
   createDialog.visible = true
-  createDialog.form = {
-    username: '',
-    password: '',
-    displayName: '',
-    identity: 'MERCHANT',
-    merchantId: null
+  if (isMerchantUser.value) {
+    createDialog.form = {
+      username: '',
+      displayName: '',
+      password: '',
+      email: '',
+      notes: '',
+      identity: 'MERCHANT',
+      merchantId: auth.agent?.merchantId || null
+    }
+  } else {
+    createDialog.form = {
+      username: '',
+      displayName: '',
+      password: '',
+      email: '',
+      notes: '',
+      identity: 'MERCHANT',
+      merchantId: null
+    }
   }
 }
 
 function resetCreateDialog() {
-  createDialog.form = {
-    username: '',
-    password: '',
-    displayName: '',
-    identity: 'MERCHANT',
-    merchantId: null
+  if (isMerchantUser.value) {
+    createDialog.form = {
+      username: '',
+      displayName: '',
+      password: '',
+      email: '',
+      notes: '',
+      identity: 'MERCHANT',
+      merchantId: auth.agent?.merchantId || null
+    }
+  } else {
+    createDialog.form = {
+      username: '',
+      displayName: '',
+      password: '',
+      email: '',
+      notes: '',
+      identity: 'MERCHANT',
+      merchantId: null
+    }
   }
   createDialog.saving = false
 }
 
 async function saveCreate() {
-  if (!createDialog.form.username) { ElMessage.warning('请输入用户名'); return }
+  if (!createDialog.form.username) { ElMessage.warning('请输入登录账号'); return }
+  if (!createDialog.form.displayName) { ElMessage.warning('请输入姓名'); return }
   if (!createDialog.form.password) { ElMessage.warning('请输入密码'); return }
-  if (createDialog.form.identity === 'MERCHANT' && !createDialog.form.merchantId) {
+  if (!isMerchantUser.value && createDialog.form.identity === 'MERCHANT' && !createDialog.form.merchantId) {
     ElMessage.warning('请选择商户'); return
   }
   createDialog.saving = true
   try {
     const payload = {
       username: createDialog.form.username,
-      password: createDialog.form.password,
       displayName: createDialog.form.displayName,
+      password: createDialog.form.password,
+      email: createDialog.form.email,
+      notes: createDialog.form.notes,
       role: createDialog.form.identity === 'PLATFORM' ? 'PLATFORM_ADMIN' : 'MERCHANT_ADMIN',
       roleIds: []
     }
-    if (createDialog.form.identity === 'MERCHANT') {
+    if (isMerchantUser.value) {
+      payload.merchantId = auth.agent?.merchantId
+    } else if (createDialog.form.identity === 'MERCHANT') {
       payload.merchantId = createDialog.form.merchantId
     }
     await api.post('/users', payload)
@@ -394,6 +465,8 @@ const editDialog = reactive({
   form: {
     username: '',
     displayName: '',
+    email: '',
+    notes: '',
     identity: 'MERCHANT',
     merchantId: null,
     enabled: true
@@ -413,6 +486,8 @@ function openEdit(row) {
   editDialog.form = {
     username: row.username || '',
     displayName: row.displayName || '',
+    email: row.email || '',
+    notes: row.notes || '',
     identity: isPlatform ? 'PLATFORM' : 'MERCHANT',
     merchantId: row.merchantId || null,
     enabled: row.enabled !== false
@@ -421,21 +496,26 @@ function openEdit(row) {
 
 function resetEditDialog() {
   editDialog.editId = null
-  editDialog.form = { username: '', displayName: '', identity: 'MERCHANT', merchantId: null, enabled: true }
+  editDialog.form = { username: '', displayName: '', email: '', notes: '', identity: 'MERCHANT', merchantId: null, enabled: true }
   editDialog.saving = false
 }
 
 async function saveEdit() {
-  if (editDialog.form.identity === 'MERCHANT' && !editDialog.form.merchantId) {
+  if (!editDialog.form.displayName) { ElMessage.warning('请输入姓名'); return }
+  if (!isMerchantUser.value && editDialog.form.identity === 'MERCHANT' && !editDialog.form.merchantId) {
     ElMessage.warning('请选择商户'); return
   }
   editDialog.saving = true
   try {
     const payload = {
       displayName: editDialog.form.displayName,
+      email: editDialog.form.email,
+      notes: editDialog.form.notes,
       enabled: editDialog.form.enabled
     }
-    if (editDialog.form.identity === 'MERCHANT') {
+    if (isMerchantUser.value) {
+      payload.merchantId = auth.agent?.merchantId
+    } else if (editDialog.form.identity === 'MERCHANT') {
       payload.merchantId = editDialog.form.merchantId
     }
     await api.put(`/users/${editDialog.editId}`, payload)
@@ -479,7 +559,8 @@ async function saveResetPwd() {
 
 async function remove(row) {
   try {
-    await ElMessageBox.confirm(`确定要删除用户「${row.username || row.displayName}」吗？此操作不可恢复。`, '提示', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
+    const displayText = row.displayName || row.username || '未知用户'
+    await ElMessageBox.confirm(`确定要删除用户「${displayText}」吗？此操作不可恢复。`, '提示', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
     await api.delete(`/users/${row.id}`)
     ElMessage.success('已删除')
     await fetchList()
@@ -520,7 +601,7 @@ const availableRoles = computed(() => {
 function openAssignRoles(row) {
   assignRolesDialog.visible = true
   assignRolesDialog.userId = row.id
-  assignRolesDialog.username = row.username || row.displayName || ''
+  assignRolesDialog.username = row.displayName || row.username || ''
   assignRolesDialog.selectedRoleIds = [...(row.roleIds || [])]
   assignRolesDialog.targetRole = row.role || ''
   assignRolesDialog.targetMerchantId = row.merchantId || null
@@ -592,7 +673,7 @@ function formatDateTime(dateStr) {
 async function openAccountNumbers(row) {
   accountNumbersDialog.visible = true
   accountNumbersDialog.userId = row.id
-  accountNumbersDialog.username = row.username || row.displayName || ''
+  accountNumbersDialog.username = row.displayName || row.username || ''
   await fetchAccountNumbers(row.id)
 }
 
@@ -631,7 +712,7 @@ async function handleLinkNumbers() {
     linkNumbersDialog.visible = false
     await fetchAccountNumbers(accountNumbersDialog.userId)
   } catch (e) {
-    ElMessage.error('关联失败')
+    // 错误信息已在 http 拦截器中处理
   }
 }
 

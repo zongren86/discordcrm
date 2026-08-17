@@ -14,7 +14,7 @@
         <div class="filter-bar">
           <el-select v-model="selectedAccountId" size="small" placeholder="账号" clearable class="filter-select">
             <el-option :value="null" label="全部账号" />
-            <el-option v-for="acc in accounts.accounts" :key="acc.id" :value="acc.id"
+            <el-option v-for="acc in accountOptionsForFilter" :key="acc.id" :value="acc.id"
               :label="acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id)" />
           </el-select>
 
@@ -83,29 +83,19 @@
               <div v-for="c in getPinnedConversations()" :key="'pinned-' + c.id"
                 :class="['conv-item', 'pinned-item', { active: c.id === conversations.currentConversationId }]"
                 @click="selectConversation(c)">
-                <div v-if="c.agentName" class="conv-agent-name" :title="c.agentName">
-                  <span v-for="(line, i) in splitAgentName(c.agentName)" :key="i">{{ line }}</span>
+                <div v-if="c.associatedUserName" class="conv-associated-name" :title="c.associatedUserName">
+                  <span v-for="(line, i) in splitAgentName(c.associatedUserName)" :key="i">{{ line }}</span>
                 </div>
                 <div class="conv-avatar-wrap">
                   <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
                     {{ initialOf(c) }}
                   </el-avatar>
-                  <!-- 红点显示规则 -->
-                  <!-- PROSPECT阶段 + 从未发过消息(无lastMessageAt) => 红点 -->
+                  <!-- 未读消息红点/数字（右上角） -->
                   <span v-if="c.stage === 'PROSPECT' && !c.lastMessageAt" class="unread-dot"></span>
-                  <!-- 有未读消息 => 数字 -->
                   <span v-else-if="c.unreadCount > 0" class="unread-badge">
                     {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
                   </span>
-                  <el-avatar v-if="c.agentName" :size="18" class="agent-badge" :title="c.agentName">
-                    {{ (c.agentName || '?').charAt(0).toUpperCase() }}
-                  </el-avatar>
-                  <!-- 账号指示点（与当前会话绑定的Discord账号颜色） -->
-                  <span v-if="c.discordAccountId"
-                        class="account-dot"
-                        :style="{ background: accountColor(c.discordAccountId) }"
-                        :title="c.discordAccountName ? `账号: ${c.discordAccountName}` : '账号'"></span>
-                  <!-- 好友原生在线状态圆点：绿=在线，灰=离线 -->
+                  <!-- Discord在线状态圆点（右下角） -->
                   <span class="conv-presence-dot"
                         :class="presenceClass(c)"
                         :title="presenceTitle(c)"></span>
@@ -125,6 +115,9 @@
                   </div>
                 </div>
                 <div class="conv-actions">
+                  <el-tooltip :content="formatFullTime(getConversationTime(c))">
+                    <span class="conv-time">{{ formatTimeForConv(getConversationTime(c)) }}</span>
+                  </el-tooltip>
                   <el-tooltip content="取消置顶">
                     <el-button type="warning" size="small" circle @click.stop="togglePin(c)">
                       <el-icon><Top /></el-icon>
@@ -141,27 +134,19 @@
               <div v-for="c in getNormalConversations()" :key="'normal-' + c.id"
                 :class="['conv-item', { active: c.id === conversations.currentConversationId }]"
                 @click="selectConversation(c)">
-                <div v-if="c.agentName" class="conv-agent-name" :title="c.agentName">
-                  <span v-for="(line, i) in splitAgentName(c.agentName)" :key="i">{{ line }}</span>
+                <div v-if="c.associatedUserName" class="conv-associated-name" :title="c.associatedUserName">
+                  <span v-for="(line, i) in splitAgentName(c.associatedUserName)" :key="i">{{ line }}</span>
                 </div>
                 <div class="conv-avatar-wrap">
                   <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
                     {{ initialOf(c) }}
                   </el-avatar>
-                  <!-- 红点显示规则 -->
-                  <!-- PROSPECT阶段 + 从未发过消息(无lastMessageAt) => 红点 -->
+                  <!-- 未读消息红点/数字（右上角） -->
                   <span v-if="c.stage === 'PROSPECT' && !c.lastMessageAt" class="unread-dot"></span>
-                  <!-- 有未读消息 => 数字 -->
                   <span v-else-if="c.unreadCount > 0" class="unread-badge">
                     {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
                   </span>
-                  <el-avatar v-if="c.agentName" :size="18" class="agent-badge" :title="c.agentName">
-                    {{ (c.agentName || '?').charAt(0).toUpperCase() }}
-                  </el-avatar>
-                  <span v-if="c.discordAccountId"
-                        class="account-dot"
-                        :style="{ background: accountColor(c.discordAccountId) }"
-                        :title="c.discordAccountName ? `账号: ${c.discordAccountName}` : '账号'"></span>
+                  <!-- Discord在线状态圆点（右下角） -->
                   <span class="conv-presence-dot"
                         :class="presenceClass(c)"
                         :title="presenceTitle(c)"></span>
@@ -180,6 +165,9 @@
                   </div>
                 </div>
                 <div class="conv-actions">
+                  <el-tooltip :content="formatFullTime(getConversationTime(c))">
+                    <span class="conv-time">{{ formatTimeForConv(getConversationTime(c)) }}</span>
+                  </el-tooltip>
                   <el-tooltip content="置顶">
                     <el-button :type="c.pinned ? 'warning' : 'default'" size="small" circle
                       @click.stop="togglePin(c)">
@@ -351,7 +339,7 @@
 
         <!-- 消息列表 -->
         <el-scrollbar ref="msgScrollRef" class="msg-scroll" @scroll="onMsgScroll">
-          <div v-if="hasMore" class="load-more-row">
+          <div v-if="hasMore && conversations.currentMessages.length > 0" class="load-more-row">
             <el-button v-if="!loadingMore" size="small" link type="primary" @click="loadMore">
               <el-icon><ArrowUp /></el-icon> 加载更多历史消息
             </el-button>
@@ -1063,6 +1051,15 @@ const filteredConversations = computed(() => {
     const remark = (c.remark || '').toLowerCase()
     return name.includes(kw) || id.includes(kw) || snippet.includes(kw) || remark.includes(kw)
   })
+})
+
+// 账号筛选下拉框：只显示当前会话列表中存在的账号
+const accountOptionsForFilter = computed(() => {
+  const convAccountIds = new Set()
+  for (const c of conversations.conversations) {
+    if (c.discordAccountId) convAccountIds.add(c.discordAccountId)
+  }
+  return accounts.accounts.filter(a => convAccountIds.has(a.id))
 })
 
 function setDateRange(type) {
@@ -1974,7 +1971,7 @@ async function pollCurrentMessages() {
   if (loadingMore.value) return
   try {
     // 轮询也使用只返回当天 20 条的分页接口，避免页面卡顿
-    const res = await listMessages(convId, { daysBack: 1, pageSize: 20 })
+    const res = await listMessages(convId, { daysBack: 1, pageSize: 10 })
     const page = !Array.isArray(res) && res && (Array.isArray(res?.messages) || Array.isArray(res?.data)) ? res : null
     const msgs = page ? (res.messages || res.data || []) : (Array.isArray(res) ? res : (res?.data || []))
     msgs.sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
@@ -2061,10 +2058,8 @@ async function pollCurrentMessages() {
       const mergedOldestTs = merged.length > 0
         ? new Date(merged[0].discordCreatedAt || merged[0].createdAt || 0).getTime()
         : Infinity
-      const backendHasMore = page ? !!res.hasMore : msgs.length >= 20
+      const backendHasMore = page ? !!res.hasMore : msgs.length >= 10
       conversations.hasMoreMap[convId] = backendHasMore
-        || mergedOldestTs < todayStart.getTime()
-        || backendHasMore
 
       await nextTick()
       // 轮询更新消息时，只在用户本来就已经在底部附近时才自动滚到底，避免打断听语音/看历史
@@ -2303,28 +2298,45 @@ function getFilteredSortedConversations() {
     // 归档客户始终排最下面
     if (a.stage === 'ARCHIVED' && b.stage !== 'ARCHIVED') return 1
     if (a.stage !== 'ARCHIVED' && b.stage === 'ARCHIVED') return -1
+    if (a.stage === 'ARCHIVED' && b.stage === 'ARCHIVED') {
+      return sortByTimeDesc(a, b)
+    }
+
     // 置顶优先
     if (a.pinned && !b.pinned) return -1
     if (!a.pinned && b.pinned) return 1
-    // PROSPECT（通过客户）排在前面
-    const aProspect = a.stage === 'PROSPECT'
-    const bProspect = b.stage === 'PROSPECT'
-    if (aProspect && !bProspect) return -1
-    if (!aProspect && bProspect) return 1
-    // 有最新消息的排前面
-    const aHasMsg = !!a.lastMessageAt
-    const bHasMsg = !!b.lastMessageAt
-    if (aHasMsg && !bHasMsg) return -1
-    if (!aHasMsg && bHasMsg) return 1
-    // 有未读消息的排前面
-    const unreadA = a.unreadCount || 0
-    const unreadB = b.unreadCount || 0
-    if (unreadA !== unreadB) return unreadB - unreadA
-    // 按最后消息时间排序
-    const timeA = a.lastMessageTime || a.lastMessageAt || a.updatedAt || a.createdAt || 0
-    const timeB = b.lastMessageTime || b.lastMessageAt || b.updatedAt || b.createdAt || 0
-    return new Date(timeB).getTime() - new Date(timeA).getTime()
+
+    // 通过客户（PROSPECT）且没消息 → 排第2
+    const aIsProspectNoMsg = a.stage === 'PROSPECT' && !a.lastMessageAt
+    const bIsProspectNoMsg = b.stage === 'PROSPECT' && !b.lastMessageAt
+    if (aIsProspectNoMsg && !bIsProspectNoMsg) return -1
+    if (!aIsProspectNoMsg && bIsProspectNoMsg) return 1
+    if (aIsProspectNoMsg && bIsProspectNoMsg) {
+      return sortByTimeDesc(a, b)
+    }
+
+    // 有未读消息的排第3
+    const aHasUnread = (a.unreadCount && a.unreadCount > 0)
+    const bHasUnread = (b.unreadCount && b.unreadCount > 0)
+    if (aHasUnread && !bHasUnread) return -1
+    if (!aHasUnread && bHasUnread) return 1
+    if (aHasUnread && bHasUnread) {
+      return sortByTimeDesc(a, b)
+    }
+
+    // 同一分组内按时间倒序
+    return sortByTimeDesc(a, b)
   })
+}
+
+function sortByTimeDesc(a, b) {
+  const timeA = getConversationTime(a)
+  const timeB = getConversationTime(b)
+  const tA = timeA ? new Date(timeA).getTime() : 0
+  const tB = timeB ? new Date(timeB).getTime() : 0
+  // 安全检查：如果时间无效，返回0
+  if (isNaN(tA) || isNaN(tB)) return 0
+  return tB - tA
 }
 
 function getPinnedConversations() {
@@ -2370,6 +2382,69 @@ function splitAgentName(name) {
   return lines
 }
 
+// ===== 时间格式化 =====
+const WEEKDAYS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+
+// 获取会话的有效时间戳：优先最后消息时间，其次创建时间，最后阶段变更时间
+function getConversationTime(c) {
+  if (!c) return null
+  return c.lastMessageAt || c.createdAt || c.stageChangedAt || null
+}
+
+function formatTimeForConv(timestamp) {
+  if (!timestamp) return ''
+  try {
+    const time = new Date(timestamp)
+    if (isNaN(time.getTime())) return ''
+
+    const now = new Date()
+    // 归一化到零点
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const timeDayStart = new Date(time.getFullYear(), time.getMonth(), time.getDate())
+    const diffDays = Math.floor((todayStart - timeDayStart) / (24 * 60 * 60 * 1000))
+
+    const hh = String(time.getHours()).padStart(2, '0')
+    const mm = String(time.getMinutes()).padStart(2, '0')
+    const hm = `${hh}:${mm}`
+
+    let result
+    if (diffDays === 0) {
+      result = hm
+    } else if (diffDays === 1) {
+      result = `昨天 ${hm}`
+    } else if (diffDays >= 2 && diffDays <= 7) {
+      result = `${WEEKDAYS[time.getDay()]} ${hm}`
+    } else {
+      // 所有超过7天的都显示 YY/MM/DD HH:MM
+      const yy = String(time.getFullYear()).slice(-2)
+      const mo = String(time.getMonth() + 1).padStart(2, '0')
+      const da = String(time.getDate()).padStart(2, '0')
+      result = `${yy}/${mo}/${da} ${hm}`
+    }
+
+    return result
+  } catch {
+    return ''
+  }
+}
+
+function formatFullTime(timestamp) {
+  if (!timestamp) return ''
+  try {
+    const time = new Date(timestamp)
+    if (isNaN(time.getTime())) return ''
+    const ye = time.getFullYear()
+    const mo = String(time.getMonth() + 1).padStart(2, '0')
+    const da = String(time.getDate()).padStart(2, '0')
+    const hh = String(time.getHours()).padStart(2, '0')
+    const mm = String(time.getMinutes()).padStart(2, '0')
+    const ss = String(time.getSeconds()).padStart(2, '0')
+    return `${ye}-${mo}-${da} ${hh}:${mm}:${ss}`
+  } catch {
+    return ''
+  }
+}
+
 // ===== 账号颜色（稳定 hash），用于区分账号指示点 =====
 const ACCOUNT_PALETTE = [
   '#5865F2', '#EB459E', '#57F287', '#FEE75C', '#ED4245',
@@ -2387,38 +2462,32 @@ function accountColor(accountId) {
   return color
 }
 
-// ===== 好友在线状态（原生 Discord Presence + 活跃时间兜底） =====
+// ===== 好友在线状态（Discord原生 Presence） =====
+// 四种状态：在线(绿)、闲置(黄/月亮)、请勿打扰(红)、隐身/离线(灰)
 function presenceClass(c) {
   const p = c?.friendPresence
-  // 1. 有明确在线状态（online/idle/dnd）直接返回在线
-  if (p === 'online' || p === 'idle' || p === 'dnd') return 'online'
-  // 2. 即使 presence 显示 offline，如果最近 5 分钟内活跃过，也视为在线（兜底）
+  if (p === 'online') return 'online'
+  if (p === 'idle') return 'idle'
+  if (p === 'dnd') return 'dnd'
+  if (p === 'offline' || p === 'invisible') return 'offline'
+  // 兜底：有最近活跃则视为在线
   const t = c?.friendLastActiveAt
   if (t) {
     const diff = Date.now() - new Date(t).getTime()
     if (diff < 5 * 60 * 1000) return 'online'
   }
-  // 3. 明确 offline 且没有最近活跃
-  if (p === 'offline') return 'offline'
-  // 4. 都没有数据时兜底
-  if (!t) return 'offline'
-  const diff2 = Date.now() - new Date(t).getTime()
-  return diff2 < 5 * 60 * 1000 ? 'online' : 'offline'
+  return 'offline'
 }
 
 function presenceTitle(c) {
   const p = c?.friendPresence
-  const map = { online: '在线', idle: '空闲', dnd: '请勿打扰', offline: '离线' }
-  // 如果最近活跃，优先显示在线
+  const map = { online: '在线', idle: '闲置', dnd: '请勿打扰', offline: '离线', invisible: '隐身' }
+  if (p && map[p]) return map[p]
   const t = c?.friendLastActiveAt
   if (t) {
     const diff = Date.now() - new Date(t).getTime()
-    if (diff < 5 * 60 * 1000 && (p === 'offline' || !map[p])) return '在线'
+    if (diff < 5 * 60 * 1000) return '最近活跃'
   }
-  if (p && map[p]) return map[p]
-  if (!t) return '离线'
-  const diff = Date.now() - new Date(t).getTime()
-  if (diff < 5 * 60 * 1000) return '最近活跃'
   return '离线'
 }
 
@@ -2972,7 +3041,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.conv-agent-name {
+.conv-associated-name {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2982,14 +3051,14 @@ onUnmounted(() => {
   font-size: 10px;
   font-weight: 600;
   line-height: 1.15;
-  color: var(--color-text-2);
+  color: var(--color-text-2, #606266);
   text-align: center;
   gap: 1px;
   flex-shrink: 0;
   word-break: break-all;
 }
 
-.conv-agent-name span:last-child {
+.conv-associated-name span:last-child {
   letter-spacing: -1px;
 }
 
@@ -3032,32 +3101,26 @@ onUnmounted(() => {
   box-shadow: 0 0 0 2px rgba(237, 66, 69, 0.25);
 }
 
-.account-dot {
+.conv-presence-dot {
   position: absolute;
   bottom: -2px;
   right: -2px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid var(--color-bg-2);
-  background: var(--color-primary);
-  z-index: 3;
-}
-
-.conv-presence-dot {
-  position: absolute;
-  top: -4px;
-  left: -4px;
   width: 12px;
   height: 12px;
   border-radius: 50%;
   border: 2px solid var(--color-bg-2);
-  background: #555;
+  background: #8a919f;
   z-index: 3;
   transition: background 0.2s ease;
 }
 .conv-presence-dot.online {
   background: #23a55a;
+}
+.conv-presence-dot.idle {
+  background: #f0b232;
+}
+.conv-presence-dot.dnd {
+  background: #f23f43;
 }
 .conv-presence-dot.offline {
   background: #8a919f;
@@ -3147,6 +3210,16 @@ onUnmounted(() => {
 .conv-actions {
   flex-shrink: 0;
   opacity: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conv-time {
+  font-size: 11px;
+  color: var(--color-text-3);
+  white-space: nowrap;
+  margin-right: 4px;
 }
 
 /* ==== 中间聊天面板 ==== */

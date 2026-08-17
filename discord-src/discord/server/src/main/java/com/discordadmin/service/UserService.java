@@ -52,6 +52,8 @@ public class UserService {
                     map.put("id", agent.getId());
                     map.put("username", agent.getUsername());
                     map.put("displayName", agent.getDisplayName());
+                    map.put("email", agent.getEmail());
+                    map.put("notes", agent.getNotes());
                     map.put("role", agent.getRole() != null ? agent.getRole().name() : null);
                     map.put("merchantId", agent.getMerchantId());
                     map.put("merchantName", agent.getMerchantId() != null ? 
@@ -65,12 +67,17 @@ public class UserService {
 
     @Transactional
     public Agent create(UserRequest req) {
+        if (req.displayName() == null || req.displayName().isBlank()) {
+            throw new IllegalArgumentException("姓名不能为空");
+        }
         Long merchantId = resolveMerchantId(req);
 
         Agent agent = new Agent();
         agent.setUsername(req.username());
         agent.setPasswordHash(passwordEncoder.encode(req.password()));
         agent.setDisplayName(req.displayName());
+        agent.setEmail(req.email());
+        agent.setNotes(req.notes());
         agent.setRole(Agent.AgentRole.valueOf(req.role()));
         agent.setMerchantId(merchantId);
         agent.setEnabled(true);
@@ -102,6 +109,8 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
 
         if (req.displayName() != null) agent.setDisplayName(req.displayName());
+        if (req.email() != null) agent.setEmail(req.email());
+        if (req.notes() != null) agent.setNotes(req.notes());
         if (req.role() != null) agent.setRole(Agent.AgentRole.valueOf(req.role()));
         if (req.enabled() != null) agent.setEnabled(req.enabled());
         if (req.password() != null && !req.password().isBlank()) {
@@ -196,6 +205,7 @@ public class UserService {
     }
 
     public record UserRequest(String username, String password, String displayName,
+                               String email, String notes,
                                String role, Long merchantId, Boolean enabled,
                                List<Long> roleIds, Boolean clearRoles) {}
 }
