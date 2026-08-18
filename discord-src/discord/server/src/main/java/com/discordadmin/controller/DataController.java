@@ -42,8 +42,16 @@ public class DataController {
     }
 
     @GetMapping("/friends")
-    public ResponseEntity<List<FriendConfig>> getFriends() {
+    public ResponseEntity<List<FriendConfig>> getFriends(@RequestParam(required = false) String status) {
+        if (status != null && !status.isEmpty()) {
+            return ResponseEntity.ok(dataStore.getFriendsByStatus(status));
+        }
         return ResponseEntity.ok(dataStore.getFriends());
+    }
+
+    @GetMapping("/friends/stats")
+    public ResponseEntity<Map<String, Object>> getFriendsStats() {
+        return ResponseEntity.ok(dataStore.getFriendsStats());
     }
 
     @PostMapping("/friends")

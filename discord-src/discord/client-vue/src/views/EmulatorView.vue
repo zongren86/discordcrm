@@ -175,8 +175,8 @@
               <div class="panel-header">
                 <el-icon><Avatar /></el-icon>
                 <span>好友号池</span>
-                <el-button size="small" @click="loadFriendPoolStats" :disabled="friendPoolLoading">
-                  刷新
+                <el-button size="small" @click="refreshFriendPool" :disabled="friendPoolLoading">
+                  <el-icon style="margin-right: 4px"><Refresh /></el-icon>刷新
                 </el-button>
               </div>
             </template>
@@ -1053,7 +1053,7 @@ async function syncFriends(server) {
 async function loadFriendPool() {
   friendPoolLoading.value = true
   try {
-    const resp = await emuApi.get('/friend-pool', {
+    const resp = await friendApi.get('/data/friends', {
       params: { status: friendPoolFilter.value || undefined }
     })
     friendPool.value = resp.data || []
@@ -1063,9 +1063,14 @@ async function loadFriendPool() {
 
 async function loadFriendPoolStats() {
   try {
-    const resp = await emuApi.get('/friend-pool/stats')
+    const resp = await friendApi.get('/data/friends/stats')
     friendPoolStats.value = resp.data || { total: 0, pending: 0, assigned: 0, success: 0, failed: 0 }
   } catch {}
+}
+
+async function refreshFriendPool() {
+  await Promise.all([loadFriendPool(), loadFriendPoolStats()])
+  ElMessage.success('刷新完成')
 }
 
 function friendStatusTag(status) {

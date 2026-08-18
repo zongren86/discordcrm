@@ -137,6 +137,22 @@ public class DataStoreService {
         return new ArrayList<>(friends);
     }
 
+    public List<FriendConfig> getFriendsByStatus(String status) {
+        return friends.stream()
+                .filter(f -> status.equals(f.getStatus()))
+                .collect(java.util.stream.Collectors.toList());
+    }
+
+    public Map<String, Object> getFriendsStats() {
+        Map<String, Object> stats = new LinkedHashMap<>();
+        stats.put("total", friends.size());
+        stats.put("pending", friends.stream().filter(f -> FriendConfig.PENDING.equals(f.getStatus())).count());
+        stats.put("assigned", friends.stream().filter(f -> FriendConfig.PROCESSING.equals(f.getStatus())).count());
+        stats.put("success", friends.stream().filter(f -> FriendConfig.SUCCESS.equals(f.getStatus())).count());
+        stats.put("failed", friends.stream().filter(f -> FriendConfig.FAILED.equals(f.getStatus())).count());
+        return stats;
+    }
+
     public void setFriends(List<FriendConfig> list) {
         Map<String, FriendConfig> existing = new LinkedHashMap<>();
         for (FriendConfig f : friends) existing.put(f.getUsername(), f);
