@@ -45,10 +45,15 @@ discord:
   emulator:
     apk-path: /tmp/discord-emulator
 
-# MumuManager 配置
+# Mumu 配置（本地模式，直接调用 mumutool）
 mumu:
-  manager:
-    url: ${MUMU_MANAGER_URL:http://localhost:8088}
+  mumutool-path: ${MUMU_TOOL_PATH:}
+  adb-path: ${MUMU_ADB_PATH:}
+  vms-base-path: ${MUMU_VMS_PATH:}
+  discord-apk-path: ${user.home}/.discord-admin/discord.apk
+  discord-apk-url: https://discord.com/api/download/stable
+  default-emulator-count: 1
+  max-emulator-count: 10
 
 # 模拟器执行模式
 emulator:

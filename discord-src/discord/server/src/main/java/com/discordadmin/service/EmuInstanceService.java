@@ -1106,7 +1106,7 @@ public class EmuInstanceService {
         status.put("agentOnline", agentOnline);
         status.put("localReachable", localReachable);
         status.put("message", available ? "物理模拟器已连接" : 
-            "未检测到本地模拟器。请确保：\n1. MumuManager 已启动（端口 8088）\n2. 或 mumu-agent 已启动");
+            "未检测到本地模拟器。请确保 MuMuPlayer 已安装并启动");
         return status;
     }
 
