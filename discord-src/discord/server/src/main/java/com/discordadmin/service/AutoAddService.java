@@ -1,11 +1,13 @@
 package com.discordadmin.service;
 
-import com.discordadmin.entity.EmuFriendPool;
+import com.discordadmin.entity.GuildMember;
 import com.discordadmin.entity.EmuInstance;
+import com.discordadmin.entity.EmuServerBinding;
 import com.discordadmin.model.DiscordAccount;
 import com.discordadmin.model.EmulatorInfo;
-import com.discordadmin.repository.EmuFriendPoolRepository;
 import com.discordadmin.repository.EmuInstanceRepository;
+import com.discordadmin.repository.EmuServerBindingRepository;
+import com.discordadmin.repository.GuildMemberRepository;
 import com.discordadmin.security.SecurityUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -27,7 +29,9 @@ public class AutoAddService {
     private final DiscordService discordService;
     private final DataStoreService dataStore;
     private final EmuInstanceRepository instanceRepository;
-    private final EmuFriendPoolRepository friendPoolRepository;
+    private final EmuFriendPoolService friendPoolService;
+    private final GuildMemberRepository memberRepository;
+    private final EmuServerBindingRepository serverBindingRepository;
 
     // 每台模拟器的自动化开关（内存态，持久化交给 EmulatorInfo.autoRunning）
     private final Set<Integer> running = ConcurrentHashMap.newKeySet();
@@ -42,12 +46,16 @@ public class AutoAddService {
 
     public AutoAddService(EmulatorService emulatorService, DiscordService discordService, 
                           DataStoreService dataStore, EmuInstanceRepository instanceRepository,
-                          EmuFriendPoolRepository friendPoolRepository) {
+                          EmuFriendPoolService friendPoolService,
+                          GuildMemberRepository memberRepository,
+                          EmuServerBindingRepository serverBindingRepository) {
         this.emulatorService = emulatorService;
         this.discordService = discordService;
         this.dataStore = dataStore;
         this.instanceRepository = instanceRepository;
-        this.friendPoolRepository = friendPoolRepository;
+        this.friendPoolService = friendPoolService;
+        this.memberRepository = memberRepository;
+        this.serverBindingRepository = serverBindingRepository;
     }
 
     private Long resolveMerchantId() {
@@ -275,47 +283,60 @@ public class AutoAddService {
 
         Long merchantId = resolveMerchantId();
         
-        // 原子取号：从数据库好友池取一个 PENDING 状态的好友
-        List<EmuFriendPool> pendingFriends = friendPoolRepository.findByMerchantIdAndStatus(
-            merchantId, EmuFriendPool.FriendStatus.PENDING);
+        // 获取第一个已添加的服务器ID
+        Long serverId = getFirstServerId(merchantId);
         
-        if (pendingFriends.isEmpty()) {
-            // 号池已空（无可取号码），停止自动化
+        if (serverId == null) {
             info.setAutoRunning(false);
             info.setNextAddAt(0);
             running.remove(index);
-            info.setAutoLastResult("好友池已空，全部号码已处理完成");
+            info.setAutoLastResult("未绑定服务器");
+            syncToDb(index);
+            return;
+        }
+        
+        // 原子取号：从数据库好友池取一个 PENDING 状态的好友
+        List<GuildMember> pendingFriends = memberRepository.findPendingByGuildServerId(serverId);
+        
+        if (pendingFriends.isEmpty()) {
+            // 号池为空，返回失败
+            info.setAutoRunning(false);
+            info.setNextAddAt(0);
+            running.remove(index);
+            info.setAutoLastResult("号池为空");
             syncToDb(index);
             return;
         }
         
         // 取第一个待处理的好友
-        EmuFriendPool target = pendingFriends.get(0);
+        GuildMember target = pendingFriends.get(0);
         String username = target.getUsername();
         if (username == null || username.isEmpty()) {
-            username = target.getDiscordUserId();
+            username = target.getUserId();
         }
 
         // 标记为已分配
-        target.setStatus(EmuFriendPool.FriendStatus.ASSIGNED);
-        target.setAssignedTaskId((long) (index + 1)); // 使用模拟器index作为任务ID
+        target.setFriendStatus(EmuFriendPoolService.STATUS_ASSIGNED);
+        target.setEmulatorIndex(index + 1);
+        target.setStartedAt(Instant.now());
         target.setUpdatedAt(Instant.now());
-        friendPoolRepository.save(target);
+        memberRepository.save(target);
 
         String res = discordService.addFriendByUsername(index, username);
         if (res.startsWith("SUCCESS")) {
             // 成功：标记成功
-            target.setStatus(EmuFriendPool.FriendStatus.SUCCESS);
+            target.setFriendStatus(EmuFriendPoolService.STATUS_SUCCESS);
             target.setLastError(null);
             info.setAutoLastResult("已发送好友请求(成功): " + username);
         } else {
             // 失败：标记失败
-            target.setStatus(EmuFriendPool.FriendStatus.FAILED);
+            target.setFriendStatus(EmuFriendPoolService.STATUS_FAILED);
             target.setLastError(res);
             info.setAutoLastResult("添加失败: " + username + " -> " + res);
         }
+        target.setFinishedAt(Instant.now());
         target.setUpdatedAt(Instant.now());
-        friendPoolRepository.save(target);
+        memberRepository.save(target);
         
         info.setAddedCount(countConsumed(merchantId));
 
@@ -324,11 +345,38 @@ public class AutoAddService {
                 + (long) dataStore.getConfig().getIntervalSeconds() * 1000 + randomDelay());
         syncToDb(index);
     }
+    
+    /**
+     * 获取第一个绑定的服务器ID
+     */
+    private Long getFirstServerId(Long merchantId) {
+        try {
+            List<EmuServerBinding> bindings = serverBindingRepository.findByMerchantId(merchantId);
+            if (!bindings.isEmpty()) {
+                return bindings.get(0).getServerId();
+            }
+            return null;
+        } catch (Exception e) {
+            log.warn("获取绑定服务器失败: {}", e.getMessage());
+            return null;
+        }
+    }
 
     /** 统计商户已消耗的号码数（SUCCESS + FAILED） */
     private int countConsumed(Long merchantId) {
-        int success = (int) friendPoolRepository.countByMerchantIdAndStatus(merchantId, EmuFriendPool.FriendStatus.SUCCESS);
-        int failed = (int) friendPoolRepository.countByMerchantIdAndStatus(merchantId, EmuFriendPool.FriendStatus.FAILED);
-        return success + failed;
+        try {
+            int total = 0;
+            List<EmuServerBinding> bindings = serverBindingRepository.findByMerchantId(merchantId);
+            for (EmuServerBinding binding : bindings) {
+                Long serverId = binding.getServerId();
+                long success = memberRepository.countByGuildServerIdAndFriendStatus(serverId, EmuFriendPoolService.STATUS_SUCCESS);
+                long failed = memberRepository.countByGuildServerIdAndFriendStatus(serverId, EmuFriendPoolService.STATUS_FAILED);
+                total += (int) (success + failed);
+            }
+            return total;
+        } catch (Exception e) {
+            log.warn("统计已消耗号码数失败: {}", e.getMessage());
+            return 0;
+        }
     }
 }

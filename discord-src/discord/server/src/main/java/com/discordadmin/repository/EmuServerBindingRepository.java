@@ -14,6 +14,8 @@ public interface EmuServerBindingRepository extends JpaRepository<EmuServerBindi
 
     List<EmuServerBinding> findByUserId(String userId);
 
+    List<EmuServerBinding> findByServerId(Long serverId);
+
     List<EmuServerBinding> findByMerchantIdAndStatus(Long merchantId, EmuServerBinding.BindingStatus status);
 
     Optional<EmuServerBinding> findByServerIdAndStatus(Long serverId, EmuServerBinding.BindingStatus status);

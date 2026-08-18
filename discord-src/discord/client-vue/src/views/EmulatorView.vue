@@ -155,12 +155,19 @@
                 暂未添加服务器，点击上方"添加服务器"按钮开始
               </div>
               <div v-else class="server-list">
-                <div v-for="srv in addedServers" :key="srv.id" class="server-item">
+                <div 
+                  v-for="srv in addedServers" 
+                  :key="srv.id" 
+                  class="server-item"
+                  :class="{ 'server-item--selected': selectedServerId === srv.serverId }"
+                  @click="selectServer(srv.serverId)"
+                >
                   <div class="server-info">
                     <span class="server-name">{{ srv.serverName || srv.name || '-' }}</span>
                     <span class="server-count" v-if="srv.memberCount">{{ srv.memberCount }} 成员</span>
+                    <el-tag v-if="selectedServerId === srv.serverId" type="primary" size="small" class="server-selected-tag">当前</el-tag>
                   </div>
-                  <div class="server-actions">
+                  <div class="server-actions" @click.stop>
                     <el-button type="primary" size="small" link @click="removeServer(srv.id)">删除</el-button>
                   </div>
                 </div>
@@ -174,6 +181,7 @@
               <div class="panel-header">
                 <el-icon><Avatar /></el-icon>
                 <span>好友号池</span>
+                <span v-if="currentServerName" class="friend-pool-server-tag">（{{ currentServerName }}）</span>
                 <el-button size="small" @click="refreshFriendPool" :disabled="friendPoolLoading">
                   <el-icon style="margin-right: 4px"><Refresh /></el-icon>刷新
                 </el-button>
@@ -220,36 +228,6 @@
                   </el-col>
                 </el-row>
 
-                <!-- 状态筛选 -->
-                <div class="friend-pool-filter">
-                  <el-radio-group v-model="friendPoolFilter" size="small" @change="loadFriendPool">
-                    <el-radio-button label="">全部</el-radio-button>
-                    <el-radio-button label="PENDING">待添加</el-radio-button>
-                    <el-radio-button label="ASSIGNED">已分配</el-radio-button>
-                    <el-radio-button label="SUCCESS">成功</el-radio-button>
-                    <el-radio-button label="FAILED">失败</el-radio-button>
-                  </el-radio-group>
-                </div>
-
-                <!-- 好友列表 -->
-                <div v-if="friendPool.length === 0" class="empty-hint">
-                  暂无好友，请到服务器管理中同步成员
-                </div>
-                <el-table v-else :data="friendPool.slice(0, 50)" size="small" style="width: 100%">
-                  <el-table-column prop="username" label="用户名" width="150" />
-                  <el-table-column prop="globalName" label="全局名称" width="150" />
-                  <el-table-column label="状态" width="100">
-                    <template #default="{ row }">
-                      <el-tag :type="friendStatusTag(row.status)" size="small">
-                        {{ row.statusText }}
-                      </el-tag>
-                    </template>
-                  </el-table-column>
-                  <el-table-column prop="lastError" label="错误信息" show-overflow-tooltip />
-                </el-table>
-                <div v-if="friendPool.length > 50" class="more-hint">
-                  仅显示前50条，共 {{ friendPool.length }} 条记录
-                </div>
               </div>
             </div>
           </el-card>
@@ -283,10 +261,10 @@
             批量安装 Discord
           </el-button>
           <el-button type="primary" size="small" @click="batchAction('startAuto')" :disabled="!canBatchStartAuto">
-            批量启动加好友
+            批量启动自动加好友
           </el-button>
           <el-button type="primary" size="small" @click="batchAction('stopAuto')" :disabled="!canBatchStopAuto">
-            批量停止加好友
+            批量停止添加
           </el-button>
           <el-button type="primary" size="small" @click="batchAction('delete')" :disabled="selectedEmulators.length === 0 || !physicalStatus.available">
             批量删除
@@ -329,7 +307,7 @@
         <el-table-column label="分辨率" width="100">
           <template #default="{ row }">{{ row.resolution || '-' }}</template>
         </el-table-column>
-        <el-table-column label="登录账号" width="120">
+        <el-table-column label="Discord账号" width="120">
           <template #default="{ row }">
             <span v-if="row.discordAccount">{{ row.discordAccount }}</span>
             <span v-else style="color: #909399">-</span>
@@ -390,12 +368,12 @@
                 v-if="!row.autoRunning && row.discordInstalled"
                 size="small" link type="primary"
                 @click="startAuto(row.index)"
-              >加好友</el-button>
+              >自动加好友</el-button>
               <el-button
                 v-else-if="row.autoRunning"
                 size="small" link type="primary"
                 @click="stopAuto(row.index)"
-              >停止</el-button>
+              >停止添加</el-button>
             </template>
             <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="deleteEmulator(row.index)">删除</el-button>
           </template>
@@ -518,12 +496,19 @@ const availableServersLoading = ref(false)
 const serverSearch = ref('')
 const showServerDialog = ref(false)
 const selectedAccountId = ref(null)  // 选中的账号ID，用于筛选服务器
+const selectedServerId = ref(null)  // 当前选中的服务器ID
 
 // 好友号池
 const friendPool = ref([])
 const friendPoolStats = ref({ total: 0, pending: 0, assigned: 0, success: 0, failed: 0 })
 const friendPoolLoading = ref(false)
 const friendPoolFilter = ref('PENDING')
+
+// 当前选中的服务器名称
+const currentServerName = computed(() => {
+  const server = addedServers.value.find(s => s.serverId === selectedServerId.value)
+  return server ? (server.serverName || server.name || '') : ''
+})
 
 // API 基础 URL
 const API_BASE = '/api/emu'
@@ -929,7 +914,20 @@ async function loadAddedServers() {
   try {
     const resp = await emuApi.get('/servers/added')
     addedServers.value = resp.data || []
+    // 默认选择第一个服务器（如果没有选中的）
+    if (!selectedServerId.value && addedServers.value.length > 0) {
+      selectedServerId.value = addedServers.value[0].serverId
+    }
+    // 如果选中的服务器已被删除，选择第一个
+    if (selectedServerId.value && !addedServers.value.some(s => s.serverId === selectedServerId.value)) {
+      selectedServerId.value = addedServers.value.length > 0 ? addedServers.value[0].serverId : null
+    }
   } catch { addedServers.value = [] }
+}
+
+// 选择服务器
+function selectServer(serverId) {
+  selectedServerId.value = serverId
 }
 
 async function loadAvailableServers() {
@@ -950,10 +948,14 @@ async function addServer(server) {
     ElMessage.success('服务器已添加，正在同步成员...')
     await loadAddedServers()
     await loadAvailableServers()
+    // 选中新添加的服务器
+    selectedServerId.value = server.id
     // 自动同步好友数据
     if (server.serverId) {
       await syncFriends({ serverId: server.serverId, name: server.name })
     }
+    // 刷新好友池统计
+    await loadFriendPoolStats()
   } catch (e) {
     ElMessage.error('添加失败: ' + (e.response?.data?.message || e.message))
   }
@@ -961,9 +963,19 @@ async function addServer(server) {
 
 async function removeServer(bindingId) {
   try {
+    // 找到要删除的服务器的 serverId
+    const server = addedServers.value.find(s => s.id === bindingId)
+    const serverId = server?.serverId
+    
     await emuApi.delete(`/servers/${bindingId}`)
     ElMessage.success('服务器已移除')
     await Promise.all([loadAddedServers(), loadAvailableServers()])
+    // 如果删除的是选中的服务器，更新选中状态
+    if (serverId && selectedServerId.value === serverId) {
+      selectedServerId.value = addedServers.value.length > 0 ? addedServers.value[0].serverId : null
+    }
+    // 刷新好友池统计
+    await loadFriendPoolStats()
   } catch (e) {
     ElMessage.error('移除失败: ' + (e.response?.data?.message || e.message))
   }
@@ -1505,6 +1517,29 @@ function formatCountdown(timestamp) {
 .server-count {
   color: #67c23a;
   font-size: 12px;
+}
+
+.server-item {
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.server-item:hover {
+  background: #e8eaed;
+}
+
+.server-item--selected {
+  background: #ecf5ff;
+  border: 1px solid #409eff;
+}
+
+.server-selected-tag {
+  margin-left: 4px;
+}
+
+.friend-pool-server-tag {
+  color: #409eff;
+  font-size: 13px;
 }
 
 .server-actions {

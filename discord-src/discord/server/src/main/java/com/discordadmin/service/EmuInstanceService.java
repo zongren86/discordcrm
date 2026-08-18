@@ -1,7 +1,9 @@
 package com.discordadmin.service;
 
 import com.discordadmin.entity.AgentRegistration;
+import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.EmuInstance;
+import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.EmuInstanceRepository;
 import com.discordadmin.security.SecurityUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +25,7 @@ public class EmuInstanceService {
     private final MumuClientService mumuClientService;
     private final CloudWebSocketService webSocketService;
     private final ApkManagementService apkManagementService;
+    private final DiscordAccountRepository discordAccountRepository;
 
     @Value("${emulator.local-mode:false}")
     private boolean localMode;
@@ -30,11 +33,13 @@ public class EmuInstanceService {
     public EmuInstanceService(EmuInstanceRepository instanceRepository, 
                                MumuClientService mumuClientService,
                                CloudWebSocketService webSocketService,
-                               ApkManagementService apkManagementService) {
+                               ApkManagementService apkManagementService,
+                               DiscordAccountRepository discordAccountRepository) {
         this.instanceRepository = instanceRepository;
         this.mumuClientService = mumuClientService;
         this.webSocketService = webSocketService;
         this.apkManagementService = apkManagementService;
+        this.discordAccountRepository = discordAccountRepository;
     }
 
     private Long resolveMerchantId() {
@@ -102,6 +107,23 @@ public class EmuInstanceService {
                         if (discordLoggedIn != null) {
                             emu.put("discordLoggedIn", discordLoggedIn);
                         }
+                        // 合并模拟器检测到的Discord账号信息（覆盖数据库中的discordAccountId）
+                        Object physDiscordAccount = phys.get("discordAccount");
+                        if (physDiscordAccount != null && !physDiscordAccount.toString().isEmpty()) {
+                            emu.put("discordAccount", physDiscordAccount.toString());
+                        }
+                        Object physDiscordActualUser = phys.get("discordActualUser");
+                        if (physDiscordActualUser != null) {
+                            emu.put("discordActualUser", physDiscordActualUser.toString());
+                        }
+                        Object discordLoginFailed = phys.get("discordLoginFailed");
+                        if (discordLoginFailed != null) {
+                            emu.put("discordLoginFailed", discordLoginFailed);
+                        }
+                        Object discordLoginError = phys.get("discordLoginError");
+                        if (discordLoginError != null) {
+                            emu.put("lastError", discordLoginError.toString());
+                        }
                         Object adbPort = phys.get("adbPort");
                         if (adbPort != null) {
                             emu.put("adbPort", adbPort);
@@ -117,6 +139,23 @@ public class EmuInstanceService {
                         Object memoryMB = phys.get("memoryMB");
                         if (memoryMB != null) {
                             emu.put("memoryGb", memoryMB);
+                        }
+                        // 合并自动加好友相关字段
+                        Object autoRunning = phys.get("autoRunning");
+                        if (autoRunning != null) {
+                            emu.put("autoRunning", autoRunning);
+                        }
+                        Object addedCount = phys.get("addedCount");
+                        if (addedCount != null) {
+                            emu.put("addedCount", addedCount);
+                        }
+                        Object nextAddAt = phys.get("nextAddAt");
+                        if (nextAddAt != null) {
+                            emu.put("nextAddAt", nextAddAt);
+                        }
+                        Object autoLastResult = phys.get("autoLastResult");
+                        if (autoLastResult != null) {
+                            emu.put("autoLastResult", autoLastResult.toString());
                         }
                         break;
                     }
@@ -1089,7 +1128,15 @@ public class EmuInstanceService {
         item.put("discordInstalled", instance.getDiscordInstalled());
         item.put("discordLoggedIn", instance.getDiscordLoggedIn());
         item.put("discordOnHome", instance.getDiscordOnHome());
-        item.put("discordAccount", instance.getDiscordAccountId());
+        
+        // 查询Discord账号名称
+        if (instance.getDiscordAccountId() != null) {
+            DiscordAccount account = discordAccountRepository.findById(instance.getDiscordAccountId()).orElse(null);
+            item.put("discordAccount", account != null ? account.getName() : instance.getDiscordAccountId().toString());
+        } else {
+            item.put("discordAccount", "-");
+        }
+        
         item.put("autoRunning", instance.getAutoRunning());
         item.put("addedCount", instance.getAddedCount());
         item.put("nextAddAt", instance.getNextAddAt() != null ? instance.getNextAddAt().toEpochMilli() : null);
