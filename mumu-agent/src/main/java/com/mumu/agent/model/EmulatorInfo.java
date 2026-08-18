@@ -7,6 +7,7 @@ import java.time.Instant;
 public class EmulatorInfo {
     
     private int index;
+    private String name;
     private int adbPort;
     private String status; // CREATED, RUNNING, STOPPED, ERROR
     private String discordInstalled; // true, false

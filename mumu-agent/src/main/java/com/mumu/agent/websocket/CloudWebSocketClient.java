@@ -19,8 +19,7 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -103,7 +102,11 @@ public class CloudWebSocketClient {
     }
     
     private void sendRegister() {
-        AgentMessage msg = AgentMessage.status("REGISTER", "Agent 已注册");
+        AgentMessage msg = new AgentMessage();
+        msg.setType("REGISTER");
+        msg.setMessage("Agent 已注册");
+        msg.setDeviceId(getDeviceId());
+        msg.setUserId(getUserId());
         msg.setParams(Map.of(
             "deviceId", getDeviceId(),
             "userId", getUserId(),
@@ -175,178 +178,206 @@ public class CloudWebSocketClient {
         }
     }
     
+    @SuppressWarnings("unchecked")
     private void handleMessage(AgentMessage msg) {
-        log.info("收到云端指令: type={}, taskId={}", msg.getType(), msg.getTaskId());
+        String type = msg.getType();
+        String taskId = msg.getTaskId();
+        Map<String, Object> params = msg.getParams();
         
-        switch (msg.getType()) {
-            case "CREATE_EMULATOR" -> handleCreateEmulator(msg);
-            case "START_EMULATOR" -> handleStartEmulator(msg);
-            case "STOP_EMULATOR" -> handleStopEmulator(msg);
-            case "DELETE_EMULATOR" -> handleDeleteEmulator(msg);
-            case "INSTALL_APK" -> handleInstallApk(msg);
-            case "ADD_FRIEND" -> handleAddFriend(msg);
-            case "CHECK_STATUS" -> handleCheckStatus(msg);
-            case "BATCH_START" -> handleBatchStart(msg);
-            case "BATCH_STOP" -> handleBatchStop(msg);
-            case "BATCH_RESTART" -> handleBatchRestart(msg);
-            case "BATCH_DELETE" -> handleBatchDelete(msg);
-            case "BATCH_INSTALL_APK" -> handleBatchInstallApk(msg);
-            case "BATCH_START_AUTO_ADD" -> handleBatchStartAutoAdd(msg);
-            case "BATCH_STOP_AUTO_ADD" -> handleBatchStopAutoAdd(msg);
-            default -> log.warn("未知消息类型: {}", msg.getType());
+        log.info("收到云端指令: type={}, taskId={}", type, taskId);
+        
+        if ("REGISTER_ACK".equals(type) || "ERROR".equals(type)) {
+            log.info("收到握手响应: type={}, params={}", type, params);
+            return;
         }
-    }
-    
-    private void handleCreateEmulator(AgentMessage msg) {
+        
         try {
-            int index = (Integer) msg.getParams().get("index");
-            String result = emulatorService.createEmulator(index);
-            sendResult(msg, "SUCCESS", result);
+            Map<String, Object> result = switch (type) {
+                case "CREATE_EMULATOR" -> handleCreateEmulator(params);
+                case "START_EMULATOR" -> handleStartEmulator(params);
+                case "STOP_EMULATOR" -> handleStopEmulator(params);
+                case "RESTART_EMULATOR" -> handleRestartEmulator(params);
+                case "DELETE_EMULATOR" -> handleDeleteEmulator(params);
+                case "INSTALL_APK" -> handleInstallApk(params);
+                case "LAUNCH_DISCORD" -> handleLaunchDiscord(params);
+                case "ADD_FRIEND" -> handleAddFriend(params);
+                case "CHECK_STATUS" -> handleCheckStatus();
+                case "BATCH_START" -> handleBatchStart(params);
+                case "BATCH_STOP" -> handleBatchStop(params);
+                case "BATCH_RESTART" -> handleBatchRestart(params);
+                case "BATCH_DELETE" -> handleBatchDelete(params);
+                case "BATCH_INSTALL_APK" -> handleBatchInstallApk(params);
+                case "BATCH_START_AUTO_ADD" -> handleBatchStartAutoAdd(params);
+                case "BATCH_STOP_AUTO_ADD" -> handleBatchStopAutoAdd(params);
+                default -> {
+                    log.warn("未知消息类型: {}", type);
+                    Map<String, Object> error = new HashMap<>();
+                    error.put("status", "FAILED");
+                    error.put("message", "未知消息类型: " + type);
+                    yield error;
+                }
+            };
+            
+            sendCommandResult(taskId, result);
         } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
+            log.error("处理指令失败: {}", e.getMessage(), e);
+            Map<String, Object> error = new HashMap<>();
+            error.put("status", "FAILED");
+            error.put("message", e.getMessage());
+            sendCommandResult(taskId, error);
         }
     }
     
-    private void handleStartEmulator(AgentMessage msg) {
-        try {
-            int index = (Integer) msg.getParams().get("index");
-            String result = emulatorService.startEmulator(index);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
+    private Map<String, Object> handleCreateEmulator(Map<String, Object> params) {
+        // 支持两种模式：指定 index 创建，或指定 count 批量创建
+        if (params.containsKey("count")) {
+            int count = ((Number) params.get("count")).intValue();
+            int cpuCores = params.containsKey("cpuCores") ? ((Number) params.get("cpuCores")).intValue() : 2;
+            int memoryGb = params.containsKey("memoryGb") ? ((Number) params.get("memoryGb")).intValue() : 2;
+            return emulatorService.setEmulatorCount(count, cpuCores, memoryGb);
+        } else {
+            // 云端使用 1-based index，MuMuManager 使用 0-based index
+            int cloudIndex = ((Number) params.get("index")).intValue();
+            int muMuIndex = cloudIndex - 1;
+            return emulatorService.createEmulator(muMuIndex);
         }
     }
-    
-    private void handleStopEmulator(AgentMessage msg) {
-        try {
-            int index = (Integer) msg.getParams().get("index");
-            String result = emulatorService.stopEmulator(index);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
+
+    private Map<String, Object> handleStartEmulator(Map<String, Object> params) {
+        // 云端使用 1-based index，MuMuManager 使用 0-based index
+        int cloudIndex = ((Number) params.get("index")).intValue();
+        int muMuIndex = cloudIndex - 1;
+        return emulatorService.startEmulator(muMuIndex);
+    }
+
+    private Map<String, Object> handleStopEmulator(Map<String, Object> params) {
+        int cloudIndex = ((Number) params.get("index")).intValue();
+        int muMuIndex = cloudIndex - 1;
+        return emulatorService.stopEmulator(muMuIndex);
+    }
+
+    private Map<String, Object> handleRestartEmulator(Map<String, Object> params) {
+        int cloudIndex = ((Number) params.get("index")).intValue();
+        int muMuIndex = cloudIndex - 1;
+        return emulatorService.restartEmulator(muMuIndex);
+    }
+
+    private Map<String, Object> handleDeleteEmulator(Map<String, Object> params) {
+        int cloudIndex = ((Number) params.get("index")).intValue();
+        int muMuIndex = cloudIndex - 1;
+        return emulatorService.deleteEmulator(muMuIndex);
+    }
+
+    private Map<String, Object> handleInstallApk(Map<String, Object> params) {
+        int cloudIndex = ((Number) params.get("index")).intValue();
+        int muMuIndex = cloudIndex - 1;
+        String apkUrl = (String) params.get("apkUrl");
+        String result = discordService.installDiscord(muMuIndex, apkUrl);
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "SUCCESS");
+        response.put("message", result);
+        return response;
+    }
+
+    private Map<String, Object> handleLaunchDiscord(Map<String, Object> params) {
+        int cloudIndex = ((Number) params.get("index")).intValue();
+        int muMuIndex = cloudIndex - 1;
+        String result = discordService.launchDiscord(muMuIndex);
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "SUCCESS");
+        response.put("message", result);
+        return response;
+    }
+
+    private Map<String, Object> handleAddFriend(Map<String, Object> params) {
+        int cloudIndex = ((Number) params.get("index")).intValue();
+        int muMuIndex = cloudIndex - 1;
+        String username = (String) params.get("username");
+        String result = discordService.addFriendByUsername(muMuIndex, username);
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "SUCCESS");
+        response.put("message", result);
+        return response;
     }
     
-    private void handleDeleteEmulator(AgentMessage msg) {
-        try {
-            int index = (Integer) msg.getParams().get("index");
-            String result = emulatorService.deleteEmulator(index);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    private void handleInstallApk(AgentMessage msg) {
-        try {
-            int index = (Integer) msg.getParams().get("index");
-            String apkUrl = (String) msg.getParams().get("apkUrl");
-            String result = discordService.installDiscord(index, apkUrl);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    private void handleAddFriend(AgentMessage msg) {
-        try {
-            int index = (Integer) msg.getParams().get("index");
-            String username = (String) msg.getParams().get("username");
-            String result = discordService.addFriendByUsername(index, username);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    private void handleCheckStatus(AgentMessage msg) {
+    private Map<String, Object> handleCheckStatus() {
         AgentStatus status = collectStatus();
-        sendResult(msg, "SUCCESS", status);
+        Map<String, Object> response = new HashMap<>();
+        response.put("status", "SUCCESS");
+        response.put("data", status);
+        return response;
+    }
+
+    // 辅助方法：将云端的 1-based index 列表转换为 MuMuManager 的 0-based index 列表
+    private List<Integer> convertToMuMuIndices(List<Integer> cloudIndices) {
+        if (cloudIndices == null) return null;
+        return cloudIndices.stream()
+            .map(i -> i - 1)
+            .collect(java.util.stream.Collectors.toList());
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> handleBatchStart(Map<String, Object> params) {
+        List<Integer> indices = params.containsKey("indices")
+            ? convertToMuMuIndices((List<Integer>) params.get("indices"))
+            : emulatorService.getEmulatorList().stream()
+                .filter(e -> "STOPPED".equals(e.getStatus()))
+                .map(e -> e.getIndex())
+                .collect(java.util.stream.Collectors.toList());
+        return emulatorService.batchStart(indices);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> handleBatchStop(Map<String, Object> params) {
+        List<Integer> indices = params.containsKey("indices")
+            ? convertToMuMuIndices((List<Integer>) params.get("indices"))
+            : emulatorService.getEmulatorList().stream()
+                .filter(e -> "RUNNING".equals(e.getStatus()))
+                .map(e -> e.getIndex())
+                .collect(java.util.stream.Collectors.toList());
+        return emulatorService.batchStop(indices);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> handleBatchRestart(Map<String, Object> params) {
+        List<Integer> indices = convertToMuMuIndices((List<Integer>) params.get("indices"));
+        return emulatorService.batchRestart(indices);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> handleBatchDelete(Map<String, Object> params) {
+        List<Integer> indices = convertToMuMuIndices((List<Integer>) params.get("indices"));
+        return emulatorService.batchDelete(indices);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> handleBatchInstallApk(Map<String, Object> params) {
+        List<Integer> indices = convertToMuMuIndices((List<Integer>) params.get("indices"));
+        String apkUrl = (String) params.get("apkUrl");
+        return batchService.batchInstallApk(indices, apkUrl);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> handleBatchStartAutoAdd(Map<String, Object> params) {
+        List<Integer> indices = convertToMuMuIndices((List<Integer>) params.get("indices"));
+        List<String> usernames = (List<String>) params.get("usernames");
+        String taskId = (String) params.get("taskId");
+        return batchService.batchStartAutoAdd(indices, usernames, taskId);
     }
     
     @SuppressWarnings("unchecked")
-    private void handleBatchStart(AgentMessage msg) {
-        try {
-            List<Integer> indices = (List<Integer>) msg.getParams().get("indices");
-            Map<String, Object> result = batchService.batchStart(indices);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
+    private Map<String, Object> handleBatchStopAutoAdd(Map<String, Object> params) {
+        List<Integer> indices = convertToMuMuIndices((List<Integer>) params.get("indices"));
+        return batchService.batchStopAutoAdd(indices);
     }
     
-    @SuppressWarnings("unchecked")
-    private void handleBatchStop(AgentMessage msg) {
-        try {
-            List<Integer> indices = (List<Integer>) msg.getParams().get("indices");
-            Map<String, Object> result = batchService.batchStop(indices);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    @SuppressWarnings("unchecked")
-    private void handleBatchRestart(AgentMessage msg) {
-        try {
-            List<Integer> indices = (List<Integer>) msg.getParams().get("indices");
-            Map<String, Object> result = batchService.batchRestart(indices);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    @SuppressWarnings("unchecked")
-    private void handleBatchDelete(AgentMessage msg) {
-        try {
-            List<Integer> indices = (List<Integer>) msg.getParams().get("indices");
-            Map<String, Object> result = batchService.batchDelete(indices);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    @SuppressWarnings("unchecked")
-    private void handleBatchInstallApk(AgentMessage msg) {
-        try {
-            List<Integer> indices = (List<Integer>) msg.getParams().get("indices");
-            String apkUrl = (String) msg.getParams().get("apkUrl");
-            Map<String, Object> result = batchService.batchInstallApk(indices, apkUrl);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    @SuppressWarnings("unchecked")
-    private void handleBatchStartAutoAdd(AgentMessage msg) {
-        try {
-            List<Integer> indices = (List<Integer>) msg.getParams().get("indices");
-            List<String> usernames = (List<String>) msg.getParams().get("usernames");
-            String taskId = (String) msg.getParams().get("taskId");
-            Map<String, Object> result = batchService.batchStartAutoAdd(indices, usernames, taskId);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    @SuppressWarnings("unchecked")
-    private void handleBatchStopAutoAdd(AgentMessage msg) {
-        try {
-            List<Integer> indices = (List<Integer>) msg.getParams().get("indices");
-            Map<String, Object> result = batchService.batchStopAutoAdd(indices);
-            sendResult(msg, "SUCCESS", result);
-        } catch (Exception e) {
-            sendResult(msg, "FAILED", e.getMessage());
-        }
-    }
-    
-    private void sendResult(AgentMessage originalMsg, String status, Object result) {
-        AgentMessage response = AgentMessage.of("TASK_RESULT", originalMsg.getTaskId(), result);
-        response.setParams(Map.of("status", status));
+    private void sendCommandResult(String taskId, Map<String, Object> result) {
+        log.info("发送指令结果: taskId={}, status={}", taskId, result.getOrDefault("status", "UNKNOWN"));
+        AgentMessage response = AgentMessage.of("TASK_RESULT", taskId, result);
+        Map<String, Object> params = new HashMap<>();
+        params.put("status", result.getOrDefault("status", "UNKNOWN"));
+        response.setParams(params);
+        response.setData(result);
         sendMessage(response);
     }
     

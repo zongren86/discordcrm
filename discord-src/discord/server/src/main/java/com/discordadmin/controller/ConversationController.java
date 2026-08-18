@@ -170,6 +170,17 @@ public class ConversationController {
         return response;
     }
 
+    /**
+     * 获取 AI 翻译模型支持的所有语种列表
+     */
+    @GetMapping("/supported-languages")
+    public Map<String, Object> getSupportedLanguages() {
+        Map<String, Object> response = new HashMap<>();
+        response.put("code", 200);
+        response.put("data", languageDetectionService.getSupportedLanguages());
+        return response;
+    }
+
     @PostMapping("/{id}/messages/{messageId}/detect-language")
     public MessageDto detectMessageLanguage(@PathVariable Long id, @PathVariable Long messageId) {
         conversationService.loadOwnedConversation(id);

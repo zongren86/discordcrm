@@ -14,7 +14,7 @@ public interface EmuInstanceRepository extends JpaRepository<EmuInstance, Long> 
 
     List<EmuInstance> findByMerchantIdAndUserId(Long merchantId, String userId);
 
-    Optional<EmuInstance> findByMerchantIdAndInstanceIndex(Long merchantId, Integer instanceIndex);
+    Optional<EmuInstance> findByMerchantIdAndUserIdAndInstanceIndex(Long merchantId, String userId, Integer instanceIndex);
 
     List<EmuInstance> findByStatus(EmuInstance.EmuStatus status);
 

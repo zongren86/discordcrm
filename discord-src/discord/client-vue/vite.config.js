@@ -5,7 +5,7 @@ import { fileURLToPath, URL } from 'node:url'
 // Vite 开发服务器代理：把 /api 和 /ws 转发到后端 8091
 // 这样开发时不需要处理跨域
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8090'
-const EMU_BASE_URL = process.env.EMU_BASE_URL || 'http://localhost:8088'
+const EMU_BASE_URL = process.env.EMU_BASE_URL || 'http://localhost:8090'
 
 export default defineConfig({
   plugins: [vue()],
@@ -32,7 +32,7 @@ export default defineConfig({
       '/emu-api': {
         target: EMU_BASE_URL,
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/emu-api/, '/api')
+        rewrite: (path) => path.replace(/^\/emu-api/, '/api/emu')
       },
       '/emu-ws': {
         target: EMU_BASE_URL,

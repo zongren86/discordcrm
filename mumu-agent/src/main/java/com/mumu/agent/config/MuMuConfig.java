@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 public class MuMuConfig {
     
     private String path;
+    private String managerUrl = "http://localhost:8088";
     private int adbPortStart = 16384;
     private int maxInstances = 200;
 }

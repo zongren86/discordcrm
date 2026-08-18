@@ -283,8 +283,18 @@ async function startEmulator(index) { try { const resp = await emuApi.post(`/emu
 async function stopEmulator(index) { try { const resp = await emuApi.post(`/emulators/${index}/stop`); ElMessage.success(`模拟器 #${index} 已停止`); emulators.value = emulators.value.map(e => e.index === index ? resp.data : e) } catch (e) { ElMessage.error('停止失败: ' + (e.response?.data?.message || e.message)) } }
 async function restartEmulator(index) { try { const resp = await emuApi.post(`/emulators/${index}/restart`); ElMessage.success(`模拟器 #${index} 重启中...`); emulators.value = emulators.value.map(e => e.index === index ? resp.data : e) } catch (e) { ElMessage.error('重启失败: ' + (e.response?.data?.message || e.message)) } }
 async function deleteEmulator(index) {
-  try { await ElMessageBox.confirm(`确定要删除模拟器 #${index} 吗？`, '确认', { type: 'warning' }); const resp = await emuApi.delete(`/emulators/${index}`); if (resp.data?.success) { ElMessage.success('删除成功'); emulators.value = emulators.value.filter(e => e.index !== index) } }
-  catch (e) { if (e !== 'cancel') ElMessage.error('删除失败') }
+  try {
+    await ElMessageBox.confirm(`确定要删除模拟器 #${index} 吗？`, '确认', { type: 'warning' })
+    const resp = await emuApi.delete(`/emulators/${index}`)
+    if (resp.data?.success) {
+      ElMessage.success('删除成功')
+      await fetchEmulators()
+    } else {
+      ElMessage.error(resp.data?.message || '删除失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
+  }
 }
 async function installDiscord(index) { try { await emuApi.post(`/discord/install/${index}`); ElMessage.success(`模拟器 #${index} 开始安装 Discord`); await fetchEmulators() } catch (e) { ElMessage.error('安装失败: ' + (e.response?.data?.message || e.message)) } }
 async function launchDiscord(index) { try { const resp = await emuApi.post(`/discord/launch/${index}`); ElMessage.success(resp.data?.result || 'Discord 启动指令已发送') } catch (e) { ElMessage.error('启动失败: ' + (e.response?.data?.message || e.message)) } }

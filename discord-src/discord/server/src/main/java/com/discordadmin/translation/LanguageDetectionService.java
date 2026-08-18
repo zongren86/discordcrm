@@ -14,9 +14,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.regex.Pattern;
 
 /**
@@ -38,22 +36,43 @@ public class LanguageDetectionService {
             .build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // 语言代码映射
-    private static final Map<String, String> LANGUAGE_NAMES = new HashMap<>();
+    // 语言代码映射（AI 翻译模型支持的所有语种）
+    public static final Map<String, String> LANGUAGE_NAMES = new LinkedHashMap<>();
     static {
         LANGUAGE_NAMES.put("zh", "中文");
-        LANGUAGE_NAMES.put("en", "英文");
-        LANGUAGE_NAMES.put("ja", "日文");
-        LANGUAGE_NAMES.put("ko", "韩文");
-        LANGUAGE_NAMES.put("fr", "法文");
-        LANGUAGE_NAMES.put("de", "德文");
-        LANGUAGE_NAMES.put("es", "西班牙文");
-        LANGUAGE_NAMES.put("pt", "葡萄牙文");
-        LANGUAGE_NAMES.put("ru", "俄文");
-        LANGUAGE_NAMES.put("it", "意大利文");
-        LANGUAGE_NAMES.put("ar", "阿拉伯文");
-        LANGUAGE_NAMES.put("th", "泰文");
-        LANGUAGE_NAMES.put("vi", "越南文");
+        LANGUAGE_NAMES.put("en", "English");
+        LANGUAGE_NAMES.put("ja", "日本語");
+        LANGUAGE_NAMES.put("ko", "한국어");
+        LANGUAGE_NAMES.put("fr", "Français");
+        LANGUAGE_NAMES.put("de", "Deutsch");
+        LANGUAGE_NAMES.put("es", "Español");
+        LANGUAGE_NAMES.put("ru", "Русский");
+        LANGUAGE_NAMES.put("pt", "Português");
+        LANGUAGE_NAMES.put("it", "Italiano");
+        LANGUAGE_NAMES.put("ar", "العربية");
+        LANGUAGE_NAMES.put("th", "ไทย");
+        LANGUAGE_NAMES.put("vi", "Tiếng Việt");
+        LANGUAGE_NAMES.put("id", "Indonesia");
+        LANGUAGE_NAMES.put("hi", "हिन्दी");
+        LANGUAGE_NAMES.put("tr", "Türkçe");
+        LANGUAGE_NAMES.put("nl", "Nederlands");
+        LANGUAGE_NAMES.put("pl", "Polski");
+        LANGUAGE_NAMES.put("sv", "Svenska");
+    }
+
+    /**
+     * 返回当前 AI 翻译模型支持的所有语种列表
+     * 供前端语种选择下拉框使用
+     */
+    public List<Map<String, String>> getSupportedLanguages() {
+        List<Map<String, String>> list = new ArrayList<>();
+        for (Map.Entry<String, String> entry : LANGUAGE_NAMES.entrySet()) {
+            Map<String, String> item = new LinkedHashMap<>();
+            item.put("code", entry.getKey());
+            item.put("name", entry.getValue());
+            list.add(item);
+        }
+        return list;
     }
 
     /**

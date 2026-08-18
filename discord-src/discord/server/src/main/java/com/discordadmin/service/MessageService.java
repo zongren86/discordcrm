@@ -298,7 +298,7 @@ public class MessageService {
             merchantId = conversation.getDiscordAccount().getMerchantId();
         }
 
-        String targetLang = targetLanguage;
+        String targetLang = normalizeLanguageCode(targetLanguage);
         if ((targetLang == null || targetLang.isBlank()) && content != null && !content.isBlank()) {
             targetLang = containsChinese(content) ? "en" : "zh-CN";
         }
@@ -485,6 +485,8 @@ public class MessageService {
             merchantId = message.getConversation().getMerchantId();
         }
 
+        String normalizedTargetLang = normalizeLanguageCode(targetLanguage);
+
         // 语音消息：专门翻译 asrText，写入 asrTranslated
         if ("voice".equalsIgnoreCase(message.getMessageType())) {
             String asrText = message.getAsrText();
@@ -498,7 +500,7 @@ public class MessageService {
                     message.setAsrLanguage(lr.getCode());
                 }
             }
-            translationServiceFactory.translate(asrText, targetLanguage, merchantId)
+            translationServiceFactory.translate(asrText, normalizedTargetLang, merchantId)
                     .ifPresent(message::setAsrTranslated);
             if (message.getAsrTranslated() == null) message.setAsrTranslated(asrText);
             return saveAndBroadcast(message);
@@ -512,7 +514,7 @@ public class MessageService {
             }
         }
         
-        translationServiceFactory.translate(message.getContent(), targetLanguage, merchantId)
+        translationServiceFactory.translate(message.getContent(), normalizedTargetLang, merchantId)
                 .ifPresent(message::setTranslatedContent);
         if (message.getTranslatedContent() == null) {
             message.setTranslatedContent(message.getContent());
@@ -733,7 +735,8 @@ public class MessageService {
         if (merchantId == null && m.getConversation() != null) {
             merchantId = m.getConversation().getMerchantId();
         }
-        translationServiceFactory.translate(asr, targetLanguage, merchantId)
+        String normalizedTargetLang = normalizeLanguageCode(targetLanguage);
+        translationServiceFactory.translate(asr, normalizedTargetLang, merchantId)
                 .ifPresent(m::setAsrTranslated);
         if (m.getAsrTranslated() == null) m.setAsrTranslated(asr);
         // 同步 translatedContent：前端优先展示此字段，翻译结果能直接让客服看到
@@ -899,6 +902,24 @@ public class MessageService {
             if (c >= '\u4e00' && c <= '\u9fff') return true;
         }
         return false;
+    }
+
+    /**
+     * 标准化语言代码：将前端短格式转换为后端兼容的标准格式
+     * zh → zh-CN, en → en, ja → ja, ko → ko
+     */
+    private String normalizeLanguageCode(String lang) {
+        if (lang == null || lang.isBlank()) {
+            return lang;
+        }
+        String code = lang.trim().toLowerCase();
+        return switch (code) {
+            case "zh", "zh-cn", "zh-tw", "zh-hk" -> "zh-CN";
+            case "en", "en-us", "en-gb" -> "en";
+            case "ja", "jp" -> "ja";
+            case "ko", "kr" -> "ko";
+            default -> lang;
+        };
     }
 
     /**

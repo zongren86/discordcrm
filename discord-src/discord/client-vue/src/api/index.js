@@ -146,6 +146,10 @@ export function detectMessageLanguage(conversationId, messageId) {
   return http.post('/conversations/' + conversationId + '/messages/' + messageId + '/detect-language')
 }
 
+export function getSupportedLanguages() {
+  return http.get('/conversations/supported-languages')
+}
+
 // === Discord 用户资料 ===
 export function getUserProfile(userId) {
   return http.get('/discord-users/' + userId)

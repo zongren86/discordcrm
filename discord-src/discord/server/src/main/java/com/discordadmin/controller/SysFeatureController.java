@@ -1,6 +1,8 @@
 package com.discordadmin.controller;
 
+import com.discordadmin.entity.Role;
 import com.discordadmin.entity.SysFeature;
+import com.discordadmin.repository.RoleRepository;
 import com.discordadmin.repository.SysFeatureRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,10 +17,90 @@ import java.util.stream.Collectors;
 public class SysFeatureController {
 
     private final SysFeatureRepository repo;
+    private final RoleRepository roleRepository;
 
     @GetMapping
     public List<SysFeature> list() {
         return repo.findAllByOrderBySortOrderAsc();
+    }
+
+    @PostMapping("/init-data")
+    @Transactional
+    public Map<String, Object> initData() {
+        Map<String, Object> result = new HashMap<>();
+        List<String> created = new ArrayList<>();
+        List<String> updated = new ArrayList<>();
+
+        // 确保一级菜单存在
+        SysFeature service = ensureFeature("service", "服务", null, "MENU_1", null, "Shop", 4, created, updated);
+        
+        // 确保二级菜单存在
+        ensureFeature("guilds", "服务器列表", service.getId(), "MENU_2", "/guilds", "OfficeBuilding", 1, created, updated);
+        ensureFeature("guild-members", "服务器成员", service.getId(), "MENU_2", "/guild-members", "User", 2, created, updated);
+        ensureFeature("friend-manage", "好友管理", service.getId(), "MENU_2", "/emulator", "Monitor", 3, created, updated);
+
+        // 确保 platform_admin 角色包含所有功能权限
+        List<Role> roles = roleRepository.findAll();
+        for (Role role : roles) {
+            if ("platform_admin".equals(role.getCode())) {
+                Set<SysFeature> currentFeatures = new HashSet<>(role.getFeatures());
+                Set<String> existingCodes = currentFeatures.stream()
+                    .map(SysFeature::getCode)
+                    .collect(Collectors.toSet());
+                
+                // 添加缺失的功能
+                List<String> requiredCodes = Arrays.asList(
+                    "dashboard", "chat", "customer", "service", "config", "system", "log",
+                    "account-numbers", "accounts", "customers", "guilds", "guild-members",
+                    "friend-manage", "ai-settings", "users", "roles", "features", "audit"
+                );
+                
+                for (String code : requiredCodes) {
+                    if (!existingCodes.contains(code)) {
+                        repo.findByCode(code).ifPresent(currentFeatures::add);
+                    }
+                }
+                
+                role.setFeatures(currentFeatures);
+                roleRepository.save(role);
+                updated.add("platform_admin 角色权限已更新");
+            }
+        }
+
+        result.put("success", true);
+        result.put("created", created);
+        result.put("updated", updated);
+        return result;
+    }
+
+    private SysFeature ensureFeature(String code, String name, Long parentId, String type, String routePath, String icon, Integer sortOrder, List<String> created, List<String> updated) {
+        Optional<SysFeature> existing = repo.findByCode(code);
+        if (existing.isPresent()) {
+            SysFeature f = existing.get();
+            boolean updated_flag = false;
+            if (!Objects.equals(f.getName(), name)) { f.setName(name); updated_flag = true; }
+            if (!Objects.equals(f.getParentId(), parentId)) { f.setParentId(parentId); updated_flag = true; }
+            if (!Objects.equals(f.getType(), type)) { f.setType(type); updated_flag = true; }
+            if (!Objects.equals(f.getRoutePath(), routePath)) { f.setRoutePath(routePath); updated_flag = true; }
+            if (!Objects.equals(f.getIcon(), icon)) { f.setIcon(icon); updated_flag = true; }
+            if (!Objects.equals(f.getSortOrder(), sortOrder)) { f.setSortOrder(sortOrder); updated_flag = true; }
+            if (updated_flag) {
+                repo.save(f);
+                updated.add(code);
+            }
+            return f;
+        } else {
+            SysFeature f = new SysFeature();
+            f.setCode(code);
+            f.setName(name);
+            f.setParentId(parentId);
+            f.setType(type);
+            f.setRoutePath(routePath);
+            f.setIcon(icon);
+            f.setSortOrder(sortOrder);
+            created.add(code);
+            return repo.save(f);
+        }
     }
 
     @GetMapping("/tree")

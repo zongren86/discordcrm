@@ -32,7 +32,7 @@ public final class SecurityUtils {
 
     public static String currentUserId() {
         JwtAuthFilter.AuthenticatedAgent agent = currentAgent();
-        return agent != null ? String.valueOf(agent.agentId()) : null;
+        return agent != null ? agent.username() : null;
     }
 
     public static String currentRole() {

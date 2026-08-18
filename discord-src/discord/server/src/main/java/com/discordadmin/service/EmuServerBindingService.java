@@ -1,9 +1,8 @@
 package com.discordadmin.service;
 
-import com.discordadmin.entity.DiscordAccount;
-import com.discordadmin.entity.EmuServerBinding;
-import com.discordadmin.entity.GuildServer;
+import com.discordadmin.entity.*;
 import com.discordadmin.repository.*;
+import com.discordadmin.security.SecurityUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,15 +17,24 @@ public class EmuServerBindingService {
     private final GuildServerRepository serverRepository;
     private final DiscordAccountRepository accountRepository;
     private final OccupancyCheckService occupancyCheckService;
+    private final AgentAccountNumberRelRepository relRepository;
+    private final DiscordAccountNumberRepository numberRepository;
+    private final EmuAccountBindingRepository accountBindingRepository;
 
     public EmuServerBindingService(EmuServerBindingRepository bindingRepository,
                                     GuildServerRepository serverRepository,
                                     DiscordAccountRepository accountRepository,
-                                    OccupancyCheckService occupancyCheckService) {
+                                    OccupancyCheckService occupancyCheckService,
+                                    AgentAccountNumberRelRepository relRepository,
+                                    DiscordAccountNumberRepository numberRepository,
+                                    EmuAccountBindingRepository accountBindingRepository) {
         this.bindingRepository = bindingRepository;
         this.serverRepository = serverRepository;
         this.accountRepository = accountRepository;
         this.occupancyCheckService = occupancyCheckService;
+        this.relRepository = relRepository;
+        this.numberRepository = numberRepository;
+        this.accountBindingRepository = accountBindingRepository;
     }
 
     /**
@@ -35,6 +43,16 @@ public class EmuServerBindingService {
     public List<Map<String, Object>> getAddedServers(Long merchantId, String userId) {
         List<EmuServerBinding> bindings = bindingRepository.findByMerchantId(merchantId);
         List<Map<String, Object>> result = new ArrayList<>();
+
+        // 批量查询账号信息
+        Set<Long> accountIds = bindings.stream()
+            .map(EmuServerBinding::getDiscordAccountId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+        Map<Long, DiscordAccount> accountMap = new HashMap<>();
+        if (!accountIds.isEmpty()) {
+            accountRepository.findByIdIn(new ArrayList<>(accountIds)).forEach(a -> accountMap.put(a.getId(), a));
+        }
 
         for (EmuServerBinding binding : bindings) {
             Map<String, Object> item = new HashMap<>();
@@ -49,11 +67,11 @@ public class EmuServerBindingService {
             item.put("createdAt", binding.getCreatedAt());
 
             // 获取账号信息
-            if (binding.getDiscordAccountId() != null) {
-                accountRepository.findById(binding.getDiscordAccountId()).ifPresent(account -> {
-                    item.put("accountName", account.getName());
-                    item.put("accountEmail", account.getEmail());
-                });
+            DiscordAccount account = accountMap.get(binding.getDiscordAccountId());
+            if (account != null) {
+                item.put("accountName", account.getName());
+                item.put("accountEmail", account.getEmail());
+                item.put("discordName", account.getDiscordName());
             }
 
             result.add(item);
@@ -62,9 +80,13 @@ public class EmuServerBindingService {
     }
 
     /**
-     * 获取可用的服务器列表（未被当前商户添加）
+     * 获取可用的服务器列表
+     * 返回所有未添加的服务器，账号筛选变为可选的过滤条件
      */
-    public List<Map<String, Object>> getAvailableServers(Long merchantId, String userId, String keyword) {
+    public List<Map<String, Object>> getAvailableServers(Long merchantId, String userId, 
+                                                          String keyword, Long accountId) {
+        String role = SecurityUtils.currentRole();
+        
         // 获取商户已添加的服务器ID
         List<EmuServerBinding> bindings = bindingRepository.findByMerchantId(merchantId);
         Set<Long> addedServerIds = bindings.stream()
@@ -72,8 +94,37 @@ public class EmuServerBindingService {
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
 
-        // 查询所有服务器
-        List<GuildServer> servers = serverRepository.findAll();
+        // 获取所有服务器
+        List<GuildServer> servers;
+        if (accountId != null) {
+            // 如果指定了账号ID，只获取该账号的服务器
+            servers = serverRepository.findByDiscordAccountId(accountId);
+        } else {
+            // 否则获取所有服务器
+            servers = serverRepository.findAll();
+        }
+
+        // 获取可用的Discord账号ID列表（用于显示账号信息）
+        Set<Long> availableAccountIds = getAvailableAccountIds(merchantId, userId, role);
+        if (accountId != null) {
+            availableAccountIds = new HashSet<>();
+            availableAccountIds.add(accountId);
+        }
+
+        // 批量查询账号信息
+        Map<Long, DiscordAccount> accountMap = new HashMap<>();
+        if (!availableAccountIds.isEmpty()) {
+            accountRepository.findByIdIn(new ArrayList<>(availableAccountIds)).forEach(a -> accountMap.put(a.getId(), a));
+        }
+
+        // 也查询所有服务器关联的账号信息
+        Set<Long> serverAccountIds = servers.stream()
+            .map(GuildServer::getDiscordAccountId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+        if (!serverAccountIds.isEmpty()) {
+            accountRepository.findByIdIn(new ArrayList<>(serverAccountIds)).forEach(a -> accountMap.put(a.getId(), a));
+        }
 
         return servers.stream()
             .filter(s -> !addedServerIds.contains(s.getId()))
@@ -91,14 +142,57 @@ public class EmuServerBindingService {
                 item.put("status", server.getStatus());
                 item.put("canAdd", true);
 
-                // 检查是否可以添加（关联的账号是否被占用）
-                if (server.getDiscordAccountId() != null) {
-                    item.put("accountOccupied", occupancyCheckService.isDiscordAccountOccupied(server.getDiscordAccountId()));
+                // 获取关联账号信息
+                DiscordAccount account = accountMap.get(server.getDiscordAccountId());
+                if (account != null) {
+                    item.put("accountName", account.getName());
+                    item.put("accountEmail", account.getEmail());
+                    item.put("discordName", account.getDiscordName());
                 }
 
                 return item;
             })
             .collect(Collectors.toList());
+    }
+
+    /**
+     * 获取当前用户可用的Discord账号ID集合
+     */
+    private Set<Long> getAvailableAccountIds(Long merchantId, String userId, String role) {
+        Set<Long> accountIds = new HashSet<>();
+        
+        if ("MERCHANT_ADMIN".equals(role)) {
+            // 商户管理员：获取商户已添加的账号
+            List<EmuAccountBinding> accountBindings = accountBindingRepository.findByMerchantId(merchantId);
+            accountIds = accountBindings.stream()
+                .map(EmuAccountBinding::getDiscordAccountId)
+                .collect(Collectors.toSet());
+        } else {
+            // 普通用户：获取其关联账号中已添加的账号
+            Long agentId = Long.parseLong(userId);
+            List<AgentAccountNumberRel> rels = relRepository.findByAgentId(agentId);
+            Set<Long> numberIds = rels.stream()
+                .map(AgentAccountNumberRel::getAccountNumberId)
+                .collect(Collectors.toSet());
+            
+            List<DiscordAccountNumber> numbers = numberRepository.findByIdIn(new ArrayList<>(numberIds));
+            Set<Long> discordAccountIds = numbers.stream()
+                .map(DiscordAccountNumber::getDiscordAccountId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+            
+            // 只保留已添加的账号
+            List<EmuAccountBinding> accountBindings = accountBindingRepository.findByMerchantId(merchantId);
+            Set<Long> addedAccountIds = accountBindings.stream()
+                .map(EmuAccountBinding::getDiscordAccountId)
+                .collect(Collectors.toSet());
+            
+            accountIds = discordAccountIds.stream()
+                .filter(addedAccountIds::contains)
+                .collect(Collectors.toSet());
+        }
+        
+        return accountIds;
     }
 
     /**

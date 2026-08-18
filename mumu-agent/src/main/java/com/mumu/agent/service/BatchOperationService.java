@@ -5,6 +5,7 @@ import com.mumu.agent.model.AgentMessage;
 import com.mumu.agent.model.EmulatorInfo;
 import com.mumu.agent.websocket.CloudWebSocketClient;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -38,7 +39,7 @@ public class BatchOperationService {
     public BatchOperationService(EmulatorService emulatorService,
                                   DiscordAutomationService discordService,
                                   ApkCacheService apkCacheService,
-                                  CloudWebSocketClient webSocketClient,
+                                  @Lazy CloudWebSocketClient webSocketClient,
                                   AgentConfig agentConfig) {
         this.emulatorService = emulatorService;
         this.discordService = discordService;
@@ -49,16 +50,16 @@ public class BatchOperationService {
     
     public Map<String, Object> batchStart(List<Integer> indices) {
         Map<String, Object> result = new HashMap<>();
-        List<String> successList = new ArrayList<>();
-        List<String> failList = new ArrayList<>();
+        List<String> successList = Collections.synchronizedList(new ArrayList<>());
+        List<String> failList = Collections.synchronizedList(new ArrayList<>());
         
         for (int index : indices) {
             batchExecutor.submit(() -> {
-                String res = emulatorService.startEmulator(index);
-                if ("SUCCESS".equals(res)) {
+                Map<String, Object> res = emulatorService.startEmulator(index);
+                if ("SUCCESS".equals(res.get("status"))) {
                     successList.add("模拟器" + index);
                 } else {
-                    failList.add("模拟器" + index + ": " + res);
+                    failList.add("模拟器" + index + ": " + res.getOrDefault("message", ""));
                 }
             });
         }
@@ -70,18 +71,17 @@ public class BatchOperationService {
     
     public Map<String, Object> batchStop(List<Integer> indices) {
         Map<String, Object> result = new HashMap<>();
-        List<String> successList = new ArrayList<>();
-        List<String> failList = new ArrayList<>();
+        List<String> successList = Collections.synchronizedList(new ArrayList<>());
+        List<String> failList = Collections.synchronizedList(new ArrayList<>());
         
         for (int index : indices) {
             batchExecutor.submit(() -> {
-                // 先停止自动加好友
                 stopAutoAdd(index);
-                String res = emulatorService.stopEmulator(index);
-                if ("SUCCESS".equals(res)) {
+                Map<String, Object> res = emulatorService.stopEmulator(index);
+                if ("SUCCESS".equals(res.get("status"))) {
                     successList.add("模拟器" + index);
                 } else {
-                    failList.add("模拟器" + index + ": " + res);
+                    failList.add("模拟器" + index + ": " + res.getOrDefault("message", ""));
                 }
             });
         }
@@ -93,19 +93,19 @@ public class BatchOperationService {
     
     public Map<String, Object> batchRestart(List<Integer> indices) {
         Map<String, Object> result = new HashMap<>();
-        List<String> successList = new ArrayList<>();
-        List<String> failList = new ArrayList<>();
+        List<String> successList = Collections.synchronizedList(new ArrayList<>());
+        List<String> failList = Collections.synchronizedList(new ArrayList<>());
         
         for (int index : indices) {
             batchExecutor.submit(() -> {
                 stopAutoAdd(index);
                 emulatorService.stopEmulator(index);
                 try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
-                String res = emulatorService.startEmulator(index);
-                if ("SUCCESS".equals(res)) {
+                Map<String, Object> res = emulatorService.startEmulator(index);
+                if ("SUCCESS".equals(res.get("status"))) {
                     successList.add("模拟器" + index);
                 } else {
-                    failList.add("模拟器" + index + ": " + res);
+                    failList.add("模拟器" + index + ": " + res.getOrDefault("message", ""));
                 }
             });
         }
@@ -117,17 +117,17 @@ public class BatchOperationService {
     
     public Map<String, Object> batchDelete(List<Integer> indices) {
         Map<String, Object> result = new HashMap<>();
-        List<String> successList = new ArrayList<>();
-        List<String> failList = new ArrayList<>();
+        List<String> successList = Collections.synchronizedList(new ArrayList<>());
+        List<String> failList = Collections.synchronizedList(new ArrayList<>());
         
         for (int index : indices) {
             batchExecutor.submit(() -> {
                 stopAutoAdd(index);
-                String res = emulatorService.deleteEmulator(index);
-                if ("SUCCESS".equals(res)) {
+                Map<String, Object> res = emulatorService.deleteEmulator(index);
+                if ("SUCCESS".equals(res.get("status"))) {
                     successList.add("模拟器" + index);
                 } else {
-                    failList.add("模拟器" + index + ": " + res);
+                    failList.add("模拟器" + index + ": " + res.getOrDefault("message", ""));
                 }
             });
         }

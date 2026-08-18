@@ -449,7 +449,7 @@
                       检测语言: {{ getLanguageName(msg.language) }}
                     </el-tag>
                     <el-button size="small" link type="primary" :loading="translatingSet[msg.id]" @click="translateMsg(msg)">
-                      <el-icon><Location /></el-icon> 翻译成{{ targetLang === 'zh' ? '中文' : targetLang === 'en' ? 'English' : targetLang === 'ja' ? '日本語' : '한국어' }}
+                      <el-icon><Location /></el-icon> 翻译成{{ getLanguageName(targetLang) }}
                     </el-button>
                     <div v-if="msg.userTranslated" class="translated-text">翻译：{{ msg.userTranslated }}</div>
                   </div>
@@ -579,10 +579,12 @@
             <span class="detected-lang">好友语言: {{ detectedLang }}</span>
             <span class="target-lang-label">目标语言:</span>
             <el-select v-model="targetLang" size="small" class="lang-select" @change="onTargetLangChange">
-              <el-option value="zh" label="中文" />
-              <el-option value="en" label="English" />
-              <el-option value="ja" label="日本語" />
-              <el-option value="ko" label="한국어" />
+              <el-option
+                v-for="lang in supportedLanguages"
+                :key="lang.code"
+                :value="lang.code"
+                :label="lang.name"
+              />
             </el-select>
             <el-button size="small" type="primary" plain @click="translateCurrentMsg">
               <el-icon><Location /></el-icon> 翻译
@@ -861,7 +863,8 @@ import {
   getConversationTags, addConversationTags, removeConversationTag, listTagNames as listTagNamesApi,
   listMessageTemplates, getTemplateCategories, createMessageTemplate,
   updateMessageTemplate, deleteMessageTemplate,
-  transcribeVoiceAsr, translateAsrText
+  transcribeVoiceAsr, translateAsrText,
+  getSupportedLanguages
 } from '@/api'
 
 const auth = useAuthStore()
@@ -930,7 +933,21 @@ const originalBelowExpanded = ref({})
 
 const targetLang = ref('zh')
 const detectedLang = ref('未知')
+const supportedLanguages = ref([])  // AI 翻译模型支持的所有语种
 let userChangedTargetLang = false  // 标记用户是否手动修改过目标语言
+
+// 加载后端 AI 翻译模型支持的所有语种
+async function loadSupportedLanguages() {
+  try {
+    const res = await getSupportedLanguages()
+    if (res?.data?.data && Array.isArray(res.data.data)) {
+      supportedLanguages.value = res.data.data
+    }
+  } catch (e) {
+    console.warn('加载支持语种失败:', e)
+  }
+}
+loadSupportedLanguages()
 const isEditing = ref(false)
 const editingMsgId = ref(null)
 const showGifPanel = ref(false)
@@ -1281,11 +1298,13 @@ function canTranslateInbound(msg) {
   return !containsChinese(msg.content || '')
 }
 
-// 语言代码映射
+// 语言代码 → 显示名称 映射（与后端支持的语种保持一致）
 const LANGUAGE_NAMES = {
-  'zh': '中文', 'zh-cn': '中文', 'en': '英文', 'ja': '日文', 'ko': '韩文',
-  'fr': '法文', 'de': '德文', 'es': '西班牙文', 'pt': '葡萄牙文', 'ru': '俄文',
-  'it': '意大利文', 'ar': '阿拉伯文', 'th': '泰文', 'vi': '越南文'
+  'zh': '中文', 'zh-cn': '中文', 'en': 'English', 'ja': '日本語', 'ko': '한국어',
+  'fr': 'Français', 'de': 'Deutsch', 'es': 'Español', 'ru': 'Русский',
+  'pt': 'Português', 'it': 'Italiano', 'ar': 'العربية', 'th': 'ไทย',
+  'vi': 'Tiếng Việt', 'id': 'Indonesia', 'hi': 'हिन्दी',
+  'tr': 'Türkçe', 'nl': 'Nederlands', 'pl': 'Polski', 'sv': 'Svenska'
 }
 
 function getLanguageName(langCode) {
@@ -1584,13 +1603,82 @@ function applyAiSuggestion(s) {
   ElMessage.success('已填入建议回复')
 }
 
+/**
+ * 检测文本语言类型
+ * 简单启发式检测：包含中文字符 → 'zh'，假名/日文 → 'ja'，否则默认 'en'
+ */
+function detectLanguage(text) {
+  if (!text) return null
+  // 检测中文
+  if (/[\u4e00-\u9fa5]/.test(text)) return 'zh'
+  // 检测日文假名
+  if (/[\u3040-\u309F\u30A0-\u30FF]/.test(text)) return 'ja'
+  // 检测韩文
+  if (/[\uac00-\ud7af]/.test(text)) return 'ko'
+  // 检测英文（简单判断，包含英文字母且有空格）
+  if (/[a-zA-Z]/.test(text)) return 'en'
+  return null
+}
+
+/**
+ * 从会话历史消息中检测好友的主要语言
+ */
+function detectFriendLanguage(messages) {
+  if (!messages || messages.length === 0) return null
+  
+  const langCounts = {}
+  // 只统计好友发来的消息（INBOUND），且排除语音消息
+  const inboundMsgs = messages.filter(m => 
+    m.direction === 'INBOUND' && 
+    !isVoiceMsg(m) && 
+    m.content && 
+    m.content.trim()
+  )
+  
+  for (const msg of inboundMsgs) {
+    const lang = detectLanguage(msg.content)
+    if (lang) {
+      langCounts[lang] = (langCounts[lang] || 0) + 1
+    }
+  }
+  
+  // 返回出现次数最多的语言
+  let maxLang = null
+  let maxCount = 0
+  for (const [lang, count] of Object.entries(langCounts)) {
+    if (count > maxCount) {
+      maxCount = count
+      maxLang = lang
+    }
+  }
+  
+  return maxLang
+}
+
 async function selectConversation(c) {
   conversations.selectConversation(c.id)
   conversations.markAsRead(c.id)
   replyToMsg.value = null
+  
+  // 重置用户手动修改标记
+  userChangedTargetLang = false
+  
   // 每次打开会话都强制只加载当天 20 条（避免缓存了历史消息时出现"打开看到非今天"、页面卡顿）
   // 只有用户主动向上滚动，才会触发 loadMore() 拉取更早一页
   await conversations.fetchMessages(c.id)
+  
+  // 检测好友语言并自动切换目标语言
+  const friendLang = detectFriendLanguage(conversations.currentMessages)
+  if (friendLang) {
+    detectedLang.value = LANGUAGE_NAMES[friendLang] || friendLang
+    // 只有当用户没有手动修改过目标语言时才自动切换
+    if (!userChangedTargetLang) {
+      targetLang.value = friendLang
+    }
+  } else {
+    detectedLang.value = '未知'
+  }
+  
   if (showProfile.value) {
     await loadUserProfile(c)
   }
@@ -2345,14 +2433,6 @@ function getPinnedConversations() {
 
 function getNormalConversations() {
   return getFilteredSortedConversations().filter(c => !c.pinned)
-}
-
-function detectLanguage(text) {
-  if (!text) return '未知'
-  if (/[\u4e00-\u9fa5]/.test(text)) return '中文'
-  if (/[\u3040-\u30ff]/.test(text)) return '日语'
-  if (/[\uac00-\ud7af]/.test(text)) return '韩语'
-  return 'English'
 }
 
 function truncateText(text, maxLen = 8) {

@@ -1,10 +1,19 @@
 package com.discordadmin.controller;
 
+import com.discordadmin.discord.member.DiscordMemberService;
+import com.discordadmin.discord.member.MemberFetchRequest;
+import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.EmuAccountBinding;
 import com.discordadmin.entity.EmuFriendPool;
 import com.discordadmin.entity.EmuServerBinding;
+import com.discordadmin.entity.GuildMember;
+import com.discordadmin.entity.GuildServer;
+import com.discordadmin.repository.DiscordAccountRepository;
+import com.discordadmin.repository.GuildMemberRepository;
+import com.discordadmin.repository.GuildServerRepository;
 import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.*;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -15,6 +24,7 @@ import java.util.Map;
 /**
  * 模拟器相关API - 账号管理、服务器管理、好友号池、实例管理、APK管理
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/emu")
 public class EmuManagementController {
@@ -24,17 +34,29 @@ public class EmuManagementController {
     private final EmuFriendPoolService friendPoolService;
     private final EmuInstanceService instanceService;
     private final ApkManagementService apkManagementService;
+    private final DiscordMemberService discordMemberService;
+    private final GuildServerRepository guildServerRepository;
+    private final GuildMemberRepository guildMemberRepository;
+    private final DiscordAccountRepository discordAccountRepository;
 
     public EmuManagementController(EmuAccountBindingService accountBindingService,
                                     EmuServerBindingService serverBindingService,
                                     EmuFriendPoolService friendPoolService,
                                     EmuInstanceService instanceService,
-                                    ApkManagementService apkManagementService) {
+                                    ApkManagementService apkManagementService,
+                                    DiscordMemberService discordMemberService,
+                                    GuildServerRepository guildServerRepository,
+                                    GuildMemberRepository guildMemberRepository,
+                                    DiscordAccountRepository discordAccountRepository) {
         this.accountBindingService = accountBindingService;
         this.serverBindingService = serverBindingService;
         this.friendPoolService = friendPoolService;
         this.instanceService = instanceService;
         this.apkManagementService = apkManagementService;
+        this.discordMemberService = discordMemberService;
+        this.guildServerRepository = guildServerRepository;
+        this.guildMemberRepository = guildMemberRepository;
+        this.discordAccountRepository = discordAccountRepository;
     }
 
     // ========== APK 管理 ==========
@@ -136,10 +158,23 @@ public class EmuManagementController {
      */
     @DeleteMapping("/emulators/{index}")
     public Map<String, Object> deleteEmulator(@PathVariable int index) {
-        instanceService.deleteInstance(index);
-        Map<String, Object> result = new HashMap<>();
-        result.put("success", true);
-        return result;
+        return instanceService.deleteInstance(index);
+    }
+
+    /**
+     * 检查物理模拟器连接状态
+     */
+    @GetMapping("/emulators/physical-status")
+    public Map<String, Object> getPhysicalStatus() {
+        return instanceService.getPhysicalStatus();
+    }
+
+    /**
+     * 同步物理模拟器与数据库记录
+     */
+    @PostMapping("/emulators/sync")
+    public Map<String, Object> syncEmulators() {
+        return instanceService.syncPhysicalAndDb();
     }
 
     // ========== Discord 控制 ==========
@@ -333,12 +368,15 @@ public class EmuManagementController {
 
     /**
      * 获取可用的服务器列表（可添加的）
+     * 支持按账号ID筛选
      */
     @GetMapping("/servers/available")
-    public List<Map<String, Object>> getAvailableServers(@RequestParam(required = false) String keyword) {
+    public List<Map<String, Object>> getAvailableServers(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Long accountId) {
         Long merchantId = SecurityUtils.currentMerchantId();
         String userId = SecurityUtils.currentUserId();
-        return serverBindingService.getAvailableServers(merchantId, userId, keyword);
+        return serverBindingService.getAvailableServers(merchantId, userId, keyword, accountId);
     }
 
     /**
@@ -373,15 +411,184 @@ public class EmuManagementController {
 
     /**
      * 从服务器同步成员到好友号池
+     * 如果服务器成员数据为空，自动触发抓取流程
      */
     @PostMapping("/servers/{serverId}/sync-friends")
     public Map<String, Object> syncFriendsFromServer(@PathVariable Long serverId) {
         Long merchantId = SecurityUtils.currentMerchantId();
-        int count = friendPoolService.syncFriendsFromServer(merchantId, serverId);
-        
+        log.info("开始同步好友：serverId={}, merchantId={}", serverId, merchantId);
+
         Map<String, Object> result = new HashMap<>();
+
+        // 1. 检查 GuildServer 是否存在
+        GuildServer server = guildServerRepository.findById(serverId)
+                .orElseThrow(() -> new RuntimeException("服务器不存在 (ID: " + serverId + ")"));
+        log.info("服务器信息: id={}, guildId={}, accountId={}, name={}", 
+                server.getId(), server.getGuildId(), server.getDiscordAccountId(), server.getName());
+
+        // 2. 获取 Discord 账号（优先使用服务器关联的账号，否则查找系统中任意有效账号）
+        DiscordAccount account = null;
+        if (server.getDiscordAccountId() != null) {
+            account = discordAccountRepository.findById(server.getDiscordAccountId()).orElse(null);
+        }
+        if (account == null) {
+            // 查找系统中第一个有有效 token 的账号
+            account = discordAccountRepository.findAll().stream()
+                    .filter(a -> a.getToken() != null && !a.getToken().isBlank())
+                    .findFirst()
+                    .orElse(null);
+        }
+        
+        if (account == null) {
+            result.put("success", false);
+            result.put("message", "系统中没有有效的 Discord 账号。请先添加至少一个有效的 Discord 账号");
+            result.put("diagnostic", Map.of(
+                "serverId", serverId,
+                "serverName", server.getName(),
+                "step", "check_account"
+            ));
+            return result;
+        }
+        log.info("使用账号: id={}, name={}, token有效={}", account.getId(), account.getName(), 
+                account.getToken() != null && !account.getToken().isBlank());
+
+        // 3. 检查现有成员数量
+        long memberCount = guildMemberRepository.countByGuildServerId(serverId);
+        log.info("现有成员数量: {}", memberCount);
+
+        // 4. 检查是否有最近的抓取任务
+        DiscordMemberService.TaskState lastTask = discordMemberService.getLatestTaskForServer(serverId);
+        if (lastTask != null && ("RUNNING".equals(lastTask.status) || "PENDING".equals(lastTask.status))) {
+            log.info("有正在进行的抓取任务: status={}, members={}", lastTask.status, lastTask.membersUnique);
+            result.put("success", false);
+            result.put("fetchStarted", true);
+            result.put("fetching", true);
+            result.put("message", "成员抓取进行中，已获取 " + lastTask.membersUnique + " 个成员，请等待抓取完成后再同步");
+            result.put("progress", lastTask);
+            return result;
+        }
+
+        // 5. 如果成员为空，触发抓取
+        if (memberCount == 0) {
+            log.info("成员数量为0，开始触发抓取流程");
+            
+            // 检查必要字段
+            if (server.getGuildId() == null || server.getGuildId().isBlank()) {
+                result.put("success", false);
+                result.put("message", "服务器的 Guild ID 为空，无法抓取成员。请先在服务器列表中添加有效的 Discord 服务器链接");
+                result.put("diagnostic", Map.of(
+                    "guildId", server.getGuildId(),
+                    "serverName", server.getName(),
+                    "step", "check_guild_id"
+                ));
+                return result;
+            }
+
+            if (account.getToken() == null || account.getToken().isBlank()) {
+                result.put("success", false);
+                result.put("message", "Discord账号Token为空，无法抓取成员。请先添加有效的Discord账号或更新Token");
+                result.put("diagnostic", Map.of(
+                    "accountId", account.getId(),
+                    "accountName", account.getName(),
+                    "tokenEmpty", true,
+                    "step", "check_token"
+                ));
+                return result;
+            }
+
+            try {
+                MemberFetchRequest req = new MemberFetchRequest();
+                req.setToken(account.getToken());
+                req.setLink(server.getGuildId());
+                req.setGuildServerId(serverId);
+                req.setDiscordAccountId(account.getId());
+                req.setMaxMembers(2000000);
+                req.setPageDelay(1.0);
+                req.setMaxDepth(5);
+                req.setMaxRequests(1000);
+                req.setResumeSync(true);
+
+                String taskId = discordMemberService.startFetch(req);
+                log.info("成员抓取任务已启动: taskId={}", taskId);
+                
+                result.put("fetchStarted", true);
+                result.put("taskId", taskId);
+                result.put("message", "已启动成员抓取任务，请稍等片刻后再次点击同步（任务ID: " + taskId + "）");
+                result.put("success", true);
+                result.put("diagnostic", Map.of(
+                    "taskId", taskId,
+                    "guildId", server.getGuildId(),
+                    "estimatedTime", "根据服务器规模，可能需要几分钟到几十分钟"
+                ));
+                return result;
+            } catch (Exception e) {
+                log.error("启动抓取任务失败", e);
+                result.put("success", false);
+                result.put("message", "启动抓取任务失败: " + e.getMessage());
+                result.put("diagnostic", Map.of(
+                    "error", e.getMessage(),
+                    "step", "start_fetch"
+                ));
+                return result;
+            }
+        }
+
+        // 6. 如果成员不为空，同步到好友池
+        log.info("开始同步 {} 个成员到好友池", memberCount);
+        int count = friendPoolService.syncFriendsFromServer(merchantId, serverId);
+        log.info("同步完成: 新增 {} 个好友", count);
+        
         result.put("addedCount", count);
+        result.put("fetchStarted", false);
         result.put("success", true);
+        result.put("totalMembers", memberCount);
+        result.put("message", count > 0 ? "成功同步 " + count + " 个好友到好友号池" : "没有新的好友需要同步（可能已经全部同步过了）");
+        return result;
+    }
+
+    /**
+     * 查询抓取任务状态
+     */
+    @GetMapping("/servers/fetch-status")
+    public Map<String, Object> getFetchStatus(@RequestParam(required = false) Long serverId,
+                                               @RequestParam(required = false) String taskId) {
+        Map<String, Object> result = new HashMap<>();
+
+        if (taskId != null && !taskId.isBlank()) {
+            DiscordMemberService.TaskState task = discordMemberService.getTask(taskId);
+            if (task != null) {
+                result.put("status", task.status);
+                result.put("progressMessage", task.progressMessage);
+                result.put("membersUnique", task.membersUnique);
+                result.put("requestsSent", task.requestsSent);
+                result.put("prefixesDone", task.prefixesDone);
+                result.put("prefixesTotal", task.prefixesTotal);
+                result.put("error", task.error);
+                result.put("found", true);
+            } else {
+                result.put("found", false);
+                result.put("message", "任务不存在或已过期");
+            }
+        } else if (serverId != null) {
+            DiscordMemberService.TaskState lastTask = discordMemberService.getLatestTaskForServer(serverId);
+            if (lastTask != null) {
+                result.put("status", lastTask.status);
+                result.put("progressMessage", lastTask.progressMessage);
+                result.put("membersUnique", lastTask.membersUnique);
+                result.put("requestsSent", lastTask.requestsSent);
+                result.put("prefixesDone", lastTask.prefixesDone);
+                result.put("prefixesTotal", lastTask.prefixesTotal);
+                result.put("error", lastTask.error);
+                result.put("found", true);
+            } else {
+                result.put("found", false);
+                result.put("message", "该服务器没有抓取任务记录");
+            }
+        } else {
+            result.put("success", false);
+            result.put("message", "需要提供 serverId 或 taskId 参数");
+        }
+
         return result;
     }
 

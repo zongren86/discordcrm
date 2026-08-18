@@ -10,6 +10,8 @@ public class AgentMessage {
     private String type;
     private String taskId;
     private String message;
+    private String deviceId;
+    private String userId;
     private Object data;
     private Map<String, Object> params;
     private Instant timestamp = Instant.now();

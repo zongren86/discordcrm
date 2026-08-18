@@ -73,25 +73,17 @@ router.beforeEach(async (to, from, next) => {
     return
   }
   
+  // 已登录用户，强制刷新权限（确保权限变更能及时生效）
+  if (auth.isLoggedIn && to.meta.requiresAuth !== false) {
+    try {
+      await auth.fetchPermissions()
+    } catch (e) {}
+  }
+  
   // 已登录用户访问没有权限的页面（使用menuPaths判断）
   if (auth.isLoggedIn && to.meta.requiresAuth !== false) {
     const path = to.path === '/' ? '/chat' : to.path
     if (!auth.hasMenuPath(path)) {
-      // 如果不在缓存的menuPaths中，尝试刷新权限
-      if (!permissionsRefreshing) {
-        permissionsRefreshing = true
-        try {
-          await auth.fetchPermissions()
-        } catch (e) {}
-        permissionsRefreshing = false
-        
-        // 刷新后再检查一次
-        if (auth.hasMenuPath(path)) {
-          next()
-          return
-        }
-      }
-      
       const allowedPath = getFirstAllowedPath(auth)
       if (allowedPath === to.path) {
         next()

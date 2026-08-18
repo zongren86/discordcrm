@@ -14,7 +14,7 @@ agent:
   # 设备ID（自动生成或手动配置）
   device-id: ${AGENT_DEVICE_ID:}
   # 用户ID（从云端获取或手动配置）
-  user-id: ${AGENT_USER_ID:}
+  user-id: ${AGENT_USER_ID:merchantadmin}
   # 心跳间隔（秒）
   heartbeat-interval: 30
 
@@ -22,6 +22,8 @@ agent:
 mumu:
   # MuMu 安装路径（空则自动检测）
   path: ${MUMU_PATH:}
+  # MuMuManager 服务地址
+  manager-url: ${MUMU_MANAGER_URL:http://localhost:8088}
   # ADB 端口起始值
   adb-port-start: 16384
   # 最大模拟器实例数

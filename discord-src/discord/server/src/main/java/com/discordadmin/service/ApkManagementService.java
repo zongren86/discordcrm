@@ -2,6 +2,7 @@ package com.discordadmin.service;
 
 import com.discordadmin.entity.ApkVersion;
 import com.discordadmin.repository.ApkVersionRepository;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -14,16 +15,19 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.util.*;
 
+@Slf4j
 @Service
 public class ApkManagementService {
 
     private final ApkVersionRepository apkVersionRepository;
+    private final MumuClientService mumuClientService;
 
     @Value("${discord.emulator.apk-path:${user.home}/.discord-emulator}")
     private String apkStoragePath;
 
-    public ApkManagementService(ApkVersionRepository apkVersionRepository) {
+    public ApkManagementService(ApkVersionRepository apkVersionRepository, MumuClientService mumuClientService) {
         this.apkVersionRepository = apkVersionRepository;
+        this.mumuClientService = mumuClientService;
     }
 
     /**
@@ -52,7 +56,7 @@ public class ApkManagementService {
     }
 
     /**
-     * 上传APK文件
+     * 上传APK文件（同时保存本地和上传到 MumuManager）
      */
     public Map<String, Object> uploadApk(MultipartFile file) throws IOException {
         // 确保目录存在
@@ -85,6 +89,15 @@ public class ApkManagementService {
         version.setIsActive(true);
         version.setUploadedAt(Instant.now());
         apkVersionRepository.save(version);
+
+        // 上传到 MumuManager
+        try {
+            Map<String, Object> mumuResult = mumuClientService.uploadApk(file.getBytes(), fileName);
+            log.info("上传 APK 到 MumuManager 结果: {}", mumuResult.get("message"));
+        } catch (Exception e) {
+            log.warn("上传 APK 到 MumuManager 失败: {}", e.getMessage());
+            // 不影响主流程，继续返回成功
+        }
 
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);

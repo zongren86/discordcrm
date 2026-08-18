@@ -4,9 +4,11 @@ import com.mumu.agent.config.MuMuConfig;
 import com.mumu.agent.model.EmulatorInfo;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
-import java.io.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -17,7 +19,7 @@ public class EmulatorService {
     
     private final MuMuConfig muMuConfig;
     private final Map<Integer, EmulatorInfo> emulators = new ConcurrentHashMap<>();
-    private String detectedMuMuPath;
+    private final RestTemplate restTemplate = new RestTemplate();
     
     public EmulatorService(MuMuConfig muMuConfig) {
         this.muMuConfig = muMuConfig;
@@ -25,112 +27,63 @@ public class EmulatorService {
     
     @PostConstruct
     public void init() {
-        this.detectedMuMuPath = detectMuMuPath();
-        log.info("MuMu 安装路径: {}", detectedMuMuPath != null ? detectedMuMuPath : "未检测到");
+        log.info("MuMu Agent 初始化，MuMuManager URL: {}", muMuConfig.getManagerUrl());
+        syncEmulatorsFromManager();
     }
     
-    private String detectMuMuPath() {
-        // 优先使用配置文件指定的路径
-        if (muMuConfig.getPath() != null && !muMuConfig.getPath().isEmpty()) {
-            if (new File(muMuConfig.getPath()).exists()) {
-                return muMuConfig.getPath();
-            }
-        }
-        
-        String os = System.getProperty("os.name").toLowerCase();
-        if (os.contains("mac")) {
-            return detectMacOS();
-        } else if (os.contains("win")) {
-            return detectWindows();
-        }
-        return null;
-    }
-    
-    private String detectMacOS() {
-        String[] candidatePaths = {
-            "/Applications/Netease/MuMu.app/Contents/MacOS/MuMu",
-            "/Applications/MuMu.app/Contents/MacOS/MuMu",
-            System.getProperty("user.home") + "/Applications/Netease/MuMu.app/Contents/MacOS/MuMu",
-            System.getProperty("user.home") + "/Applications/MuMu.app/Contents/MacOS/MuMu"
-        };
-        
-        for (String path : candidatePaths) {
-            if (new File(path).exists()) {
-                return path;
-            }
-        }
-        
-        // 通过 spotlight 搜索
+    /**
+     * 从 MuMuManager 同步模拟器列表
+     */
+    public void syncEmulatorsFromManager() {
         try {
-            Process process = Runtime.getRuntime().exec(
-                new String[]{"mdfind", "kMDItemCFBundleIdentifier == 'com.netease.mumu'"}
-            );
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.contains("MuMu.app")) {
-                    File appDir = new File(line);
-                    File exeFile = new File(appDir, "Contents/MacOS/MuMu");
-                    if (exeFile.exists()) {
-                        return exeFile.getAbsolutePath();
-                    }
+            List<Map<String, Object>> managers = getAllEmulatorsFromManager();
+            emulators.clear();
+            for (Map<String, Object> m : managers) {
+                EmulatorInfo info = new EmulatorInfo();
+                info.setIndex((Integer) m.get("index"));
+                info.setName((String) m.get("name"));
+                info.setStatus((String) m.get("status"));
+                info.setAdbPort(m.get("adbPort") != null ? ((Number) m.get("adbPort")).intValue() : null);
+                if (m.get("createdAt") != null) {
+                    info.setCreatedAt(java.time.Instant.parse((String) m.get("createdAt")));
                 }
+                emulators.put(info.getIndex(), info);
             }
-            process.waitFor();
+            log.info("从 MuMuManager 同步了 {} 个模拟器", emulators.size());
         } catch (Exception e) {
-            log.debug("Spotlight 搜索失败: {}", e.getMessage());
+            log.warn("从 MuMuManager 同步模拟器失败: {}", e.getMessage());
         }
-        
-        return null;
     }
     
-    private String detectWindows() {
-        String[] candidatePaths = {
-            "C:\\Program Files\\Netease\\MuMu\\MuMuManager.exe",
-            "C:\\Program Files (x86)\\Netease\\MuMu\\MuMuManager.exe",
-            "D:\\Program Files\\Netease\\MuMu\\MuMuManager.exe",
-            "D:\\Netease\\MuMu\\MuMuManager.exe"
-        };
-        
-        for (String path : candidatePaths) {
-            if (new File(path).exists()) {
-                return path;
-            }
-        }
-        
-        // 从注册表检测
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> getAllEmulatorsFromManager() {
         try {
-            Process process = Runtime.getRuntime().exec(
-                "reg query \"HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\MuMu\" /v InstallLocation"
+            ResponseEntity<List<Map<String, Object>>> response = restTemplate.exchange(
+                muMuConfig.getManagerUrl() + "/api/emulators",
+                HttpMethod.GET,
+                null,
+                new ParameterizedTypeReference<List<Map<String, Object>>>() {}
             );
-            BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.contains("InstallLocation")) {
-                    String[] parts = line.trim().split("\\s+");
-                    if (parts.length >= 3) {
-                        String installDir = parts[parts.length - 1];
-                        File exeFile = new File(installDir, "MuMuManager.exe");
-                        if (exeFile.exists()) {
-                            return exeFile.getAbsolutePath();
-                        }
-                    }
-                }
-            }
-            process.waitFor();
+            return response.getBody() != null ? response.getBody() : new ArrayList<>();
         } catch (Exception e) {
-            log.debug("注册表检测失败: {}", e.getMessage());
+            log.warn("获取 MuMuManager 模拟器列表失败: {}", e.getMessage());
+            return new ArrayList<>();
         }
-        
-        return null;
     }
     
     public String getMuMuPath() {
-        return detectedMuMuPath;
+        String path = muMuConfig.getPath();
+        return path != null ? path : muMuConfig.getManagerUrl();
     }
     
     public boolean isMuMuAvailable() {
-        return detectedMuMuPath != null && new File(detectedMuMuPath).exists();
+        try {
+            ResponseEntity<String> response = restTemplate.getForEntity(
+                muMuConfig.getManagerUrl() + "/api/emulators", String.class);
+            return response.getStatusCode().is2xxSuccessful();
+        } catch (Exception e) {
+            return false;
+        }
     }
     
     public int getAdbPort(int index) {
@@ -151,153 +104,375 @@ public class EmulatorService {
         return new ArrayList<>(emulators.values());
     }
     
-    public String createEmulator(int index) {
-        if (emulators.size() >= muMuConfig.getMaxInstances()) {
-            return "ERROR: 已达到最大实例数限制（" + muMuConfig.getMaxInstances() + "个）";
-        }
-        
-        if (emulators.containsKey(index)) {
-            return "ERROR: 模拟器 index=" + index + " 已存在";
-        }
-        
+    /**
+     * 创建模拟器（通过 MuMuManager API）
+     */
+    public Map<String, Object> createEmulator(int index) {
+        Map<String, Object> result = new HashMap<>();
         try {
-            executeMuMuCommand("create", "-index", String.valueOf(index));
+            Map<String, Object> body = new HashMap<>();
+            body.put("index", index);
             
-            EmulatorInfo info = new EmulatorInfo();
-            info.setIndex(index);
-            info.setAdbPort(getAdbPort(index));
-            info.setStatus("CREATED");
-            info.setCreatedAt(java.time.Instant.now());
-            emulators.put(index, info);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             
-            log.info("模拟器 index={} 创建成功，ADB端口={}", index, info.getAdbPort());
-            return "SUCCESS";
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                muMuConfig.getManagerUrl() + "/api/emulators/" + index,
+                HttpMethod.POST,
+                entity,
+                new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+            
+            log.info("创建模拟器 #{} 成功: {}", index, response.getBody());
+            
+            syncEmulatorsFromManager();
+            result.put("status", "SUCCESS");
+            result.put("message", "模拟器 #" + index + " 创建成功");
         } catch (Exception e) {
-            log.error("创建模拟器 index={} 失败", index, e);
-            return "ERROR: " + e.getMessage();
+            log.error("创建模拟器 #{} 失败: {}", index, e.getMessage());
+            result.put("status", "FAILED");
+            result.put("message", "创建失败: " + e.getMessage());
         }
+        return result;
     }
     
-    public String startEmulator(int index) {
-        EmulatorInfo info = emulators.get(index);
-        if (info == null) {
-            return "ERROR: 模拟器 index=" + index + " 不存在";
-        }
-        
+    /**
+     * 批量设置模拟器数量 — 逐个调用 /api/emulators/create 创建
+     */
+    public Map<String, Object> setEmulatorCount(int count, int cpuCores, int memoryGb) {
+        Map<String, Object> result = new HashMap<>();
         try {
-            executeMuMuCommand("start", "-index", String.valueOf(index));
-            
-            info.setStatus("RUNNING");
-            info.setLastStartedAt(java.time.Instant.now());
-            
-            // 等待模拟器启动
-            Thread.sleep(3000);
-            
-            log.info("模拟器 index={} 启动成功", index);
-            return "SUCCESS";
-        } catch (Exception e) {
-            info.setStatus("ERROR");
-            info.setLastError(e.getMessage());
-            log.error("启动模拟器 index={} 失败", index, e);
-            return "ERROR: " + e.getMessage();
-        }
-    }
-    
-    public String stopEmulator(int index) {
-        EmulatorInfo info = emulators.get(index);
-        if (info == null) {
-            return "ERROR: 模拟器 index=" + index + " 不存在";
-        }
-        
-        try {
-            executeMuMuCommand("stop", "-index", String.valueOf(index));
-            
-            info.setStatus("STOPPED");
-            log.info("模拟器 index={} 停止成功", index);
-            return "SUCCESS";
-        } catch (Exception e) {
-            log.error("停止模拟器 index={} 失败", index, e);
-            return "ERROR: " + e.getMessage();
-        }
-    }
-    
-    public String deleteEmulator(int index) {
-        EmulatorInfo info = emulators.get(index);
-        if (info == null) {
-            return "ERROR: 模拟器 index=" + index + " 不存在";
-        }
-        
-        try {
-            if ("RUNNING".equals(info.getStatus())) {
-                stopEmulator(index);
+            // 先获取当前模拟器列表（过滤损坏实例）
+            List<Map<String, Object>> currentList = getAllEmulatorsFromManager();
+            int healthyCount = 0;
+            int damagedCount = 0;
+            if (currentList != null) {
+                for (Map<String, Object> emu : currentList) {
+                    String status = (String) emu.get("status");
+                    Boolean damaged = (Boolean) emu.get("damaged");
+                    if ("DAMAGED".equals(status) || Boolean.TRUE.equals(damaged)) {
+                        damagedCount++;
+                    } else {
+                        healthyCount++;
+                    }
+                }
             }
+            log.info("当前模拟器: 总数={}, 健康={}, 损坏={}, 目标={}", 
+                    currentList != null ? currentList.size() : 0, healthyCount, damagedCount, count);
+
+            // 先删除损坏的实例
+            if (damagedCount > 0 && currentList != null) {
+                log.info("发现 {} 个损坏实例，尝试清理...", damagedCount);
+                for (Map<String, Object> emu : currentList) {
+                    String status = (String) emu.get("status");
+                    Boolean damaged = (Boolean) emu.get("damaged");
+                    if ("DAMAGED".equals(status) || Boolean.TRUE.equals(damaged)) {
+                        Object idx = emu.get("index");
+                        if (idx instanceof Number) {
+                            int damagedIndex = ((Number) idx).intValue();
+                            try {
+                                log.info("删除损坏模拟器: index={}", damagedIndex);
+                                restTemplate.exchange(
+                                        muMuConfig.getManagerUrl() + "/api/emulators/" + damagedIndex,
+                                        HttpMethod.DELETE,
+                                        null,
+                                        new ParameterizedTypeReference<Map<String, Object>>() {}
+                                );
+                            } catch (Exception e) {
+                                log.warn("删除损坏模拟器 #{} 失败: {}", damagedIndex, e.getMessage());
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 如果目标数量小于等于健康实例数量，直接返回
+            if (count <= healthyCount) {
+                log.info("目标数量 <= 健康实例数量，不需要创建新模拟器");
+                syncEmulatorsFromManager();
+                result.put("status", "SUCCESS");
+                result.put("message", "目标数量 " + count + " 已满足，无需创建");
+                result.put("count", healthyCount);
+                return result;
+            }
+
+            // 需要创建新的模拟器（补足健康实例到目标数量）
+            int needToCreate = count - healthyCount;
+            log.info("需要创建 {} 个新模拟器", needToCreate);
+
+            // 逐个创建新的模拟器
+            for (int i = 0; i < needToCreate; i++) {
+                Map<String, Object> body = new HashMap<>();
+                body.put("count", 1);
+                body.put("cpuCount", cpuCores);
+                body.put("memoryMB", memoryGb * 1024);
+
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+
+                log.info("Agent创建第 {} 个模拟器 (create API)", i + 1);
+                ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                        muMuConfig.getManagerUrl() + "/api/emulators/create",
+                        HttpMethod.POST,
+                        entity,
+                        new ParameterizedTypeReference<Map<String, Object>>() {}
+                );
+
+                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                    log.info("模拟器创建成功: {}", response.getBody().get("name"));
+                } else {
+                    log.error("模拟器创建失败");
+                }
+            }
+
+            // 同步最新列表
+            syncEmulatorsFromManager();
+            List<Map<String, Object>> finalList = getAllEmulatorsFromManager();
+            int finalCount = finalList != null ? finalList.size() : 0;
+            log.info("模拟器创建完成，当前共 {} 个", finalCount);
+
+            result.put("status", "SUCCESS");
+            result.put("message", "已创建 " + needToCreate + " 个模拟器，当前共 " + finalCount + " 个");
+            result.put("count", finalCount);
+            result.put("data", finalList);
+        } catch (Exception e) {
+            log.error("设置模拟器数量失败: {}", e.getMessage());
+            result.put("status", "FAILED");
+            result.put("message", "设置失败: " + e.getMessage());
+        }
+        return result;
+    }
+    
+    /**
+     * 启动模拟器
+     */
+    public Map<String, Object> startEmulator(int index) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                muMuConfig.getManagerUrl() + "/api/emulators/" + index + "/start",
+                HttpMethod.POST,
+                null,
+                new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
             
-            executeMuMuCommand("delete", "-index", String.valueOf(index));
+            log.info("启动模拟器 #{} 成功", index);
+            syncEmulatorsFromManager();
+            
+            result.put("status", "SUCCESS");
+            result.put("message", "模拟器 #" + index + " 启动成功");
+        } catch (Exception e) {
+            log.error("启动模拟器 #{} 失败: {}", index, e.getMessage());
+            result.put("status", "FAILED");
+            result.put("message", "启动失败: " + e.getMessage());
+        }
+        return result;
+    }
+    
+    /**
+     * 停止模拟器
+     */
+    public Map<String, Object> stopEmulator(int index) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                muMuConfig.getManagerUrl() + "/api/emulators/" + index + "/stop",
+                HttpMethod.POST,
+                null,
+                new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+            
+            log.info("停止模拟器 #{} 成功", index);
+            syncEmulatorsFromManager();
+            
+            result.put("status", "SUCCESS");
+            result.put("message", "模拟器 #" + index + " 停止成功");
+        } catch (Exception e) {
+            log.error("停止模拟器 #{} 失败: {}", index, e.getMessage());
+            result.put("status", "FAILED");
+            result.put("message", "停止失败: " + e.getMessage());
+        }
+        return result;
+    }
+    
+    /**
+     * 重启模拟器
+     */
+    public Map<String, Object> restartEmulator(int index) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                muMuConfig.getManagerUrl() + "/api/emulators/" + index + "/restart",
+                HttpMethod.POST,
+                null,
+                new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+            
+            log.info("重启模拟器 #{} 成功", index);
+            syncEmulatorsFromManager();
+            
+            result.put("status", "SUCCESS");
+            result.put("message", "模拟器 #" + index + " 重启成功");
+        } catch (Exception e) {
+            log.error("重启模拟器 #{} 失败: {}", index, e.getMessage());
+            result.put("status", "FAILED");
+            result.put("message", "重启失败: " + e.getMessage());
+        }
+        return result;
+    }
+    
+    /**
+     * 删除模拟器
+     */
+    public Map<String, Object> deleteEmulator(int index) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                muMuConfig.getManagerUrl() + "/api/emulators/" + index,
+                HttpMethod.DELETE,
+                null,
+                new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+            
+            log.info("删除模拟器 #{} 成功", index);
             emulators.remove(index);
             
-            log.info("模拟器 index={} 删除成功", index);
-            return "SUCCESS";
+            result.put("status", "SUCCESS");
+            result.put("message", "模拟器 #" + index + " 删除成功");
         } catch (Exception e) {
-            log.error("删除模拟器 index={} 失败", index, e);
-            return "ERROR: " + e.getMessage();
+            log.error("删除模拟器 #{} 失败: {}", index, e.getMessage());
+            result.put("status", "FAILED");
+            result.put("message", "删除失败: " + e.getMessage());
         }
+        return result;
+    }
+    
+    /**
+     * 批量启动
+     */
+    public Map<String, Object> batchStart(List<Integer> indices) {
+        Map<String, Object> result = new HashMap<>();
+        List<String> successList = new ArrayList<>();
+        List<String> failList = new ArrayList<>();
+        
+        for (Integer index : indices) {
+            try {
+                startEmulator(index);
+                successList.add("#" + index);
+            } catch (Exception e) {
+                failList.add("#" + index + ": " + e.getMessage());
+            }
+        }
+        
+        result.put("status", failList.isEmpty() ? "SUCCESS" : "PARTIAL_SUCCESS");
+        result.put("successList", successList);
+        result.put("failList", failList);
+        return result;
+    }
+    
+    /**
+     * 批量停止
+     */
+    public Map<String, Object> batchStop(List<Integer> indices) {
+        Map<String, Object> result = new HashMap<>();
+        List<String> successList = new ArrayList<>();
+        List<String> failList = new ArrayList<>();
+        
+        for (Integer index : indices) {
+            try {
+                stopEmulator(index);
+                successList.add("#" + index);
+            } catch (Exception e) {
+                failList.add("#" + index + ": " + e.getMessage());
+            }
+        }
+        
+        result.put("status", failList.isEmpty() ? "SUCCESS" : "PARTIAL_SUCCESS");
+        result.put("successList", successList);
+        result.put("failList", failList);
+        return result;
+    }
+    
+    /**
+     * 批量重启
+     */
+    public Map<String, Object> batchRestart(List<Integer> indices) {
+        Map<String, Object> result = new HashMap<>();
+        List<String> successList = new ArrayList<>();
+        List<String> failList = new ArrayList<>();
+        
+        for (Integer index : indices) {
+            try {
+                restartEmulator(index);
+                successList.add("#" + index);
+            } catch (Exception e) {
+                failList.add("#" + index + ": " + e.getMessage());
+            }
+        }
+        
+        result.put("status", failList.isEmpty() ? "SUCCESS" : "PARTIAL_SUCCESS");
+        result.put("successList", successList);
+        result.put("failList", failList);
+        return result;
+    }
+    
+    /**
+     * 批量删除
+     */
+    public Map<String, Object> batchDelete(List<Integer> indices) {
+        Map<String, Object> result = new HashMap<>();
+        List<String> successList = new ArrayList<>();
+        List<String> failList = new ArrayList<>();
+        
+        for (Integer index : indices) {
+            try {
+                deleteEmulator(index);
+                successList.add("#" + index);
+            } catch (Exception e) {
+                failList.add("#" + index + ": " + e.getMessage());
+            }
+        }
+        
+        result.put("status", failList.isEmpty() ? "SUCCESS" : "PARTIAL_SUCCESS");
+        result.put("successList", successList);
+        result.put("failList", failList);
+        return result;
     }
     
     public EmulatorInfo getEmulator(int index) {
         return emulators.get(index);
     }
     
-    public String execAdb(int index, String... args) throws Exception {
-        int adbPort = getAdbPort(index);
-        List<String> command = new ArrayList<>();
-        command.add("adb");
-        command.add("-s");
-        command.add("127.0.0.1:" + adbPort);
-        command.addAll(Arrays.asList(args));
-        
-        return executeCommand(command.toArray(new String[0]));
-    }
-    
-    public String execAdbRaw(String... args) throws Exception {
-        List<String> command = new ArrayList<>();
-        command.add("adb");
-        command.addAll(Arrays.asList(args));
-        return executeCommand(command.toArray(new String[0]));
-    }
-    
-    private void executeMuMuCommand(String... args) throws Exception {
-        if (!isMuMuAvailable()) {
-            throw new RuntimeException("MuMu 未安装或路径未配置");
-        }
-        
-        List<String> command = new ArrayList<>();
-        command.add(detectedMuMuPath);
-        command.addAll(Arrays.asList(args));
-        
-        String result = executeCommand(command.toArray(new String[0]));
-        log.debug("MuMu 命令执行结果: {}", result);
-    }
-    
-    private String executeCommand(String[] command) throws Exception {
-        log.debug("执行命令: {}", String.join(" ", command));
-        
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.redirectErrorStream(true);
-        Process process = pb.start();
-        
-        StringBuilder output = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                output.append(line).append("\n");
+    /**
+     * 执行 ADB 命令（通过 MuMuManager API）
+     */
+    public String execAdb(int index, String... args) {
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("index", index);
+            body.put("args", Arrays.asList(args));
+            
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+            
+            ResponseEntity<Map<String, Object>> response = restTemplate.exchange(
+                muMuConfig.getManagerUrl() + "/api/emulators/" + index + "/adb",
+                HttpMethod.POST,
+                entity,
+                new ParameterizedTypeReference<Map<String, Object>>() {}
+            );
+            
+            Map<String, Object> result = response.getBody();
+            if (result != null && result.get("output") != null) {
+                return result.get("output").toString();
             }
+            return result != null ? result.toString() : "";
+        } catch (Exception e) {
+            log.warn("ADB 命令执行失败: {}", e.getMessage());
+            return "";
         }
-        
-        int exitCode = process.waitFor();
-        if (exitCode != 0) {
-            log.warn("命令执行返回非零退出码: {}, 输出: {}", exitCode, output);
-        }
-        
-        return output.toString().trim();
     }
 }

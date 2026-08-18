@@ -10,7 +10,8 @@ import java.time.Instant;
 @Table(name = "agent_registrations", indexes = {
     @Index(name = "idx_agent_user_id", columnList = "user_id"),
     @Index(name = "idx_agent_device_id", columnList = "device_id"),
-    @Index(name = "idx_agent_status", columnList = "status")
+    @Index(name = "idx_agent_status", columnList = "status"),
+    @Index(name = "idx_agent_merchant_id", columnList = "merchant_id")
 })
 @Getter
 @Setter
@@ -19,6 +20,9 @@ public class AgentRegistration {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    
+    @Column(name = "merchant_id")
+    private Long merchantId;
     
     @Column(name = "user_id", nullable = false, length = 128)
     private String userId;

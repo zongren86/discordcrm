@@ -54,28 +54,24 @@ public class LocalController {
     // ==================== 单个模拟器操作 ====================
     
     @PostMapping("/emulators/create")
-    public Map<String, String> createEmulator(@RequestBody Map<String, Integer> body) {
+    public Map<String, Object> createEmulator(@RequestBody Map<String, Integer> body) {
         int index = body.get("index");
-        String result = emulatorService.createEmulator(index);
-        return Map.of("result", result);
+        return emulatorService.createEmulator(index);
     }
     
     @PostMapping("/emulators/{index}/start")
-    public Map<String, String> startEmulator(@PathVariable int index) {
-        String result = emulatorService.startEmulator(index);
-        return Map.of("result", result);
+    public Map<String, Object> startEmulator(@PathVariable int index) {
+        return emulatorService.startEmulator(index);
     }
     
     @PostMapping("/emulators/{index}/stop")
-    public Map<String, String> stopEmulator(@PathVariable int index) {
-        String result = emulatorService.stopEmulator(index);
-        return Map.of("result", result);
+    public Map<String, Object> stopEmulator(@PathVariable int index) {
+        return emulatorService.stopEmulator(index);
     }
     
     @PostMapping("/emulators/{index}/delete")
-    public Map<String, String> deleteEmulator(@PathVariable int index) {
-        String result = emulatorService.deleteEmulator(index);
-        return Map.of("result", result);
+    public Map<String, Object> deleteEmulator(@PathVariable int index) {
+        return emulatorService.deleteEmulator(index);
     }
     
     @GetMapping("/emulators/{index}")

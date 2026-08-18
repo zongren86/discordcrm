@@ -1,24 +1,34 @@
 package com.discordadmin.config;
 
+import com.discordadmin.service.CloudWebSocketService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
+import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
+import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
-import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 import org.springframework.web.socket.server.standard.ServletServerContainerFactoryBean;
 
 @Configuration
+@EnableWebSocket
 @EnableWebSocketMessageBroker
-public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
+public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSocketConfigurer {
+
+    private final CloudWebSocketService cloudWebSocketService;
+
+    public WebSocketConfig(CloudWebSocketService cloudWebSocketService) {
+        this.cloudWebSocketService = cloudWebSocketService;
+    }
 
     @Bean
     public ServletServerContainerFactoryBean createServletServerContainerFactoryBean() {
         ServletServerContainerFactoryBean container = new ServletServerContainerFactoryBean();
-        container.setMaxTextMessageBufferSize(256 * 1024);      // 256KB 文本消息缓冲区
-        container.setMaxBinaryMessageBufferSize(64 * 1024 * 1024); // 64MB 二进制消息缓冲区
-        container.setMaxSessionIdleTimeout(30 * 60 * 1000L);   // 30分钟会话超时
+        container.setMaxTextMessageBufferSize(256 * 1024);
+        container.setMaxBinaryMessageBufferSize(64 * 1024 * 1024);
+        container.setMaxSessionIdleTimeout(30 * 60 * 1000L);
         return container;
     }
 
@@ -36,9 +46,8 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     }
 
     @Override
-    public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
-        registration.setMessageSizeLimit(64 * 1024 * 1024);       // 64MB 消息大小限制
-        registration.setSendBufferSizeLimit(256 * 1024);         // 256KB 发送缓冲区
-        registration.setSendTimeLimit(30 * 1000);                // 30秒发送超时
+    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        registry.addHandler(cloudWebSocketService, "/ws/agent")
+                .setAllowedOriginPatterns("*");
     }
 }

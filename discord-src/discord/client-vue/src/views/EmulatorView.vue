@@ -15,53 +15,68 @@
     </div>
 
     <div v-else class="content">
-      <el-row :gutter="16">
+      <!-- 物理模拟器连接状态提示 -->
+      <el-alert
+        v-if="!physicalStatus.available && !loading"
+        type="warning"
+        :closable="false"
+        show-icon
+        title="未检测到本地模拟器"
+        :description="physicalStatus.message"
+        style="margin-bottom: 12px"
+      >
+        <template #default>
+          <el-button type="primary" size="small" @click="checkPhysicalStatus">重新检测</el-button>
+          <el-button type="primary" size="small" @click="syncPhysical" style="margin-left: 8px">同步数据</el-button>
+        </template>
+      </el-alert>
+
+      <el-row :gutter="12">
         <!-- 左侧：控制面板 -->
-        <el-col :span="8">
+        <el-col :span="6">
           <el-card class="panel" shadow="hover">
             <template #header>
               <div class="panel-header">
                 <el-icon><Setting /></el-icon>
                 <span>模拟器控制</span>
+                <el-button type="primary" size="small" link @click="syncPhysical" :disabled="emuLoading">
+                  🔄 同步
+                </el-button>
               </div>
             </template>
             <div class="panel-body">
               <div class="form-row">
-                <label>模拟器数量</label>
+                <label>数量</label>
                 <el-input-number v-model="targetCount" :min="1" :max="50" size="small" />
               </div>
               <div class="form-row inline-row">
-                <div class="inline-item">
-                  <label>CPU</label>
-                  <el-select v-model="emuConfig.cpuCores" size="small" style="width: 90px">
-                    <el-option v-for="n in 8" :key="n" :label="String(n)" :value="n" />
-                  </el-select>
-                </div>
-                <div class="inline-item">
-                  <label>内存</label>
-                  <el-select v-model="emuConfig.memoryGb" size="small" style="width: 90px">
-                    <el-option v-for="n in 8" :key="n" :label="n + 'G'" :value="n" />
-                  </el-select>
-                </div>
+                <label>CPU</label>
+                <el-select v-model="emuConfig.cpuCores" size="small" style="width: 70px">
+                  <el-option v-for="n in 8" :key="n" :label="String(n)" :value="n" />
+                </el-select>
+                <label>内存</label>
+                <el-select v-model="emuConfig.memoryGb" size="small" style="width: 70px">
+                  <el-option v-for="n in 8" :key="n" :label="n + 'G'" :value="n" />
+                </el-select>
                 <el-button type="primary" size="small" @click="applyCount" :disabled="emuLoading">
-                  {{ emuLoading ? '处理中...' : '应用' }}
+                  应用
                 </el-button>
               </div>
               <div class="action-row">
-                <el-button type="success" @click="startAll" :disabled="emuLoading" size="small">
-                  <el-icon><VideoPlay /></el-icon> 全部启动
+                <el-button type="primary" @click="startAll" :disabled="emuLoading || !physicalStatus.available" size="small">
+                  全部启动
                 </el-button>
-                <el-button type="danger" @click="stopAll" :disabled="emuLoading" size="small">
-                  <el-icon><VideoPause /></el-icon> 全部停止
+                <el-button type="primary" @click="stopAll" :disabled="emuLoading || !physicalStatus.available" size="small">
+                  全部停止
                 </el-button>
-                <el-button type="warning" @click="restartAll" :disabled="emuLoading" size="small">
-                  <el-icon><Refresh /></el-icon> 全部重启
+                <el-button type="primary" @click="restartAll" :disabled="emuLoading || !physicalStatus.available" size="small">
+                  全部重启
                 </el-button>
               </div>
             </div>
           </el-card>
 
-          <el-card class="panel" shadow="hover" style="margin-top: 16px">
+          <el-card class="panel" shadow="hover" style="margin-top: 8px">
             <template #header>
               <div class="panel-header">
                 <el-icon><ChatDotRound /></el-icon>
@@ -70,19 +85,53 @@
             </template>
             <div class="panel-body">
               <div class="form-row">
-                <label>APK 状态</label>
+                <label>APK</label>
                 <el-tag :type="apkDownloaded ? 'success' : 'warning'" size="small">
                   {{ apkDownloaded ? '已下载' : '未下载' }}
                 </el-tag>
-                <el-button size="small" @click="downloadApk" :disabled="apkLoading">
-                  {{ apkLoading ? '下载中...' : '自动下载 APK' }}
-                </el-button>
-                <el-button size="small" @click="triggerApkUpload" :disabled="apkLoading">上传 APK</el-button>
+                <el-button size="small" @click="downloadApk" :disabled="apkLoading">下载</el-button>
+                <el-button size="small" @click="triggerApkUpload" :disabled="apkLoading">上传</el-button>
                 <input ref="apkInput" type="file" accept=".apk" @change="handleApkUpload" style="display:none" />
               </div>
               <div class="form-row">
-                <el-button type="success" size="small" @click="installAllDiscord" :disabled="emuLoading">
+                <el-button type="primary" size="small" @click="installAllDiscord" :disabled="emuLoading">
                   全部安装 Discord
+                </el-button>
+              </div>
+            </div>
+          </el-card>
+
+          <!-- 自动加好友配置移到左侧 -->
+          <el-card class="panel" shadow="hover" style="margin-top: 8px">
+            <template #header>
+              <div class="panel-header">
+                <el-icon><Promotion /></el-icon>
+                <span>自动加好友配置</span>
+              </div>
+            </template>
+            <div class="panel-body">
+              <div class="form-row">
+                <label>间隔</label>
+                <el-input-number v-model="autoConfig.intervalMinutes" :min="1" :max="9999" size="small" style="width: 100px" />
+                <span class="unit">分钟</span>
+              </div>
+              <div class="form-row">
+                <label>延迟</label>
+                <el-input-number v-model="autoConfig.delayMinMinutes" :min="0" :max="9999" size="small" style="width: 80px" />
+                <span>~</span>
+                <el-input-number v-model="autoConfig.delayMaxMinutes" :min="0" :max="9999" size="small" style="width: 80px" />
+                <span class="unit">分钟</span>
+              </div>
+              <div class="form-row">
+                <el-button type="primary" size="small" @click="saveAutoConfig">保存配置</el-button>
+                <span class="hint-sm">间隔+随机延迟(下限~上限)后添加下一个好友</span>
+              </div>
+              <div class="form-row" style="margin-top: 8px">
+                <el-button type="primary" size="small" @click="startAutoAll">
+                  全部开始
+                </el-button>
+                <el-button type="primary" size="small" @click="stopAutoAll">
+                  全部停止
                 </el-button>
               </div>
             </div>
@@ -90,36 +139,8 @@
         </el-col>
 
         <!-- 右侧：配置面板 -->
-        <el-col :span="16">
+        <el-col :span="18">
           <el-card class="panel" shadow="hover">
-            <template #header>
-              <div class="panel-header">
-                <el-icon><Key /></el-icon>
-                <span>Discord 账号管理（{{ addedAccounts.length }} 个）</span>
-                <el-button type="primary" size="small" @click="showAccountDialog = true">
-                  添加账号
-                </el-button>
-              </div>
-            </template>
-            <div class="panel-body">
-              <div v-if="addedAccounts.length === 0" class="empty-hint">
-                暂未添加账号，点击上方"添加账号"按钮开始
-              </div>
-              <div v-else class="account-list">
-                <div v-for="acc in addedAccounts" :key="acc.id" class="account-item">
-                  <div class="account-info">
-                    <el-tag size="small" :type="acc.status === 'ADDED' ? 'success' : 'warning'">
-                      {{ acc.statusText }}
-                    </el-tag>
-                    <span class="account-name">{{ acc.accountName || acc.discordName || '-' }}</span>
-                  </div>
-                  <el-button type="danger" size="small" link @click="removeAccount(acc.id)">删除</el-button>
-                </div>
-              </div>
-            </div>
-          </el-card>
-
-          <el-card class="panel" shadow="hover" style="margin-top: 16px">
             <template #header>
               <div class="panel-header">
                 <el-icon><User /></el-icon>
@@ -136,15 +157,12 @@
               <div v-else class="server-list">
                 <div v-for="srv in addedServers" :key="srv.id" class="server-item">
                   <div class="server-info">
-                    <el-tag size="small" :type="srv.status === 'ADDED' ? 'success' : 'warning'">
-                      {{ srv.statusText }}
-                    </el-tag>
                     <span class="server-name">{{ srv.serverName || srv.name || '-' }}</span>
                     <span class="server-count" v-if="srv.memberCount">{{ srv.memberCount }} 成员</span>
                   </div>
                   <div class="server-actions">
                     <el-button type="primary" size="small" link @click="syncFriends(srv)">同步成员</el-button>
-                    <el-button type="danger" size="small" link @click="removeServer(srv.id)">删除</el-button>
+                    <el-button type="primary" size="small" link @click="removeServer(srv.id)">删除</el-button>
                   </div>
                 </div>
               </div>
@@ -152,10 +170,10 @@
           </el-card>
 
           <!-- 好友号池 -->
-          <el-card class="panel" shadow="hover" style="margin-top: 16px">
+          <el-card class="panel" shadow="hover" style="margin-top: 8px">
             <template #header>
               <div class="panel-header">
-                <el-icon><Friends /></el-icon>
+                <el-icon><Avatar /></el-icon>
                 <span>好友号池</span>
                 <el-button size="small" @click="loadFriendPoolStats" :disabled="friendPoolLoading">
                   刷新
@@ -166,29 +184,39 @@
               <div v-if="friendPoolLoading" class="loading-hint">加载中...</div>
               <div v-else>
                 <!-- 统计卡片 -->
-                <el-row :gutter="8" class="friend-pool-stats">
-                  <el-col :span="6">
+                <el-row :gutter="6" class="friend-pool-stats">
+                  <el-col :span="4">
                     <div class="stat-card">
                       <div class="stat-value">{{ friendPoolStats.total || 0 }}</div>
                       <div class="stat-label">总数</div>
                     </div>
                   </el-col>
-                  <el-col :span="6">
+                  <el-col :span="4">
                     <div class="stat-card stat-pending">
                       <div class="stat-value">{{ friendPoolStats.pending || 0 }}</div>
+                      <div class="stat-ratio">{{ getRatio(friendPoolStats.pending) }}%</div>
                       <div class="stat-label">待添加</div>
                     </div>
                   </el-col>
-                  <el-col :span="6">
+                  <el-col :span="4">
                     <div class="stat-card stat-assigned">
                       <div class="stat-value">{{ friendPoolStats.assigned || 0 }}</div>
+                      <div class="stat-ratio">{{ getRatio(friendPoolStats.assigned) }}%</div>
                       <div class="stat-label">已分配</div>
                     </div>
                   </el-col>
-                  <el-col :span="6">
+                  <el-col :span="4">
                     <div class="stat-card stat-success">
                       <div class="stat-value">{{ friendPoolStats.success || 0 }}</div>
+                      <div class="stat-ratio">{{ getRatio(friendPoolStats.success) }}%</div>
                       <div class="stat-label">成功</div>
+                    </div>
+                  </el-col>
+                  <el-col :span="4">
+                    <div class="stat-card stat-failed">
+                      <div class="stat-value">{{ friendPoolStats.failed || 0 }}</div>
+                      <div class="stat-ratio">{{ getRatio(friendPoolStats.failed) }}%</div>
+                      <div class="stat-label">失败</div>
                     </div>
                   </el-col>
                 </el-row>
@@ -226,49 +254,6 @@
               </div>
             </div>
           </el-card>
-
-          <el-card class="panel" shadow="hover" style="margin-top: 16px">
-            <template #header>
-              <div class="panel-header">
-                <el-icon><Promotion /></el-icon>
-                <span>自动加好友配置</span>
-              </div>
-            </template>
-            <div class="panel-body">
-              <el-row :gutter="12">
-                <el-col :span="6">
-                  <div class="form-row inline">
-                    <label>间隔(秒)</label>
-                    <el-input-number v-model="autoConfig.intervalSeconds" :min="0" size="small" style="width:100%" />
-                  </div>
-                </el-col>
-                <el-col :span="6">
-                  <div class="form-row inline">
-                    <label>延迟下限</label>
-                    <el-input-number v-model="autoConfig.delayMinSeconds" :min="0" size="small" style="width:100%" />
-                  </div>
-                </el-col>
-                <el-col :span="6">
-                  <div class="form-row inline">
-                    <label>延迟上限</label>
-                    <el-input-number v-model="autoConfig.delayMaxSeconds" :min="0" size="small" style="width:100%" />
-                  </div>
-                </el-col>
-                <el-col :span="6">
-                  <el-button type="primary" size="small" @click="saveAutoConfig" style="width:100%">保存配置</el-button>
-                </el-col>
-              </el-row>
-              <div class="form-row" style="margin-top: 12px">
-                <el-button type="success" size="small" @click="startAutoAll">
-                  <el-icon><VideoPlay /></el-icon> 全部开始自动加好友
-                </el-button>
-                <el-button type="warning" size="small" @click="stopAutoAll">
-                  <el-icon><VideoPause /></el-icon> 全部停止
-                </el-button>
-                <span class="hint-sm">间隔 + 随机延迟(下限~上限) 后添加下一个好友</span>
-              </div>
-            </div>
-          </el-card>
         </el-col>
       </el-row>
 
@@ -286,25 +271,25 @@
           <el-button link type="primary" size="small" @click="clearSelection">清空选择</el-button>
         </div>
         <div class="batch-actions">
-          <el-button type="success" size="small" @click="batchAction('start')" :disabled="!canBatchStart">
-            <el-icon><VideoPlay /></el-icon> 批量启动
+          <el-button type="primary" size="small" @click="batchAction('start')" :disabled="!canBatchStart || !physicalStatus.available">
+            批量启动
           </el-button>
-          <el-button type="danger" size="small" @click="batchAction('stop')" :disabled="!canBatchStop">
-            <el-icon><VideoPause /></el-icon> 批量停止
+          <el-button type="primary" size="small" @click="batchAction('stop')" :disabled="!canBatchStop || !physicalStatus.available">
+            批量停止
           </el-button>
-          <el-button type="warning" size="small" @click="batchAction('restart')" :disabled="!canBatchRestart">
-            <el-icon><Refresh /></el-icon> 批量重启
+          <el-button type="primary" size="small" @click="batchAction('restart')" :disabled="!canBatchRestart || !physicalStatus.available">
+            批量重启
           </el-button>
-          <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall">
+          <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall || !physicalStatus.available">
             批量安装 Discord
           </el-button>
-          <el-button type="success" size="small" @click="batchAction('startAuto')" :disabled="!canBatchStartAuto">
-            <el-icon><VideoPlay /></el-icon> 批量启动加好友
+          <el-button type="primary" size="small" @click="batchAction('startAuto')" :disabled="!canBatchStartAuto">
+            批量启动加好友
           </el-button>
-          <el-button type="warning" size="small" @click="batchAction('stopAuto')" :disabled="!canBatchStopAuto">
-            <el-icon><VideoPause /></el-icon> 批量停止加好友
+          <el-button type="primary" size="small" @click="batchAction('stopAuto')" :disabled="!canBatchStopAuto">
+            批量停止加好友
           </el-button>
-          <el-button type="danger" size="small" @click="batchAction('delete')" plain :disabled="selectedEmulators.length === 0">
+          <el-button type="primary" size="small" @click="batchAction('delete')" :disabled="selectedEmulators.length === 0 || !physicalStatus.available">
             批量删除
           </el-button>
         </div>
@@ -314,61 +299,59 @@
       <el-table 
         v-if="emulators.length > 0" 
         :data="sortedEmulators" 
-        style="margin-top: 16px; width: 100%"
+        style="margin-top: 8px; width: 100%"
         @selection-change="handleSelectionChange"
         :row-class-name="rowClassName"
+        size="small"
       >
         <el-table-column type="selection" width="50" />
-        <el-table-column label="索引" width="80">
+        <el-table-column label="索引" width="60">
           <template #default="{ row }">
             <span class="emu-name">#{{ row.index }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="名称" width="120">
+        <el-table-column label="名称" width="100">
           <template #default="{ row }">{{ row.name || `模拟器${row.index}` }}</template>
         </el-table-column>
         <el-table-column label="CPU/内存" width="100">
           <template #default="{ row }">
-            <span v-if="row.cpuCores || row.memoryGb">{{ row.cpuCores || '-' }}核 / {{ row.memoryGb || '-' }}G</span>
+            <span v-if="row.cpuCores || row.memoryGb">{{ row.cpuCores || '-' }}核/{{ row.memoryGb || '-' }}G</span>
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="80">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="ADB端口" width="100">
+        <el-table-column label="ADB端口" width="80">
           <template #default="{ row }">{{ row.adbPort || '-' }}</template>
         </el-table-column>
-        <el-table-column label="分辨率" width="120">
+        <el-table-column label="分辨率" width="100">
           <template #default="{ row }">{{ row.resolution || '-' }}</template>
         </el-table-column>
-        <el-table-column label="登录账号" width="150">
+        <el-table-column label="登录账号" width="120">
           <template #default="{ row }">
             <span v-if="row.discordAccount">{{ row.discordAccount }}</span>
             <span v-else style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="Discord状态" width="180">
+        <el-table-column label="Discord状态" width="150">
           <template #default="{ row }">
             <div v-if="row.discordInstalled">
-              <el-tag type="success" size="small" style="margin-right: 4px">已安装</el-tag>
-              <span v-if="row.discordLoggedIn" style="color: #67c23a">已登录</span>
-              <span v-else style="color: #f56c6c">未登录</span>
-              <span v-if="row.discordLoggedIn" style="margin-left: 4px">
-                <el-tag v-if="row.discordOnHome" type="success" size="small" style="margin-left: 4px">首页</el-tag>
-                <el-tag v-else type="info" size="small" style="margin-left: 4px">非首页</el-tag>
-              </span>
+              <el-tag type="success" size="small" style="margin-right: 2px">已安装</el-tag>
+              <span v-if="row.discordLoggedIn" style="color: #67c23a;font-size:12px">已登录</span>
+              <span v-else style="color: #f56c6c;font-size:12px">未登录</span>
+              <el-tag v-if="row.discordLoggedIn && row.discordOnHome" type="success" size="small" style="margin-left: 2px">首页</el-tag>
             </div>
             <el-tag v-else-if="row.status === 'RUNNING'" type="warning" size="small">未安装</el-tag>
             <span v-else style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="加好友状态" width="160">
+        <el-table-column label="加好友状态" width="140">
           <template #default="{ row }">
             <div v-if="row.autoRunning" style="color: #67c23a">
-              运行中 · 已添加 {{ row.addedCount || 0 }}
+              运行中·已添加 {{ row.addedCount || 0 }}
             </div>
             <div v-else-if="row.discordInstalled && row.status === 'RUNNING'">
               已添加 {{ row.addedCount || 0 }} · {{ formatCountdown(row.nextAddAt) }}
@@ -376,40 +359,46 @@
             <span v-else style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="错误信息" width="200">
+        <el-table-column label="错误信息" width="180">
           <template #default="{ row }">
             <span v-if="row.lastError" style="color: #f56c6c; font-size: 12px">{{ row.lastError }}</span>
             <span v-else-if="row.autoLastResult" style="color: #409eff; font-size: 12px">{{ row.autoLastResult }}</span>
             <span v-else style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="280" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <template v-if="row.status !== 'RUNNING'">
-              <el-button type="success" size="small" @click="startEmulator(row.index)">启动</el-button>
+              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="startEmulator(row.index)">
+                {{ isOperating(row.index) ? '启动中...' : '启动' }}
+              </el-button>
             </template>
             <template v-else>
-              <el-button type="danger" size="small" @click="stopEmulator(row.index)">停止</el-button>
-              <el-button type="warning" size="small" @click="restartEmulator(row.index)">重启</el-button>
+              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="stopEmulator(row.index)">
+                {{ isOperating(row.index) ? '停止中...' : '停止' }}
+              </el-button>
+              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="restartEmulator(row.index)">
+                {{ isOperating(row.index) ? '重启中...' : '重启' }}
+              </el-button>
             </template>
             <template v-if="row.status === 'RUNNING'">
-              <el-button v-if="!row.discordInstalled" size="small" @click="installDiscord(row.index)">安装DS</el-button>
-              <el-button v-else size="small" disabled>
-                <el-icon color="#67c23a"><CircleCheck /></el-icon>
+              <el-button v-if="!row.discordInstalled" size="small" link type="primary" @click="installDiscord(row.index)">安装DS</el-button>
+              <el-button v-else size="small" link type="primary" disabled>
+                已安装
               </el-button>
-              <el-button size="small" @click="launchDiscord(row.index)">启动DS</el-button>
+              <el-button size="small" link type="primary" @click="launchDiscord(row.index)">启动DS</el-button>
               <el-button
                 v-if="!row.autoRunning && row.discordInstalled"
-                type="success" size="small"
+                size="small" link type="primary"
                 @click="startAuto(row.index)"
-              >▶ 加好友</el-button>
+              >加好友</el-button>
               <el-button
                 v-else-if="row.autoRunning"
-                type="warning" size="small"
+                size="small" link type="primary"
                 @click="stopAuto(row.index)"
-              >■ 停止</el-button>
+              >停止</el-button>
             </template>
-            <el-button size="small" type="danger" plain @click="deleteEmulator(row.index)">删除</el-button>
+            <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="deleteEmulator(row.index)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -417,77 +406,51 @@
       <el-empty v-else-if="!loading" description="暂无模拟器，在上方设置数量后点击「应用」创建" />
     </div>
 
-    <!-- 添加账号弹窗 -->
-    <el-dialog v-model="showAccountDialog" title="添加 Discord 账号" width="600px">
-      <div class="dialog-section">
-        <h4>已添加的账号</h4>
-        <div v-if="addedAccounts.length === 0" class="empty-hint">暂无已添加账号</div>
-        <div v-else class="dialog-list">
-          <div v-for="acc in addedAccounts" :key="acc.id" class="dialog-item">
-            <span>{{ acc.accountName || acc.discordName }}</span>
-            <el-button type="danger" size="small" link @click="removeAccount(acc.id)">移除</el-button>
-          </div>
-        </div>
-      </div>
-      <el-divider />
-      <div class="dialog-section">
-        <div class="dialog-header">
-          <h4>可添加的账号</h4>
-          <el-input v-model="accountSearch" size="small" placeholder="搜索账号" clearable style="width: 200px" />
-        </div>
-        <div v-if="availableAccountsLoading" class="loading-hint">加载中...</div>
-        <div v-else-if="filteredAvailableAccounts.length === 0" class="empty-hint">
-          没有可添加的账号
-        </div>
-        <div v-else class="dialog-list">
-          <div v-for="acc in filteredAvailableAccounts" :key="acc.id" class="dialog-item">
-            <div class="item-info">
-              <span class="item-name">{{ acc.accountName || acc.discordName }}</span>
-              <span class="item-email" v-if="acc.email">{{ acc.email }}</span>
-              <el-tag v-if="!acc.canAdd" size="small" type="warning">已占用</el-tag>
-            </div>
-            <el-button type="primary" size="small" :disabled="!acc.canAdd" @click="addAccount(acc.id)">
-              添加
-            </el-button>
-          </div>
-        </div>
-      </div>
-    </el-dialog>
-
     <!-- 添加服务器弹窗 -->
-    <el-dialog v-model="showServerDialog" title="添加服务器" width="600px">
+    <el-dialog v-model="showServerDialog" title="添加服务器" width="800px" :close-on-click-modal="false">
       <div class="dialog-section">
         <h4>已添加的服务器</h4>
         <div v-if="addedServers.length === 0" class="empty-hint">暂无已添加服务器</div>
-        <div v-else class="dialog-list">
-          <div v-for="srv in addedServers" :key="srv.id" class="dialog-item">
-            <span>{{ srv.serverName }}</span>
-            <el-button type="danger" size="small" link @click="removeServer(srv.id)">移除</el-button>
-          </div>
-        </div>
+        <el-table v-else :data="addedServers" size="small" style="width: 100%">
+          <el-table-column prop="id" label="ID" width="60" />
+          <el-table-column prop="serverName" label="服务器名称" width="200" show-overflow-tooltip />
+          <el-table-column label="操作" width="60">
+            <template #default="{ row }">
+              <el-button type="primary" size="small" link @click="removeServer(row.id)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
       <el-divider />
       <div class="dialog-section">
         <div class="dialog-header">
           <h4>可添加的服务器</h4>
-          <el-input v-model="serverSearch" size="small" placeholder="搜索服务器" clearable style="width: 200px" />
+          <div class="filter-row">
+            <el-select v-model="selectedAccountId" size="small" placeholder="账号筛选（可选）" clearable style="width: 150px">
+              <el-option 
+                v-for="acc in addedAccounts" 
+                :key="acc.discordAccountId" 
+                :label="acc.accountName || acc.discordName" 
+                :value="acc.discordAccountId" 
+              />
+            </el-select>
+            <el-input v-model="serverSearch" size="small" placeholder="搜索服务器名称" clearable style="width: 180px" />
+          </div>
         </div>
         <div v-if="availableServersLoading" class="loading-hint">加载中...</div>
         <div v-else-if="filteredAvailableServers.length === 0" class="empty-hint">
           没有可添加的服务器
         </div>
-        <div v-else class="dialog-list">
-          <div v-for="srv in filteredAvailableServers" :key="srv.id" class="dialog-item">
-            <div class="item-info">
-              <span class="item-name">{{ srv.name || srv.guildId }}</span>
-              <span class="item-count" v-if="srv.memberCount">{{ srv.memberCount }} 成员</span>
-              <el-tag v-if="srv.accountOccupied" size="small" type="warning">账号已占用</el-tag>
-            </div>
-            <el-button type="primary" size="small" :disabled="srv.accountOccupied" @click="addServer(srv)">
-              添加
-            </el-button>
-          </div>
-        </div>
+        <el-table v-else :data="filteredAvailableServers" size="small" style="width: 100%">
+          <el-table-column prop="id" label="ID" width="60" />
+          <el-table-column prop="accountName" label="Discord账号" width="120" />
+          <el-table-column prop="name" label="服务器名称" width="200" show-overflow-tooltip />
+          <el-table-column label="操作" width="80">
+            <template #default="{ row }">
+              <el-button type="primary" size="small" @click="addServer(row)">添加</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
     </el-dialog>
   </div>
@@ -497,7 +460,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
-  ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Friends
+  ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Avatar
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
@@ -509,12 +472,19 @@ const emulators = ref([])
 const targetCount = ref(3)
 const emuLoading = ref(false)
 
+// 物理模拟器连接状态
+const physicalStatus = ref({ available: false, message: '检测中...' })
+
 const apkDownloaded = ref(false)
 const apkLoading = ref(false)
 const apkInput = ref(null)
 
 const emuConfig = ref({ cpuCores: 1, memoryGb: 1 })
-const autoConfig = ref({ intervalSeconds: 900, delayMinSeconds: 60, delayMaxSeconds: 800 })
+// 自动加好友配置：单位改为分钟
+const autoConfig = ref({ intervalMinutes: 15, delayMinMinutes: 1, delayMaxMinutes: 10 })
+
+// 操作中的模拟器索引列表（用于按钮禁用状态）
+const operatingEmulators = ref(new Set())
 
 const selectedEmulators = ref([])
 
@@ -531,6 +501,7 @@ const availableServers = ref([])
 const availableServersLoading = ref(false)
 const serverSearch = ref('')
 const showServerDialog = ref(false)
+const selectedAccountId = ref(null)  // 选中的账号ID，用于筛选服务器
 
 // 好友号池
 const friendPool = ref([])
@@ -596,6 +567,7 @@ const filteredAvailableAccounts = computed(() => {
   if (!accountSearch.value) return availableAccounts.value
   const keyword = accountSearch.value.toLowerCase()
   return availableAccounts.value.filter(acc => 
+    (String(acc.id).includes(keyword)) ||
     (acc.accountName && acc.accountName.toLowerCase().includes(keyword)) ||
     (acc.email && acc.email.toLowerCase().includes(keyword)) ||
     (acc.discordName && acc.discordName.toLowerCase().includes(keyword))
@@ -604,17 +576,35 @@ const filteredAvailableAccounts = computed(() => {
 
 // 过滤可用服务器
 const filteredAvailableServers = computed(() => {
-  if (!serverSearch.value) return availableServers.value
+  let servers = availableServers.value
+  if (selectedAccountId.value) {
+    servers = servers.filter(s => s.discordAccountId === selectedAccountId.value)
+  }
+  if (!serverSearch.value) return servers
   const keyword = serverSearch.value.toLowerCase()
-  return availableServers.value.filter(srv => 
+  return servers.filter(srv => 
     (srv.name && srv.name.toLowerCase().includes(keyword)) ||
     (srv.guildId && srv.guildId.toLowerCase().includes(keyword))
   )
 })
 
+// 计算占比（2位小数）
+function getRatio(count) {
+  const total = friendPoolStats.value.total || 0
+  if (total === 0) return '0.00'
+  return ((count / total) * 100).toFixed(2)
+}
+
 let healthCheckTimer = null
 
-const emuApi = axios.create({ baseURL: '/emu-api', timeout: 15000 })
+const emuApi = axios.create({ baseURL: '/emu-api', timeout: 60000 })
+emuApi.interceptors.request.use(config => {
+  const token = localStorage.getItem('crm_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
 
 const sortedEmulators = computed(() => [...emulators.value].sort((a, b) => a.index - b.index))
 
@@ -719,14 +709,13 @@ onMounted(async () => {
   if (backendAvailable.value) {
     await Promise.all([
       fetchEmulators(),
-      loadAddedAccounts(),
-      loadAvailableAccounts(),
       loadAddedServers(),
       loadAvailableServers(),
       loadAutoConfig(),
       checkApkStatus(),
       loadFriendPoolStats(),
-      loadFriendPool()
+      loadFriendPool(),
+      checkPhysicalStatus()
     ])
   }
   startHealthCheck()
@@ -737,16 +726,15 @@ onUnmounted(() => {
 })
 
 // 监听弹窗打开时加载数据
-watch(showAccountDialog, async (val) => {
+watch(showServerDialog, async (val) => {
   if (val) {
-    await loadAvailableAccounts()
+    await Promise.all([loadAddedServers(), loadAvailableServers()])
   }
 })
 
-watch(showServerDialog, async (val) => {
-  if (val) {
-    await loadAvailableServers()
-  }
+// 监听账号选择变化，重新加载服务器列表（账号筛选变为前端过滤）
+watch(selectedAccountId, async () => {
+  // 筛选由前端 computed 处理，无需重新加载
 })
 
 async function checkService() {
@@ -774,7 +762,31 @@ function startHealthCheck() {
       await fetchEmulators()
       ElMessage.success('模拟器后端已重新连接')
     }
+    // 同时检查物理状态
+    await checkPhysicalStatus()
   }, 15000)
+}
+
+async function checkPhysicalStatus() {
+  try {
+    const resp = await emuApi.get('/emulators/physical-status')
+    physicalStatus.value = resp.data
+  } catch {
+    physicalStatus.value = { available: false, message: '无法检测物理模拟器状态' }
+  }
+}
+
+async function syncPhysical() {
+  emuLoading.value = true
+  try {
+    const resp = await emuApi.post('/emulators/sync')
+    ElMessage.success(resp.data.message || '同步完成')
+    await fetchEmulators()
+  } catch (e) {
+    ElMessage.error('同步失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    emuLoading.value = false
+  }
 }
 
 async function fetchEmulators() {
@@ -840,7 +852,7 @@ async function installAllDiscord() {
 
 async function loadAddedAccounts() {
   try {
-    const resp = await axios.get(`${API_BASE}/accounts/added`)
+    const resp = await emuApi.get('/accounts/added')
     addedAccounts.value = resp.data || []
   } catch { addedAccounts.value = [] }
 }
@@ -848,7 +860,7 @@ async function loadAddedAccounts() {
 async function loadAvailableAccounts() {
   availableAccountsLoading.value = true
   try {
-    const resp = await axios.get(`${API_BASE}/accounts/available`, {
+    const resp = await emuApi.get('/accounts/available', {
       params: { keyword: accountSearch.value || undefined }
     })
     availableAccounts.value = resp.data || []
@@ -858,7 +870,7 @@ async function loadAvailableAccounts() {
 
 async function addAccount(discordAccountId) {
   try {
-    await axios.post(`${API_BASE}/accounts/add`, { discordAccountId })
+    await emuApi.post('/accounts/add', { discordAccountId })
     ElMessage.success('账号已添加')
     await Promise.all([loadAddedAccounts(), loadAvailableAccounts()])
   } catch (e) {
@@ -868,8 +880,12 @@ async function addAccount(discordAccountId) {
 
 async function removeAccount(bindingId) {
   try {
-    await axios.delete(`${API_BASE}/accounts/${bindingId}`)
+    await emuApi.delete(`/accounts/${bindingId}`)
     ElMessage.success('账号已移除')
+    const removedAccount = addedAccounts.value.find(a => a.id === bindingId)
+    if (removedAccount && selectedAccountId.value === removedAccount.discordAccountId) {
+      selectedAccountId.value = null
+    }
     await Promise.all([loadAddedAccounts(), loadAvailableAccounts()])
   } catch (e) {
     ElMessage.error('移除失败: ' + (e.response?.data?.message || e.message))
@@ -880,7 +896,7 @@ async function removeAccount(bindingId) {
 
 async function loadAddedServers() {
   try {
-    const resp = await axios.get(`${API_BASE}/servers/added`)
+    const resp = await emuApi.get('/servers/added')
     addedServers.value = resp.data || []
   } catch { addedServers.value = [] }
 }
@@ -888,9 +904,7 @@ async function loadAddedServers() {
 async function loadAvailableServers() {
   availableServersLoading.value = true
   try {
-    const resp = await axios.get(`${API_BASE}/servers/available`, {
-      params: { keyword: serverSearch.value || undefined }
-    })
+    const resp = await emuApi.get('/servers/available')
     availableServers.value = resp.data || []
   } catch { availableServers.value = [] }
   finally { availableServersLoading.value = false }
@@ -898,12 +912,17 @@ async function loadAvailableServers() {
 
 async function addServer(server) {
   try {
-    await axios.post(`${API_BASE}/servers/add`, {
+    await emuApi.post('/servers/add', {
       serverId: server.id,
       discordAccountId: server.discordAccountId || null
     })
-    ElMessage.success('服务器已添加')
-    await Promise.all([loadAddedServers(), loadAvailableServers()])
+    ElMessage.success('服务器已添加，正在同步成员...')
+    await loadAddedServers()
+    await loadAvailableServers()
+    // 自动同步好友数据
+    if (server.serverId) {
+      await syncFriends({ serverId: server.serverId, name: server.name })
+    }
   } catch (e) {
     ElMessage.error('添加失败: ' + (e.response?.data?.message || e.message))
   }
@@ -911,7 +930,7 @@ async function addServer(server) {
 
 async function removeServer(bindingId) {
   try {
-    await axios.delete(`${API_BASE}/servers/${bindingId}`)
+    await emuApi.delete(`/servers/${bindingId}`)
     ElMessage.success('服务器已移除')
     await Promise.all([loadAddedServers(), loadAvailableServers()])
   } catch (e) {
@@ -921,12 +940,79 @@ async function removeServer(bindingId) {
 
 async function syncFriends(server) {
   try {
-    const resp = await axios.post(`${API_BASE}/servers/${server.serverId}/sync-friends`)
-    ElMessage.success(`已同步 ${resp.data.addedCount} 个好友到好友号池`)
-    await loadFriendPoolStats()
-    await loadFriendPool()
+    const resp = await emuApi.post(`/servers/${server.serverId}/sync-friends`)
+    const data = resp.data
+    
+    if (data.fetchStarted) {
+      if (data.fetching) {
+        // 正在抓取中
+        ElMessageBox.alert(
+          `<div style="line-height: 1.6;">
+            <p><strong>${data.message}</strong></p>
+            <p style="margin-top: 10px;">当前进度:</p>
+            <ul style="margin: 5px 0; padding-left: 20px;">
+              <li>已获取成员: ${data.progress?.membersUnique || 0}</li>
+              <li>状态: ${data.progress?.status || '未知'}</li>
+            </ul>
+            <p style="margin-top: 10px; color: #909399;">请等待抓取完成后（通常需要几分钟），再点击同步</p>
+          </div>`,
+          '成员抓取进行中',
+          { dangerouslyUseHTMLString: true, confirmButtonText: '我知道了' }
+        )
+      } else {
+        // 启动了新的抓取任务
+        ElMessageBox.alert(
+          `<div style="line-height: 1.6;">
+            <p><strong>${data.message}</strong></p>
+            ${data.diagnostic ? `
+            <div style="margin-top: 10px; background: #f5f7fa; padding: 10px; border-radius: 4px; font-size: 12px;">
+              <p>任务ID: ${data.diagnostic.taskId}</p>
+              <p>预计时间: ${data.diagnostic.estimatedTime}</p>
+            </div>` : ''}
+          </div>`,
+          '成员抓取已启动',
+          { dangerouslyUseHTMLString: true, confirmButtonText: '我知道了' }
+        )
+      }
+    } else if (data.success) {
+      // 同步成功
+      ElMessageBox.alert(
+        `<div style="line-height: 1.6;">
+          <p><strong>${data.message}</strong></p>
+          ${data.totalMembers ? `<p style="margin-top: 10px;">服务器总成员数: ${data.totalMembers}</p>` : ''}
+        </div>`,
+        '同步成功',
+        { dangerouslyUseHTMLString: true, confirmButtonText: '确定' }
+      )
+      await loadFriendPoolStats()
+      await loadFriendPool()
+    } else {
+      // 同步失败
+      ElMessageBox.alert(
+        `<div style="line-height: 1.6;">
+          <p style="color: #f56c6c;"><strong>同步失败</strong></p>
+          <p style="margin-top: 10px;">${data.message}</p>
+          ${data.diagnostic ? `
+          <div style="margin-top: 10px; background: #fef0f0; padding: 10px; border-radius: 4px; font-size: 12px; color: #606266;">
+            <p>诊断信息:</p>
+            <pre style="margin: 5px 0; white-space: pre-wrap;">${JSON.stringify(data.diagnostic, null, 2)}</pre>
+          </div>` : ''}
+          <p style="margin-top: 10px; color: #909399;">请检查: 1) Discord Token 是否有效 2) 服务器链接是否正确 3) 网络是否正常</p>
+        </div>`,
+        '同步失败',
+        { dangerouslyUseHTMLString: true, confirmButtonText: '我知道了', type: 'error' }
+      )
+    }
   } catch (e) {
-    ElMessage.error('同步失败: ' + (e.response?.data?.message || e.message))
+    ElMessageBox.alert(
+      `<div style="line-height: 1.6;">
+        <p style="color: #f56c6c;"><strong>请求失败</strong></p>
+        <p style="margin-top: 10px;">${e.response?.data?.message || e.message}</p>
+        <p style="margin-top: 10px; color: #909399;">请检查后端服务是否正常运行</p>
+      </div>`,
+      '错误',
+      { dangerouslyUseHTMLString: true, confirmButtonText: '我知道了', type: 'error' }
+    )
   }
 }
 
@@ -935,7 +1021,7 @@ async function syncFriends(server) {
 async function loadFriendPool() {
   friendPoolLoading.value = true
   try {
-    const resp = await axios.get(`${API_BASE}/friend-pool`, {
+    const resp = await emuApi.get('/friend-pool', {
       params: { status: friendPoolFilter.value || undefined }
     })
     friendPool.value = resp.data || []
@@ -945,7 +1031,7 @@ async function loadFriendPool() {
 
 async function loadFriendPoolStats() {
   try {
-    const resp = await axios.get(`${API_BASE}/friend-pool/stats`)
+    const resp = await emuApi.get('/friend-pool/stats')
     friendPoolStats.value = resp.data || { total: 0, pending: 0, assigned: 0, success: 0, failed: 0 }
   } catch {}
 }
@@ -965,13 +1051,30 @@ function friendStatusTag(status) {
 async function loadAutoConfig() {
   try {
     const resp = await emuApi.get('/data/autoconfig')
-    if (resp.data) autoConfig.value = resp.data
+    if (resp.data) {
+      // 将秒转换为分钟（如果后端返回的是秒）
+      if (resp.data.intervalSeconds !== undefined) {
+        autoConfig.value = {
+          intervalMinutes: Math.round(resp.data.intervalSeconds / 60) || 1,
+          delayMinMinutes: Math.round(resp.data.delayMinSeconds / 60) || 0,
+          delayMaxMinutes: Math.round(resp.data.delayMaxSeconds / 60) || 10
+        }
+      } else {
+        autoConfig.value = resp.data
+      }
+    }
   } catch {}
 }
 
 async function saveAutoConfig() {
   try {
-    await emuApi.post('/data/autoconfig', autoConfig.value)
+    // 将分钟转换为秒发送到后端
+    const configToSave = {
+      intervalSeconds: autoConfig.value.intervalMinutes * 60,
+      delayMinSeconds: autoConfig.value.delayMinMinutes * 60,
+      delayMaxSeconds: autoConfig.value.delayMaxMinutes * 60
+    }
+    await emuApi.post('/data/autoconfig', configToSave)
     ElMessage.success('自动加好友配置已保存')
   } catch (e) {
     ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))
@@ -1079,33 +1182,50 @@ async function restartAll() {
   }
 }
 
+function isOperating(index) {
+  return operatingEmulators.value.has(index)
+}
+
 async function startEmulator(index) {
+  operatingEmulators.value.add(index)
   try {
     const resp = await emuApi.post(`/emulators/${index}/start`)
-    ElMessage.success(`模拟器 #${index} 启动中...`)
+    ElMessage.success(`模拟器 #${index} 启动指令已发送`)
     emulators.value = emulators.value.map(e => e.index === index ? resp.data : e)
+    // 延迟3秒后刷新状态
+    setTimeout(() => fetchEmulators(), 3000)
   } catch (e) {
     ElMessage.error('启动失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    operatingEmulators.value.delete(index)
   }
 }
 
 async function stopEmulator(index) {
+  operatingEmulators.value.add(index)
   try {
     const resp = await emuApi.post(`/emulators/${index}/stop`)
-    ElMessage.success(`模拟器 #${index} 已停止`)
+    ElMessage.success(`模拟器 #${index} 停止指令已发送`)
     emulators.value = emulators.value.map(e => e.index === index ? resp.data : e)
+    setTimeout(() => fetchEmulators(), 3000)
   } catch (e) {
     ElMessage.error('停止失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    operatingEmulators.value.delete(index)
   }
 }
 
 async function restartEmulator(index) {
+  operatingEmulators.value.add(index)
   try {
     const resp = await emuApi.post(`/emulators/${index}/restart`)
-    ElMessage.success(`模拟器 #${index} 重启中...`)
+    ElMessage.success(`模拟器 #${index} 重启指令已发送`)
     emulators.value = emulators.value.map(e => e.index === index ? resp.data : e)
+    setTimeout(() => fetchEmulators(), 3000)
   } catch (e) {
     ElMessage.error('重启失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    operatingEmulators.value.delete(index)
   }
 }
 
@@ -1161,7 +1281,7 @@ function formatCountdown(timestamp) {
 
 <style scoped>
 .emulator-view {
-  padding: 16px;
+  padding: 12px;
   height: 100%;
   overflow-y: auto;
   background: var(--color-bg, #f5f7fa);
@@ -1169,37 +1289,38 @@ function formatCountdown(timestamp) {
 
 .content { max-width: 1600px; }
 
-.panel { margin-bottom: 16px; }
-.panel-header { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-.panel-body { display: flex; flex-direction: column; gap: 10px; }
+.panel { margin-bottom: 8px; }
+.panel-header { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
+.panel-body { display: flex; flex-direction: column; gap: 6px; }
 
 .form-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .form-row.inline-row {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   flex-wrap: nowrap;
 }
 
 .inline-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-.form-row.inline label { min-width: 70px; font-size: 13px; }
-.form-row label { min-width: 70px; font-size: 13px; color: #606266; }
+.form-row.inline label,
+.form-row label { min-width: auto; font-size: 12px; color: #606266; }
 
-.action-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.action-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .hint { font-size: 12px; color: #909399; }
-.hint-sm { font-size: 11px; color: #c0c4cc; margin-left: 8px; }
+.hint-sm { font-size: 11px; color: #c0c4cc; margin-left: 6px; }
+.unit { font-size: 12px; color: #909399; }
 
 .batch-toolbar {
   position: sticky;
@@ -1208,26 +1329,36 @@ function formatCountdown(timestamp) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
-  margin-bottom: 16px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
   background: #fff;
   border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
 }
 
-.batch-info { display: flex; align-items: center; gap: 12px; }
-.batch-count { font-size: 14px; color: #606266; }
+.batch-info { display: flex; align-items: center; gap: 8px; }
+.batch-count { font-size: 13px; color: #606266; }
 
-.batch-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.batch-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
-.emu-name { font-weight: 600; font-size: 14px; }
+.emu-name { font-weight: 600; font-size: 13px; }
 
 :deep(.selected-row) {
   background-color: #ecf5ff !important;
 }
 
 :deep(.el-table .cell) {
+  padding: 4px 8px;
+  font-size: 13px;
+}
+
+:deep(.el-card__header) {
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+:deep(.el-card__body) {
   padding: 8px 12px;
 }
 
@@ -1237,8 +1368,8 @@ function formatCountdown(timestamp) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  padding: 60px 24px;
+  gap: 12px;
+  padding: 40px 24px;
   color: var(--color-text-2, #606266);
 }
 
@@ -1246,9 +1377,9 @@ function formatCountdown(timestamp) {
 .error-wrap pre {
   background: #2c3e50;
   color: #f1f5f9;
-  padding: 10px 16px;
+  padding: 8px 12px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 /* 账号列表样式 */
@@ -1256,7 +1387,7 @@ function formatCountdown(timestamp) {
 .server-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .account-item,
@@ -1264,25 +1395,31 @@ function formatCountdown(timestamp) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: #f5f7fa;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 .account-info,
 .server-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .account-name,
 .server-name {
   font-weight: 500;
+  font-size: 13px;
 }
 
-.account-email {
+.account-number {
   color: #909399;
+  font-size: 12px;
+}
+
+.server-account {
+  color: #409eff;
   font-size: 12px;
 }
 
@@ -1293,23 +1430,23 @@ function formatCountdown(timestamp) {
 
 .server-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
 .empty-hint {
   text-align: center;
   color: #909399;
-  padding: 20px;
+  padding: 16px;
   font-size: 13px;
 }
 
 /* 弹窗样式 */
 .dialog-section {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .dialog-section h4 {
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
   font-size: 14px;
   color: #303133;
 }
@@ -1318,81 +1455,58 @@ function formatCountdown(timestamp) {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
-.dialog-list {
-  max-height: 200px;
-  overflow-y: auto;
+.filter-row {
   display: flex;
-  flex-direction: column;
   gap: 8px;
-}
-
-.dialog-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 12px;
-  background: #f5f7fa;
-  border-radius: 6px;
-}
-
-.item-info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
-
-.item-name {
-  font-weight: 500;
-}
-
-.item-email {
-  color: #909399;
-  font-size: 12px;
-}
-
-.item-count {
-  color: #67c23a;
-  font-size: 12px;
 }
 
 .loading-hint {
   text-align: center;
   color: #909399;
-  padding: 20px;
+  padding: 16px;
 }
 
 /* 好友号池样式 */
 .friend-pool-stats {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .stat-card {
   background: #f5f7fa;
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 6px;
+  padding: 8px;
   text-align: center;
 }
 
 .stat-value {
-  font-size: 24px;
+  font-size: 18px;
   font-weight: 600;
   color: #303133;
+  line-height: 1.2;
+}
+
+.stat-ratio {
+  font-size: 12px;
+  color: #606266;
+  margin: 2px 0;
 }
 
 .stat-label {
-  font-size: 12px;
+  font-size: 11px;
   color: #909399;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .stat-pending {
   background: #fdf6ec;
 }
 .stat-pending .stat-value {
+  color: #e6a23c;
+}
+.stat-pending .stat-ratio {
   color: #e6a23c;
 }
 
@@ -1402,6 +1516,9 @@ function formatCountdown(timestamp) {
 .stat-assigned .stat-value {
   color: #e6a23c;
 }
+.stat-assigned .stat-ratio {
+  color: #e6a23c;
+}
 
 .stat-success {
   background: #f0f9eb;
@@ -1409,15 +1526,28 @@ function formatCountdown(timestamp) {
 .stat-success .stat-value {
   color: #67c23a;
 }
+.stat-success .stat-ratio {
+  color: #67c23a;
+}
+
+.stat-failed {
+  background: #fef0f0;
+}
+.stat-failed .stat-value {
+  color: #f56c6c;
+}
+.stat-failed .stat-ratio {
+  color: #f56c6c;
+}
 
 .friend-pool-filter {
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .more-hint {
   text-align: center;
   color: #909399;
-  font-size: 12px;
-  margin-top: 8px;
+  font-size: 11px;
+  margin-top: 4px;
 }
 </style>
