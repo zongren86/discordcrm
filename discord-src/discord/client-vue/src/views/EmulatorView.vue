@@ -623,6 +623,15 @@ emuApi.interceptors.request.use(config => {
   return config
 })
 
+const friendApi = axios.create({ baseURL: '/api', timeout: 60000 })
+friendApi.interceptors.request.use(config => {
+  const token = localStorage.getItem('crm_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
 const sortedEmulators = computed(() => [...emulators.value].sort((a, b) => a.index - b.index))
 
 function handleSelectionChange(selection) {
@@ -681,13 +690,13 @@ async function batchAction(action) {
             resp = await emuApi.post(`/emulators/${index}/restart`)
             break
           case 'install':
-            resp = await emuApi.post(`/discord/install/${index}`)
+            resp = await friendApi.post(`/discord/${index}/install`)
             break
           case 'startAuto':
-            resp = await emuApi.post(`/autoadd/${index}/start`)
+            resp = await friendApi.post(`/autoadd/${index}/start`)
             break
           case 'stopAuto':
-            resp = await emuApi.post(`/autoadd/${index}/stop`)
+            resp = await friendApi.post(`/autoadd/${index}/stop`)
             break
           case 'delete':
             resp = await emuApi.delete(`/emulators/${index}`)
@@ -821,7 +830,7 @@ async function fetchEmulators() {
 
 async function checkApkStatus() {
   try {
-    const resp = await emuApi.get('/discord/apk-status')
+    const resp = await friendApi.get('/discord/apk-status')
     apkDownloaded.value = resp.data.downloaded
   } catch {}
 }
@@ -829,7 +838,7 @@ async function checkApkStatus() {
 async function downloadApk() {
   apkLoading.value = true
   try {
-    await emuApi.post('/discord/download')
+    await friendApi.post('/discord/download')
     ElMessage.success('APK 下载中...')
     setTimeout(async () => {
       apkDownloaded.value = true
@@ -863,7 +872,7 @@ async function handleApkUpload(event) {
 
 async function installAllDiscord() {
   try {
-    await emuApi.post('/discord/installAll')
+    await friendApi.post('/discord/installAll')
     ElMessage.success('已开始安装 Discord 到所有模拟器')
     await fetchEmulators()
   } catch (e) {
@@ -1073,7 +1082,7 @@ function friendStatusTag(status) {
 
 async function loadAutoConfig() {
   try {
-    const resp = await emuApi.get('/data/autoconfig')
+    const resp = await friendApi.get('/data/autoconfig')
     if (resp.data) {
       // 将秒转换为分钟（如果后端返回的是秒）
       if (resp.data.intervalSeconds !== undefined) {
@@ -1097,7 +1106,7 @@ async function saveAutoConfig() {
       delayMinSeconds: autoConfig.value.delayMinMinutes * 60,
       delayMaxSeconds: autoConfig.value.delayMaxMinutes * 60
     }
-    await emuApi.post('/data/autoconfig', configToSave)
+    await friendApi.post('/data/autoconfig', configToSave)
     ElMessage.success('自动加好友配置已保存')
   } catch (e) {
     ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))
@@ -1106,7 +1115,7 @@ async function saveAutoConfig() {
 
 async function startAutoAll() {
   try {
-    await emuApi.post('/autoadd/startAll')
+    await friendApi.post('/autoadd/startAll')
     ElMessage.success('已开始自动加好友')
     await fetchEmulators()
   } catch (e) {
@@ -1116,7 +1125,7 @@ async function startAutoAll() {
 
 async function stopAutoAll() {
   try {
-    await emuApi.post('/autoadd/stopAll')
+    await friendApi.post('/autoadd/stopAll')
     ElMessage.success('已停止所有自动加好友')
     await fetchEmulators()
   } catch (e) {
@@ -1126,7 +1135,7 @@ async function stopAutoAll() {
 
 async function startAuto(index) {
   try {
-    await emuApi.post(`/autoadd/${index}/start`)
+    await friendApi.post(`/autoadd/${index}/start`)
     ElMessage.success(`模拟器 #${index} 已开始自动加好友`)
     await fetchEmulators()
   } catch (e) {
@@ -1136,7 +1145,7 @@ async function startAuto(index) {
 
 async function stopAuto(index) {
   try {
-    await emuApi.post(`/autoadd/${index}/stop`)
+    await friendApi.post(`/autoadd/${index}/stop`)
     ElMessage.success(`模拟器 #${index} 已停止自动加好友`)
     await fetchEmulators()
   } catch (e) {
