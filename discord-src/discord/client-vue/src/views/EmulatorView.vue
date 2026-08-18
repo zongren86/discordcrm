@@ -304,10 +304,10 @@
         :row-class-name="rowClassName"
         size="small"
       >
-        <el-table-column type="selection" width="50" />
-        <el-table-column label="索引" width="60">
+        <el-table-column type="selection" label="全选" width="60" class-name="checkbox-column" />
+        <el-table-column label="ID" width="50">
           <template #default="{ row }">
-            <span class="emu-name">#{{ row.index }}</span>
+            <span class="emu-name">{{ row.index }}</span>
           </template>
         </el-table-column>
         <el-table-column label="名称" width="100">
@@ -1382,6 +1382,33 @@ function formatCountdown(timestamp) {
 .batch-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .emu-name { font-weight: 600; font-size: 13px; }
+
+:deep(.checkbox-column .cell) {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+:deep(.checkbox-column .el-checkbox) {
+  margin-right: 0;
+}
+
+:deep(.checkbox-column .el-checkbox__inner) {
+  width: 16px;
+  height: 16px;
+  border-color: #409eff;
+  background-color: #fff;
+}
+
+:deep(.checkbox-column .el-checkbox__input.is-checked .el-checkbox__inner) {
+  background-color: #409eff;
+  border-color: #409eff;
+}
+
+:deep(.checkbox-column .el-checkbox__input.is-indeterminate .el-checkbox__inner) {
+  background-color: #409eff;
+  border-color: #409eff;
+}
 
 :deep(.selected-row) {
   background-color: #ecf5ff !important;

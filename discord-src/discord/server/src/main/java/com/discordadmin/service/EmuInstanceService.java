@@ -46,9 +46,75 @@ public class EmuInstanceService {
         log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         log.info("查询结果: 找到 {} 个模拟器", instances.size());
-        return instances.stream()
+        
+        // 从 MumuManager 获取最新物理状态并合并
+        List<Map<String, Object>> physicalList = null;
+        try {
+            physicalList = mumuClientService.getAllEmulatorsWithError();
+        } catch (Exception e) {
+            log.warn("无法获取物理模拟器列表: {}", e.getMessage());
+        }
+        
+        List<Map<String, Object>> result = instances.stream()
             .map(this::convertToMap)
             .collect(Collectors.toList());
+        
+        // 合并物理状态到返回结果
+        if (physicalList != null) {
+            for (Map<String, Object> emu : result) {
+                int dbIndex = ((Number) emu.get("index")).intValue();
+                int mumuIndex = dbIndex - 1; // 数据库是1-based，Mumu是0-based
+                
+                // 查找对应的物理模拟器
+                for (Map<String, Object> phys : physicalList) {
+                    int physIdx = -1;
+                    Object idx = phys.get("index");
+                    if (idx instanceof Number) {
+                        physIdx = ((Number) idx).intValue();
+                    }
+                    
+                    if (physIdx == mumuIndex) {
+                        // 合并物理状态
+                        Object status = phys.get("status");
+                        if (status != null) {
+                            emu.put("status", status.toString());
+                        }
+                        // 使用物理模拟器的真实名称（V001、V002...）
+                        Object physName = phys.get("name");
+                        if (physName != null) {
+                            emu.put("name", physName.toString());
+                        }
+                        Object discordInstalled = phys.get("discordInstalled");
+                        if (discordInstalled != null) {
+                            emu.put("discordInstalled", discordInstalled);
+                        }
+                        Object discordLoggedIn = phys.get("discordLoggedIn");
+                        if (discordLoggedIn != null) {
+                            emu.put("discordLoggedIn", discordLoggedIn);
+                        }
+                        Object adbPort = phys.get("adbPort");
+                        if (adbPort != null) {
+                            emu.put("adbPort", adbPort);
+                        }
+                        Object resolution = phys.get("resolution");
+                        if (resolution != null) {
+                            emu.put("resolution", resolution);
+                        }
+                        Object cpuCount = phys.get("cpuCount");
+                        if (cpuCount != null) {
+                            emu.put("cpuCores", cpuCount);
+                        }
+                        Object memoryMB = phys.get("memoryMB");
+                        if (memoryMB != null) {
+                            emu.put("memoryGb", memoryMB);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        
+        return result;
     }
 
     /**
