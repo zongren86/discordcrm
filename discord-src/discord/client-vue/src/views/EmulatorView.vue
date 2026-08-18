@@ -453,6 +453,14 @@
         </el-table>
       </div>
     </el-dialog>
+
+    <!-- 全屏加载遮罩 -->
+    <div v-if="globalLoading.show" class="global-loading-mask">
+      <div class="global-loading-content">
+        <el-icon class="is-loading" :size="48" color="#409eff"><Loading /></el-icon>
+        <p class="global-loading-text">{{ globalLoading.text }}</p>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -471,6 +479,15 @@ const backendAvailable = ref(false)
 const emulators = ref([])
 const targetCount = ref(3)
 const emuLoading = ref(false)
+
+// 全屏加载遮罩状态
+const globalLoading = ref({ show: false, text: '' })
+function showLoading(text) {
+  globalLoading.value = { show: true, text: text || '处理中...' }
+}
+function hideLoading() {
+  globalLoading.value = { show: false, text: '' }
+}
 
 // 物理模拟器连接状态
 const physicalStatus = ref({ available: false, message: '检测中...' })
@@ -632,13 +649,13 @@ async function batchAction(action) {
   if (selectedEmulators.value.length === 0) return
   
   const actionMap = {
-    start: { confirm: '确定要批量启动选中的模拟器吗？', method: 'start' },
-    stop: { confirm: '确定要批量停止选中的模拟器吗？', method: 'stop' },
-    restart: { confirm: '确定要批量重启选中的模拟器吗？', method: 'restart' },
-    installDiscord: { confirm: '确定要批量安装 Discord 到选中的模拟器吗？', method: 'install' },
-    startAuto: { confirm: '确定要批量启动自动加好友吗？', method: 'startAuto' },
-    stopAuto: { confirm: '确定要批量停止自动加好友吗？', method: 'stopAuto' },
-    delete: { confirm: '确定要批量删除选中的模拟器吗？此操作不可恢复！', method: 'delete' }
+    start: { confirm: '确定要批量启动选中的模拟器吗？', method: 'start', loadingText: '批量启动中...' },
+    stop: { confirm: '确定要批量停止选中的模拟器吗？', method: 'stop', loadingText: '批量停止中...' },
+    restart: { confirm: '确定要批量重启选中的模拟器吗？', method: 'restart', loadingText: '批量重启中...' },
+    installDiscord: { confirm: '确定要批量安装 Discord 到选中的模拟器吗？', method: 'install', loadingText: '批量安装中...' },
+    startAuto: { confirm: '确定要批量启动自动加好友吗？', method: 'startAuto', loadingText: '批量启动加好友中...' },
+    stopAuto: { confirm: '确定要批量停止自动加好友吗？', method: 'stopAuto', loadingText: '批量停止加好友中...' },
+    delete: { confirm: '确定要批量删除选中的模拟器吗？此操作不可恢复！', method: 'delete', loadingText: '批量删除中...' }
   }
   
   const actionConfig = actionMap[action]
@@ -646,6 +663,8 @@ async function batchAction(action) {
   
   try {
     await ElMessageBox.confirm(actionConfig.confirm, '确认', { type: 'warning' })
+    
+    showLoading(actionConfig.loadingText)
     
     const results = []
     for (const index of selectedEmulators.value) {
@@ -701,6 +720,8 @@ async function batchAction(action) {
     if (e !== 'cancel') {
       ElMessage.error('批量操作失败')
     }
+  } finally {
+    hideLoading()
   }
 }
 
@@ -778,6 +799,7 @@ async function checkPhysicalStatus() {
 
 async function syncPhysical() {
   emuLoading.value = true
+  showLoading('同步数据中...')
   try {
     const resp = await emuApi.post('/emulators/sync')
     ElMessage.success(resp.data.message || '同步完成')
@@ -786,6 +808,7 @@ async function syncPhysical() {
     ElMessage.error('同步失败: ' + (e.response?.data?.message || e.message))
   } finally {
     emuLoading.value = false
+    hideLoading()
   }
 }
 
@@ -1123,6 +1146,7 @@ async function stopAuto(index) {
 
 async function applyCount() {
   emuLoading.value = true
+  showLoading('创建模拟器中...')
   try {
     const resp = await emuApi.post('/emulators/count', {
       count: targetCount.value,
@@ -1135,6 +1159,7 @@ async function applyCount() {
     ElMessage.error('设置失败: ' + (e.response?.data?.message || e.message))
   } finally {
     emuLoading.value = false
+    hideLoading()
   }
 }
 
@@ -1142,6 +1167,7 @@ async function startAll() {
   try {
     await ElMessageBox.confirm('确定要启动所有模拟器吗？', '确认', { type: 'warning' })
     emuLoading.value = true
+    showLoading('全部启动中...')
     const resp = await emuApi.post('/emulators/startAll', null, { params: { count: targetCount.value } })
     emulators.value = Array.isArray(resp.data) ? resp.data : []
     ElMessage.success('启动指令已发送')
@@ -1149,6 +1175,7 @@ async function startAll() {
     if (e !== 'cancel') ElMessage.error('启动失败: ' + (e.response?.data?.message || e.message))
   } finally {
     emuLoading.value = false
+    hideLoading()
   }
 }
 
@@ -1156,6 +1183,7 @@ async function stopAll() {
   try {
     await ElMessageBox.confirm('确定要停止所有模拟器吗？', '确认', { type: 'warning' })
     emuLoading.value = true
+    showLoading('全部停止中...')
     const resp = await emuApi.post('/emulators/stopAll')
     emulators.value = Array.isArray(resp.data) ? resp.data : []
     ElMessage.success('停止指令已发送')
@@ -1163,6 +1191,7 @@ async function stopAll() {
     if (e !== 'cancel') ElMessage.error('停止失败: ' + (e.response?.data?.message || e.message))
   } finally {
     emuLoading.value = false
+    hideLoading()
   }
 }
 
@@ -1170,6 +1199,7 @@ async function restartAll() {
   try {
     await ElMessageBox.confirm('确定要重启所有模拟器吗？', '确认', { type: 'warning' })
     emuLoading.value = true
+    showLoading('全部重启中...')
     for (const emu of emulators.value.filter(e => e.status === 'RUNNING')) {
       try { await emuApi.post(`/emulators/${emu.index}/restart`) } catch {}
     }
@@ -1179,6 +1209,7 @@ async function restartAll() {
     if (e !== 'cancel') ElMessage.error('重启失败')
   } finally {
     emuLoading.value = false
+    hideLoading()
   }
 }
 
@@ -1188,21 +1219,23 @@ function isOperating(index) {
 
 async function startEmulator(index) {
   operatingEmulators.value.add(index)
+  showLoading(`模拟器 #${index} 启动中...`)
   try {
     const resp = await emuApi.post(`/emulators/${index}/start`)
     ElMessage.success(`模拟器 #${index} 启动指令已发送`)
     emulators.value = emulators.value.map(e => e.index === index ? resp.data : e)
-    // 延迟3秒后刷新状态
     setTimeout(() => fetchEmulators(), 3000)
   } catch (e) {
     ElMessage.error('启动失败: ' + (e.response?.data?.message || e.message))
   } finally {
     operatingEmulators.value.delete(index)
+    hideLoading()
   }
 }
 
 async function stopEmulator(index) {
   operatingEmulators.value.add(index)
+  showLoading(`模拟器 #${index} 停止中...`)
   try {
     const resp = await emuApi.post(`/emulators/${index}/stop`)
     ElMessage.success(`模拟器 #${index} 停止指令已发送`)
@@ -1212,11 +1245,13 @@ async function stopEmulator(index) {
     ElMessage.error('停止失败: ' + (e.response?.data?.message || e.message))
   } finally {
     operatingEmulators.value.delete(index)
+    hideLoading()
   }
 }
 
 async function restartEmulator(index) {
   operatingEmulators.value.add(index)
+  showLoading(`模拟器 #${index} 重启中...`)
   try {
     const resp = await emuApi.post(`/emulators/${index}/restart`)
     ElMessage.success(`模拟器 #${index} 重启指令已发送`)
@@ -1226,12 +1261,14 @@ async function restartEmulator(index) {
     ElMessage.error('重启失败: ' + (e.response?.data?.message || e.message))
   } finally {
     operatingEmulators.value.delete(index)
+    hideLoading()
   }
 }
 
 async function deleteEmulator(index) {
   try {
     await ElMessageBox.confirm(`确定要删除模拟器 #${index} 吗？`, '确认', { type: 'warning' })
+    showLoading(`模拟器 #${index} 删除中...`)
     const resp = await emuApi.delete(`/emulators/${index}`)
     if (resp.data?.success) {
       ElMessage.success('删除成功')
@@ -1239,6 +1276,8 @@ async function deleteEmulator(index) {
     }
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('删除失败')
+  } finally {
+    hideLoading()
   }
 }
 
@@ -1549,5 +1588,37 @@ function formatCountdown(timestamp) {
   color: #909399;
   font-size: 11px;
   margin-top: 4px;
+}
+
+/* 全屏加载遮罩样式 */
+.global-loading-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.global-loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px 48px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+.global-loading-text {
+  font-size: 16px;
+  font-weight: 500;
+  color: #303133;
+  margin: 0;
 }
 </style>
