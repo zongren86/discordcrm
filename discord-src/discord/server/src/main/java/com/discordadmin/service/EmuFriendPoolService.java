@@ -35,23 +35,22 @@ public class EmuFriendPoolService {
         
         int addedCount = 0;
         for (GuildMember member : members) {
-            // 检查是否已存在
-            boolean exists = friendPoolRepository.findByDiscordUserIdAndStatus(
-                member.getUserId(), EmuFriendPool.FriendStatus.PENDING).isPresent();
-            
-            if (!exists) {
-                EmuFriendPool friend = new EmuFriendPool();
-                friend.setMerchantId(merchantId);
-                friend.setServerId(serverId);
-                friend.setDiscordUserId(member.getUserId());
-                friend.setUsername(member.getUsername());
-                friend.setGlobalName(member.getGlobalName());
-                friend.setStatus(EmuFriendPool.FriendStatus.PENDING);
-                friend.setCreatedAt(Instant.now());
-                
-                friendPoolRepository.save(friend);
-                addedCount++;
+            // 检查是否已存在（任何状态），避免重复添加
+            if (friendPoolRepository.existsByDiscordUserId(member.getUserId())) {
+                continue;
             }
+            
+            EmuFriendPool friend = new EmuFriendPool();
+            friend.setMerchantId(merchantId);
+            friend.setServerId(serverId);
+            friend.setDiscordUserId(member.getUserId());
+            friend.setUsername(member.getUsername());
+            friend.setGlobalName(member.getGlobalName());
+            friend.setStatus(EmuFriendPool.FriendStatus.PENDING);
+            friend.setCreatedAt(Instant.now());
+            
+            friendPoolRepository.save(friend);
+            addedCount++;
         }
         return addedCount;
     }

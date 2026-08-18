@@ -15,13 +15,16 @@ public class MumuAutoAddProxyService {
     private final EmulatorService emulatorService;
     private final DiscordService discordService;
     private final MumuClientService mumuClientService;
+    private final AutoAddService autoAddService;
 
     public MumuAutoAddProxyService(EmulatorService emulatorService,
                                    DiscordService discordService,
-                                   MumuClientService mumuClientService) {
+                                   MumuClientService mumuClientService,
+                                   AutoAddService autoAddService) {
         this.emulatorService = emulatorService;
         this.discordService = discordService;
         this.mumuClientService = mumuClientService;
+        this.autoAddService = autoAddService;
     }
 
     private int toMuMuIndex(int instanceIndex) {
@@ -32,63 +35,69 @@ public class MumuAutoAddProxyService {
         Map<String, Object> result = new HashMap<>();
         try {
             int muMuIndex = toMuMuIndex(index);
-            EmulatorInfo info = emulatorService.getEmulator(muMuIndex);
-            if (info == null) {
-                result.put("status", "ERROR: 模拟器不存在");
-                return result;
-            }
-            if (!"RUNNING".equals(info.getStatus())) {
-                emulatorService.startEmulator(muMuIndex);
-            }
-            String launchResult = discordService.launchDiscord(muMuIndex);
-            if ("SUCCESS".equals(launchResult)) {
+            String res = autoAddService.start(muMuIndex);
+            if ("SUCCESS".equals(res)) {
                 result.put("status", "SUCCESS");
                 result.put("message", "自动加好友已启动");
             } else {
-                result.put("status", "ERROR: Discord启动失败 - " + launchResult);
+                result.put("status", "ERROR");
+                result.put("message", res);
             }
         } catch (Exception e) {
             log.error("启动自动加好友失败: {}", e.getMessage());
-            result.put("status", "ERROR: " + e.getMessage());
+            result.put("status", "ERROR");
+            result.put("message", e.getMessage());
         }
         return result;
     }
 
     public Map<String, Object> stopAutoAdd(int index) {
         Map<String, Object> result = new HashMap<>();
-        result.put("status", "SUCCESS");
-        result.put("message", "自动加好友已停止");
+        try {
+            int muMuIndex = toMuMuIndex(index);
+            autoAddService.stop(muMuIndex);
+            result.put("status", "SUCCESS");
+            result.put("message", "自动加好友已停止");
+        } catch (Exception e) {
+            log.error("停止自动加好友失败: {}", e.getMessage());
+            result.put("status", "ERROR");
+            result.put("message", e.getMessage());
+        }
         return result;
     }
 
     public Map<String, Object> startAllAutoAdd() {
         Map<String, Object> result = new HashMap<>();
         try {
+            autoAddService.startAll();
             List<EmulatorInfo> emus = emulatorService.getAllEmulators();
-            int successCount = 0;
+            int runningCount = 0;
             for (EmulatorInfo emu : emus) {
-                try {
-                    Map<String, Object> r = startAutoAdd(emu.getIndex() + 1);
-                    if ("SUCCESS".equals(r.get("status"))) {
-                        successCount++;
-                    }
-                } catch (Exception e) {
-                    log.warn("模拟器{} 启动自动加好友失败: {}", emu.getIndex(), e.getMessage());
+                if (emu.isAutoRunning()) {
+                    runningCount++;
                 }
             }
             result.put("status", "SUCCESS");
-            result.put("message", "已启动 " + successCount + "/" + emus.size() + " 个模拟器的自动加好友");
+            result.put("message", "已启动 " + runningCount + "/" + emus.size() + " 个模拟器的自动加好友");
         } catch (Exception e) {
             log.error("启动全部自动加好友失败: {}", e.getMessage());
-            result.put("status", "ERROR: " + e.getMessage());
+            result.put("status", "ERROR");
+            result.put("message", e.getMessage());
         }
         return result;
     }
 
     public Map<String, Object> stopAllAutoAdd() {
         Map<String, Object> result = new HashMap<>();
-        result.put("status", "SUCCESS");
-        result.put("message", "全部自动加好友已停止");
+        try {
+            autoAddService.stopAll();
+            result.put("status", "SUCCESS");
+            result.put("message", "全部自动加好友已停止");
+        } catch (Exception e) {
+            log.error("停止全部自动加好友失败: {}", e.getMessage());
+            result.put("status", "ERROR");
+            result.put("message", e.getMessage());
+        }
         return result;
     }
 

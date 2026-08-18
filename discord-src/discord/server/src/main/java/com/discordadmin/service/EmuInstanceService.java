@@ -37,12 +37,22 @@ public class EmuInstanceService {
         this.apkManagementService = apkManagementService;
     }
 
+    private Long resolveMerchantId() {
+        Long id = SecurityUtils.currentMerchantId();
+        return id != null ? id : 1L;
+    }
+
+    private String resolveUserId() {
+        String id = SecurityUtils.currentUserId();
+        return id != null ? id : "default";
+    }
+
     /**
      * 获取当前用户的所有模拟器实例
      */
     public List<Map<String, Object>> getCurrentUserInstances() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
         log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         log.info("查询结果: 找到 {} 个模拟器", instances.size());
@@ -121,7 +131,7 @@ public class EmuInstanceService {
      * 获取当前用户的在线 Agent
      */
     public List<AgentRegistration> getOnlineAgents() {
-        String userId = SecurityUtils.currentUserId();
+        String userId = resolveUserId();
         return webSocketService.getOnlineAgentsByUserId(userId);
     }
 
@@ -150,8 +160,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> setInstanceCount(int count, int cpuCores, int memoryGb) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         if (merchantId == null || userId == null) {
             throw new RuntimeException("用户未登录，无法管理模拟器");
@@ -442,8 +452,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> startInstance(int index) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
@@ -455,8 +465,7 @@ public class EmuInstanceService {
         // 异步启动，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                executeViaAgentOrLocal(userId, "START_EMULATOR", Map.of("index", index),
-                    () -> mumuClientService.startEmulator(index));
+                mumuClientService.startEmulator(index);
                 log.info("模拟器 #{} 启动指令执行完成", index);
 
                 // 如果已安装 Discord，自动打开
@@ -491,8 +500,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> stopInstance(int index) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
@@ -504,8 +513,7 @@ public class EmuInstanceService {
         // 异步停止，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                executeViaAgentOrLocal(userId, "STOP_EMULATOR", Map.of("index", index),
-                    () -> mumuClientService.stopEmulator(index));
+                mumuClientService.stopEmulator(index);
                 log.info("模拟器 #{} 停止指令执行完成", index);
             } catch (Exception e) {
                 log.warn("模拟器 #{} 停止指令执行失败: {}", index, e.getMessage());
@@ -526,8 +534,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> restartInstance(int index) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
@@ -539,8 +547,7 @@ public class EmuInstanceService {
         // 异步重启，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                executeViaAgentOrLocal(userId, "RESTART_EMULATOR", Map.of("index", index),
-                    () -> mumuClientService.restartEmulator(index));
+                mumuClientService.restartEmulator(index);
                 log.info("模拟器 #{} 重启指令执行完成", index);
             } catch (Exception e) {
                 log.warn("模拟器 #{} 重启指令执行失败: {}", index, e.getMessage());
@@ -561,8 +568,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> startAllInstances() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
         if (!onlineAgents.isEmpty()) {
@@ -598,8 +605,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> stopAllInstances() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
         if (!onlineAgents.isEmpty()) {
@@ -635,8 +642,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> installDiscord(int index) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -645,8 +652,7 @@ public class EmuInstanceService {
             throw new RuntimeException("模拟器未运行");
         }
 
-        executeViaAgentOrLocal(userId, "INSTALL_APK", Map.of("index", index), 
-            () -> mumuClientService.installDiscord(index));
+        mumuClientService.installDiscord(index);
 
         instance.setDiscordInstalled(true);
         instance.setUpdatedAt(Instant.now());
@@ -660,8 +666,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> launchDiscord(int index) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -670,8 +676,7 @@ public class EmuInstanceService {
             throw new RuntimeException("Discord未安装");
         }
 
-        executeViaAgentOrLocal(userId, "LAUNCH_DISCORD", Map.of("index", index), 
-            () -> mumuClientService.launchDiscord(index));
+        mumuClientService.launchDiscord(index);
 
         instance.setDiscordOnHome(false);
         instance.setLastError(null);
@@ -688,8 +693,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> updateDiscordHomeStatus(int index, boolean onHome) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -709,8 +714,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> updateDiscordLoginStatus(int index, boolean loggedIn) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -733,8 +738,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> startAutoAdd(int index) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -772,8 +777,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> stopAutoAdd(int index) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
@@ -790,8 +795,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> startAllAutoAdd() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         List<String> errors = new ArrayList<>();
@@ -824,8 +829,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public List<Map<String, Object>> stopAllAutoAdd() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         for (EmuInstance inst : instances) {
@@ -845,8 +850,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> deleteInstance(int index) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
@@ -1117,8 +1122,8 @@ public class EmuInstanceService {
      */
     @Transactional
     public Map<String, Object> syncPhysicalAndDb() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
         Map<String, Object> result = new HashMap<>();
         List<String> actions = new ArrayList<>();
 

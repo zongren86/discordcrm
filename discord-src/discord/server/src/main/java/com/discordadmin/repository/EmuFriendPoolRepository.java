@@ -26,6 +26,8 @@ public interface EmuFriendPoolRepository extends JpaRepository<EmuFriendPool, Lo
 
     boolean existsByDiscordUserIdAndStatus(String discordUserId, EmuFriendPool.FriendStatus status);
 
+    boolean existsByDiscordUserId(String discordUserId);
+
     long countByMerchantIdAndStatus(Long merchantId, EmuFriendPool.FriendStatus status);
 
     long countByServerId(Long serverId);

@@ -161,15 +161,24 @@ public class EmuServerBindingService {
     private Set<Long> getAvailableAccountIds(Long merchantId, String userId, String role) {
         Set<Long> accountIds = new HashSet<>();
         
-        if ("MERCHANT_ADMIN".equals(role)) {
-            // 商户管理员：获取商户已添加的账号
+        // 如果 userId 不是有效数字（如 "default"），直接返回商户级别的账号
+        Long agentId = null;
+        try {
+            if (userId != null && !userId.isEmpty()) {
+                agentId = Long.parseLong(userId);
+            }
+        } catch (NumberFormatException e) {
+            // userId 不是数字，跳过普通用户逻辑
+        }
+        
+        if ("MERCHANT_ADMIN".equals(role) || agentId == null) {
+            // 商户管理员或默认用户：获取商户已添加的账号
             List<EmuAccountBinding> accountBindings = accountBindingRepository.findByMerchantId(merchantId);
             accountIds = accountBindings.stream()
                 .map(EmuAccountBinding::getDiscordAccountId)
                 .collect(Collectors.toSet());
         } else {
             // 普通用户：获取其关联账号中已添加的账号
-            Long agentId = Long.parseLong(userId);
             List<AgentAccountNumberRel> rels = relRepository.findByAgentId(agentId);
             Set<Long> numberIds = rels.stream()
                 .map(AgentAccountNumberRel::getAccountNumberId)

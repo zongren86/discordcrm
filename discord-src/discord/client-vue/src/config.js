@@ -13,7 +13,7 @@ export const config = {
   WS_URL: '/ws',
 
   // 模拟器后端地址
-  EMU_API_URL: 'http://localhost:8088',
+  EMU_API_URL: 'http://localhost:8090',
   
   // 模拟器前端地址（用于 iframe 嵌入）
   EMU_FRONTEND_URL: 'http://localhost:5273',

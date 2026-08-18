@@ -59,6 +59,16 @@ public class EmuManagementController {
         this.discordAccountRepository = discordAccountRepository;
     }
 
+    private Long resolveMerchantId() {
+        Long id = SecurityUtils.currentMerchantId();
+        return id != null ? id : 1L;
+    }
+
+    private String resolveUserId() {
+        String id = SecurityUtils.currentUserId();
+        return id != null ? id : "default";
+    }
+
     // ========== APK 管理 ==========
 
     /**
@@ -192,8 +202,6 @@ public class EmuManagementController {
      */
     @PostMapping("/discord/installAll")
     public Map<String, Object> installAllDiscord() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
         var instances = instanceService.getCurrentUserInstances();
         
         int successCount = 0;
@@ -311,8 +319,8 @@ public class EmuManagementController {
      */
     @GetMapping("/accounts/added")
     public List<Map<String, Object>> getAddedAccounts() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
         return accountBindingService.getAddedAccounts(merchantId, userId);
     }
 
@@ -321,8 +329,8 @@ public class EmuManagementController {
      */
     @GetMapping("/accounts/available")
     public List<Map<String, Object>> getAvailableAccounts(@RequestParam(required = false) String keyword) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
         return accountBindingService.getAvailableAccounts(merchantId, userId, keyword);
     }
 
@@ -332,8 +340,8 @@ public class EmuManagementController {
     @PostMapping("/accounts/add")
     public Map<String, Object> addAccount(@RequestBody Map<String, Long> body) {
         Long discordAccountId = body.get("discordAccountId");
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuAccountBinding binding = accountBindingService.addAccount(merchantId, userId, discordAccountId);
         
@@ -361,8 +369,8 @@ public class EmuManagementController {
      */
     @GetMapping("/servers/added")
     public List<Map<String, Object>> getAddedServers() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
         return serverBindingService.getAddedServers(merchantId, userId);
     }
 
@@ -374,8 +382,8 @@ public class EmuManagementController {
     public List<Map<String, Object>> getAvailableServers(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long accountId) {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
         return serverBindingService.getAvailableServers(merchantId, userId, keyword, accountId);
     }
 
@@ -387,8 +395,8 @@ public class EmuManagementController {
         Long serverId = Long.valueOf(body.get("serverId").toString());
         Long discordAccountId = body.containsKey("discordAccountId") && body.get("discordAccountId") != null 
             ? Long.valueOf(body.get("discordAccountId").toString()) : null;
-        Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
 
         EmuServerBinding binding = serverBindingService.addServer(merchantId, userId, serverId, discordAccountId);
         
@@ -415,7 +423,7 @@ public class EmuManagementController {
      */
     @PostMapping("/servers/{serverId}/sync-friends")
     public Map<String, Object> syncFriendsFromServer(@PathVariable Long serverId) {
-        Long merchantId = SecurityUtils.currentMerchantId();
+        Long merchantId = resolveMerchantId();
         log.info("开始同步好友：serverId={}, merchantId={}", serverId, merchantId);
 
         Map<String, Object> result = new HashMap<>();
@@ -599,7 +607,7 @@ public class EmuManagementController {
      */
     @GetMapping("/friend-pool")
     public List<Map<String, Object>> getFriendPool(@RequestParam(required = false) String status) {
-        Long merchantId = SecurityUtils.currentMerchantId();
+        Long merchantId = resolveMerchantId();
         return friendPoolService.getFriendPool(merchantId, status);
     }
 
@@ -608,7 +616,7 @@ public class EmuManagementController {
      */
     @GetMapping("/friend-pool/stats")
     public Map<String, Object> getFriendPoolStats() {
-        Long merchantId = SecurityUtils.currentMerchantId();
+        Long merchantId = resolveMerchantId();
         return friendPoolService.getFriendPoolStats(merchantId);
     }
 
@@ -619,7 +627,7 @@ public class EmuManagementController {
     public Map<String, Object> assignFriendsToTask(@RequestBody Map<String, Object> body) {
         Long taskId = Long.valueOf(body.get("taskId").toString());
         int count = Integer.parseInt(body.get("count").toString());
-        Long merchantId = SecurityUtils.currentMerchantId();
+        Long merchantId = resolveMerchantId();
 
         List<EmuFriendPool> assigned = friendPoolService.assignFriendsToTask(merchantId, taskId, count);
         

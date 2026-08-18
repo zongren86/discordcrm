@@ -8,9 +8,9 @@
     <div v-else-if="!backendAvailable" class="error-wrap">
       <el-icon :size="48" color="#f56c6c"><WarningFilled /></el-icon>
       <h3>好友管理服务未运行</h3>
-      <p>无法连接到模拟器后端服务（{{ config.EMU_API_URL }}）。</p>
-      <p class="hint">请先启动模拟器管理器后端：</p>
-      <pre>cd /Users/ren/CodeBuddy/20260807093456/backend && mvn spring-boot:run</pre>
+      <p>无法连接到后端服务（{{ config.EMU_API_URL }}）。</p>
+      <p class="hint">请先启动后端服务：</p>
+      <pre>cd discord-src/discord/server && mvn spring-boot:run</pre>
       <el-button type="primary" @click="checkService">重新检测</el-button>
     </div>
 
@@ -161,7 +161,6 @@
                     <span class="server-count" v-if="srv.memberCount">{{ srv.memberCount }} 成员</span>
                   </div>
                   <div class="server-actions">
-                    <el-button type="primary" size="small" link @click="syncFriends(srv)">同步成员</el-button>
                     <el-button type="primary" size="small" link @click="removeServer(srv.id)">删除</el-button>
                   </div>
                 </div>
@@ -524,7 +523,7 @@ const selectedAccountId = ref(null)  // 选中的账号ID，用于筛选服务�
 const friendPool = ref([])
 const friendPoolStats = ref({ total: 0, pending: 0, assigned: 0, success: 0, failed: 0 })
 const friendPoolLoading = ref(false)
-const friendPoolFilter = ref('')
+const friendPoolFilter = ref('PENDING')
 
 // API 基础 URL
 const API_BASE = '/api/emu'
@@ -1053,7 +1052,7 @@ async function syncFriends(server) {
 async function loadFriendPool() {
   friendPoolLoading.value = true
   try {
-    const resp = await friendApi.get('/data/friends', {
+    const resp = await friendApi.get('/emu/friend-pool', {
       params: { status: friendPoolFilter.value || undefined }
     })
     friendPool.value = resp.data || []
@@ -1063,7 +1062,7 @@ async function loadFriendPool() {
 
 async function loadFriendPoolStats() {
   try {
-    const resp = await friendApi.get('/data/friends/stats')
+    const resp = await friendApi.get('/emu/friend-pool/stats')
     friendPoolStats.value = resp.data || { total: 0, pending: 0, assigned: 0, success: 0, failed: 0 }
   } catch {}
 }
