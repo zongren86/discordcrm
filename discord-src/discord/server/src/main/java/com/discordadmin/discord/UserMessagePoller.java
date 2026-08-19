@@ -22,6 +22,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import jakarta.annotation.PostConstruct;
+
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -102,8 +104,15 @@ public class UserMessagePoller {
     /** Token过期账号ID缓存（10分钟内不再尝试） */
     private final Map<Long, Long> tokenExpiredAccountCooldown = new ConcurrentHashMap<>();
 
+    @PostConstruct
     public void init() {
         log.info("USER 账号 DM 消息轮询器已启动（分批轮询模式，每 1 秒触发，每批 {} 会话）", MAX_BATCH_SIZE);
+        // 启动时立即执行一次翻译补偿
+        try {
+            compensateUntranslatedMessages();
+        } catch (Exception e) {
+            log.warn("启动时翻译补偿失败: {}", e.getMessage());
+        }
     }
 
     /**
@@ -711,13 +720,20 @@ public class UserMessagePoller {
             messagingTemplate.convertAndSend("/topic/messages", dto);
 
             // ② 再异步触发翻译（@Async，不阻塞主流程，翻译完成后自动推送更新版本）
+            log.info("检查翻译条件 msgId={}, isOutbound={}, isVoice={}, hasContent={}, contentLen={}", 
+                    finalMsgId, pm.isOutbound(), pm.isVoice(), 
+                    pm.content() != null, pm.content() != null ? pm.content().length() : 0);
             if (!pm.isOutbound() && !pm.isVoice() && pm.content() != null && !pm.content().isBlank()) {
                 boolean withinTranslateWindow = pm.discordCreatedAt() != null
                         && (System.currentTimeMillis() - pm.discordCreatedAt().toEpochMilli()) <= TRANSLATE_WINDOW_MS;
+                log.info("翻译窗口检查 msgId={}, createdAt={}, withinWindow={}", 
+                        finalMsgId, pm.discordCreatedAt(), withinTranslateWindow);
                 if (withinTranslateWindow) {
+                    log.info("触发异步翻译 msgId={}, direction=INBOUND, content={}", 
+                            finalMsgId, pm.content().length() > 50 ? pm.content().substring(0, 50) + "..." : pm.content());
                     messageService.translateMessageAsync(finalMsgId, "zh-CN");
                 } else {
-                    log.debug("消息超过7天窗口，跳过自动翻译 msgId={}, createdAt={}",
+                    log.warn("消息超过7天窗口，跳过自动翻译 msgId={}, createdAt={}",
                             finalMsgId, pm.discordCreatedAt());
                 }
             }
@@ -792,4 +808,44 @@ public class UserMessagePoller {
             String lastMsgId,
             Long convId
     ) {}
+
+    /**
+     * 翻译补偿任务：每30秒扫描最近7天内未翻译的INBOUND消息，触发异步翻译。
+     * 解决消息首次入库时翻译可能未触发的问题。
+     */
+    @Scheduled(fixedRate = 30000, initialDelay = 15000)
+    public void compensateUntranslatedMessages() {
+        try {
+            // 查找最近1小时内未翻译的消息（缩小范围提高效率）
+            Instant since = Instant.now().minusSeconds(3600);
+            List<Message> untranslated = messageRepository.findUntranslatedInboundMessages(
+                    since, org.springframework.data.domain.PageRequest.of(0, 50));
+            
+            log.info("翻译补偿检查: 未翻译消息数量={}, since={}", untranslated.size(), since);
+            
+            if (untranslated.isEmpty()) {
+                return;
+            }
+            
+            int triggered = 0;
+            for (Message msg : untranslated) {
+                try {
+                    log.info("翻译补偿触发 msgId={}, content={}, translatedContent={}",
+                            msg.getId(), 
+                            msg.getContent() != null ? msg.getContent().substring(0, Math.min(30, msg.getContent().length())) : "null",
+                            msg.getTranslatedContent());
+                    messageService.translateMessageAsync(msg.getId(), "zh-CN");
+                    triggered++;
+                } catch (Exception e) {
+                    log.warn("翻译补偿触发失败 msgId={}: {}", msg.getId(), e.getMessage());
+                }
+            }
+            
+            if (triggered > 0) {
+                log.info("翻译补偿: 已触发 {} 条消息的翻译", triggered);
+            }
+        } catch (Exception e) {
+            log.warn("翻译补偿任务执行失败: {}", e.getMessage());
+        }
+    }
 }

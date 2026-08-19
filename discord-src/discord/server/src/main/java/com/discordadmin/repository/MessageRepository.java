@@ -198,4 +198,18 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     /** 获取会话中所有已存在的discordMessageId列表，用于内存去重（避免逐条DB查询） */
     @Query("SELECT m.discordMessageId FROM Message m WHERE m.conversation.id = :convId AND m.discordMessageId IS NOT NULL")
     List<String> findDiscordMessageIdsByConversation(@Param("convId") Long convId);
+
+    /** 查找需要翻译的INBOUND消息（translatedContent为空或等于原文，且是文本消息） */
+    @Query("SELECT m FROM Message m WHERE m.direction = 'INBOUND' " +
+            "AND (m.translatedContent IS NULL OR m.translatedContent = m.content) " +
+            "AND m.messageType = 'text' AND m.content IS NOT NULL AND m.content != '' " +
+            "AND m.createdAt > :since ORDER BY m.createdAt DESC")
+    List<Message> findUntranslatedInboundMessages(@Param("since") Instant since, org.springframework.data.domain.Pageable pageable);
+
+    /** 查找指定会话中需要翻译的INBOUND消息 */
+    @Query("SELECT m FROM Message m WHERE m.conversation.id = :convId AND m.direction = 'INBOUND' " +
+            "AND (m.translatedContent IS NULL OR m.translatedContent = m.content) " +
+            "AND m.messageType = 'text' AND m.content IS NOT NULL AND m.content != '' " +
+            "ORDER BY m.createdAt DESC")
+    List<Message> findUntranslatedMessagesByConversation(@Param("convId") Long convId);
 }

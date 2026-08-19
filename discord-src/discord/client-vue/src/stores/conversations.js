@@ -308,12 +308,13 @@ export const useConversationsStore = defineStore('conversations', {
     // === WebSocket 推送调用 ===
     appendMessage(convId, msg) {
       if (!msg || !msg.id) return
-      const existing = this.messagesMap[convId] || []
+      const existing = [...(this.messagesMap[convId] || [])]  // 创建副本以触发响应式
       const idx = existing.findIndex(m => m.id === msg.id || (m.discordMessageId && msg.discordMessageId && m.discordMessageId === msg.discordMessageId))
       if (idx >= 0) {
         // 相同ID消息：UPDATE而非SKIP（用于翻译结果回填、ASR完成等场景）
-        existing[idx] = { ...existing[idx], ...msg }
-        this.messagesMap[convId] = existing
+        // 使用splice确保Vue检测到数组元素变化
+        existing.splice(idx, 1, { ...existing[idx], ...msg })
+        this.messagesMap = { ...this.messagesMap, [convId]: existing }
         // 更新会话预览（用最新的翻译内容）
         const conv = this.conversations.find(c => c.id === convId)
         if (conv) {
@@ -332,7 +333,7 @@ export const useConversationsStore = defineStore('conversations', {
         const tb = b.discordCreatedAt ? new Date(b.discordCreatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0)
         return ta - tb
       })
-      this.messagesMap[convId] = existing
+      this.messagesMap = { ...this.messagesMap, [convId]: existing }
       const conv = this.conversations.find(c => c.id === convId)
       if (conv) {
         if (this.currentConversationId !== convId) {

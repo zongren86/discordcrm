@@ -486,6 +486,7 @@ public class MessageService {
 
     /** 异步翻译消息（供轮询器在事务提交后调用，不阻塞主流程） */
     @Async
+    @Transactional
     public void translateMessageAsync(Long messageId, String targetLanguage) {
         try {
             Message message = messageRepository.findById(messageId).orElse(null);
@@ -524,9 +525,7 @@ public class MessageService {
             // 2. 缓存未命中，调用翻译API
             log.info("异步翻译消息 msgId={}, contentLen={}, hash={}", messageId, content.length(), sourceHash.substring(0, 8));
             Long merchantId = message.getMerchantId();
-            if (merchantId == null && message.getConversation() != null) {
-                merchantId = message.getConversation().getMerchantId();
-            }
+            // 如果merchantId为null，直接使用null，不访问懒加载的conversation
             String translated = translationServiceFactory.translate(
                     content, targetLanguage, merchantId)
                     .orElse(content);
