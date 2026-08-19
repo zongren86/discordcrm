@@ -344,10 +344,9 @@
                 运行中·添加 {{ row.addedCount || 0 }}
               </div>
               <template v-else>
-                <div class="fs-row">已添加: {{ row.addedCount || 0 }}</div>
+                <div class="fs-row">已分配: {{ row.addedCount || 0 }}</div>
                 <div class="fs-row fs-success" v-if="row.lastFriendResult === 'SUCCESS'">成功</div>
                 <div class="fs-row fs-failed" v-else-if="row.lastFriendResult === 'FAILED'">失败</div>
-                <div class="fs-row fs-pending" v-else>待添加</div>
               </template>
             </div>
           </template>

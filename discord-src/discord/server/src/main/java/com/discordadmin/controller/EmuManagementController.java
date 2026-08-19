@@ -742,6 +742,12 @@ public class EmuManagementController {
         }
     }
 
+    @GetMapping("/friend-pool/stats-by-server")
+    public List<Map<String, Object>> getFriendPoolStatsByServer() {
+        Long merchantId = resolveMerchantId();
+        return friendPoolService.getFriendPoolStatsByServer(merchantId);
+    }
+
     /**
      * 分配好友给任务
      */

@@ -60,17 +60,29 @@
           />
 
           <el-select
-            v-model="filters.status"
-            placeholder="状态"
+            v-model="filters.discordStatus"
+            placeholder="Discord状态"
             clearable
-            style="width: 160px"
+            style="width: 140px"
           >
-            <el-option
-              v-for="s in statusOptions"
-              :key="s.value"
-              :label="s.label"
-              :value="s.value"
-            />
+            <el-option label="全部" value="" />
+            <el-option label="在线" value="online" />
+            <el-option label="空闲" value="idle" />
+            <el-option label="请勿打扰" value="dnd" />
+            <el-option label="离线" value="offline" />
+          </el-select>
+
+          <el-select
+            v-model="filters.friendStatus"
+            placeholder="添加状态"
+            clearable
+            style="width: 140px"
+          >
+            <el-option label="全部" :value="null" />
+            <el-option label="待添加" :value="0" />
+            <el-option label="已分配" :value="1" />
+            <el-option label="添加成功" :value="2" />
+            <el-option label="添加失败" :value="3" />
           </el-select>
 
           <el-date-picker
@@ -148,17 +160,23 @@
           </template>
         </el-table-column>
 
-        <el-table-column prop="status" label="状态" width="120">
+        <el-table-column prop="discordStatus" label="Discord状态" width="100">
           <template #default="{ row }">
-            <el-tag
-              v-if="row.status"
-              size="small"
-              :type="getStatusTagType(row.status)"
-              effect="light"
-            >
-              {{ formatStatus(row.status) }}
-            </el-tag>
-            <span v-else class="text-muted">-</span>
+            <el-tag v-if="row.discordStatus === 'online'" size="small" type="success">在线</el-tag>
+            <el-tag v-else-if="row.discordStatus === 'idle'" size="small" type="warning">空闲</el-tag>
+            <el-tag v-else-if="row.discordStatus === 'dnd'" size="small" type="danger">请勿打扰</el-tag>
+            <el-tag v-else-if="row.discordStatus === 'offline'" size="small" type="info">离线</el-tag>
+            <el-tag v-else size="small">未知</el-tag>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="friendStatusText" label="添加状态" width="110">
+          <template #default="{ row }">
+            <el-tag v-if="row.friendStatus === 0" size="small" type="info">待添加</el-tag>
+            <el-tag v-else-if="row.friendStatus === 1" size="small" type="warning">已分配</el-tag>
+            <el-tag v-else-if="row.friendStatus === 2" size="small" type="success">添加成功</el-tag>
+            <el-tag v-else-if="row.friendStatus === 3" size="small" type="danger">添加失败</el-tag>
+            <el-tag v-else size="small">-</el-tag>
           </template>
         </el-table-column>
 
@@ -217,24 +235,12 @@ const filterCollapsed = ref(false)
 const serverOptions = ref([])
 const accountOptions = ref([])
 
-const statusOptions = [
-  { value: '待添加', label: '待添加' },
-  { value: '已请求添加', label: '已请求添加' },
-  { value: 'PROSPECT', label: 'PROSPECT' },
-  { value: 'NEW', label: 'NEW' },
-  { value: 'ACTIVE', label: 'ACTIVE' },
-  { value: 'CONVERTED', label: 'CONVERTED' },
-  { value: 'PAYING', label: 'PAYING' },
-  { value: 'DORMANT', label: 'DORMANT' },
-  { value: 'CHURNED', label: 'CHURNED' },
-  { value: 'ARCHIVED', label: 'ARCHIVED' }
-]
-
 const filters = reactive({
   guildServerId: null,
   discordAccountId: null,
   keyword: '',
-  status: '',
+  discordStatus: '',
+  friendStatus: null,
   fetchDateRange: null,
   passDateRange: null
 })
@@ -244,23 +250,6 @@ const pagination = reactive({
   size: 20,
   total: 0
 })
-
-function getStatusTagType(status) {
-  const map = {
-    '待添加': 'info',
-    '已请求添加': 'warning',
-    'PROSPECT': 'primary',
-    'NEW': 'success',
-    'ACTIVE': 'success',
-    'CONVERTED': 'warning',
-    'PAYING': 'danger'
-  }
-  return map[status] || 'info'
-}
-
-function formatStatus(status) {
-  return status
-}
 
 function formatDate(dateStr) {
   if (!dateStr) return '-'
@@ -306,7 +295,8 @@ async function fetchMembers() {
     if (filters.guildServerId) params.guildServerId = filters.guildServerId
     if (filters.discordAccountId) params.discordAccountId = filters.discordAccountId
     if (filters.keyword) params.keyword = filters.keyword
-    if (filters.status) params.status = filters.status
+    if (filters.discordStatus) params.discordStatus = filters.discordStatus
+    if (filters.friendStatus !== null && filters.friendStatus !== '') params.friendStatus = filters.friendStatus
     if (filters.fetchDateRange && filters.fetchDateRange.length === 2) {
       params.fetchDateFrom = filters.fetchDateRange[0]
       params.fetchDateTo = filters.fetchDateRange[1]
@@ -337,7 +327,8 @@ function handleReset() {
   filters.guildServerId = null
   filters.discordAccountId = null
   filters.keyword = ''
-  filters.status = ''
+  filters.discordStatus = ''
+  filters.friendStatus = null
   filters.fetchDateRange = null
   filters.passDateRange = null
   pagination.page = 0

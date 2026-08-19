@@ -3,6 +3,7 @@ package com.discordadmin.service;
 import com.discordadmin.entity.GuildMember;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.EmuServerBinding;
+import com.discordadmin.entity.GuildServer;
 import com.discordadmin.repository.*;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -19,6 +20,7 @@ public class EmuFriendPoolService {
     private final GuildMemberRepository memberRepository;
     private final EmuServerBindingRepository serverBindingRepository;
     private final DiscordAccountRepository discordAccountRepository;
+    private final GuildServerRepository guildServerRepository;
 
     // 好友状态常量
     public static final int STATUS_PENDING = 0;    // 待添加
@@ -28,10 +30,12 @@ public class EmuFriendPoolService {
 
     public EmuFriendPoolService(GuildMemberRepository memberRepository,
                                  EmuServerBindingRepository serverBindingRepository,
-                                 DiscordAccountRepository discordAccountRepository) {
+                                 DiscordAccountRepository discordAccountRepository,
+                                 GuildServerRepository guildServerRepository) {
         this.memberRepository = memberRepository;
         this.serverBindingRepository = serverBindingRepository;
         this.discordAccountRepository = discordAccountRepository;
+        this.guildServerRepository = guildServerRepository;
     }
 
     /**
@@ -115,22 +119,25 @@ public class EmuFriendPoolService {
     }
 
     /**
-     * 获取商户所有服务器的好友池统计
+     * 获取商户所有服务器的好友池统计（包括未绑定的服务器）
      */
     public Map<String, Object> getFriendPoolStatsByMerchant(Long merchantId) {
         Map<String, Object> stats = new HashMap<>();
         long total = 0, pending = 0, assigned = 0, success = 0, failed = 0;
         
-        List<EmuServerBinding> bindings = serverBindingRepository.findByMerchantId(merchantId);
-        for (EmuServerBinding binding : bindings) {
-            Long serverId = binding.getServerId();
+        // 查询商户下所有服务器（包括未绑定的）
+        List<GuildServer> servers = guildServerRepository.findByMerchantId(merchantId);
+        for (GuildServer server : servers) {
+            Long serverId = server.getId();
             total += memberRepository.countWithFriendStatusByGuildServerId(serverId);
             pending += memberRepository.countPendingByGuildServerId(serverId);
-            assigned += memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_ASSIGNED)
-                    + memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_SUCCESS)
-                    + memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_FAILED);
-            success += memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_SUCCESS);
-            failed += memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_FAILED);
+            
+            long serverSuccess = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_SUCCESS);
+            long serverFailed = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_FAILED);
+            long serverAssigned = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_ASSIGNED);
+            assigned += serverAssigned + serverSuccess + serverFailed;
+            success += serverSuccess;
+            failed += serverFailed;
         }
         
         stats.put("total", total);
@@ -140,6 +147,38 @@ public class EmuFriendPoolService {
         stats.put("failed", failed);
         
         return stats;
+    }
+
+    /**
+     * 获取商户下每个服务器的好友池统计（按服务器分组）
+     */
+    public List<Map<String, Object>> getFriendPoolStatsByServer(Long merchantId) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        
+        // 查询商户下所有服务器（包括未绑定的）
+        List<GuildServer> servers = guildServerRepository.findByMerchantId(merchantId);
+        for (GuildServer server : servers) {
+            Long serverId = server.getId();
+            Map<String, Object> serverStats = new HashMap<>();
+            
+            long total = memberRepository.countWithFriendStatusByGuildServerId(serverId);
+            long pending = memberRepository.countPendingByGuildServerId(serverId);
+            long success = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_SUCCESS);
+            long failed = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_FAILED);
+            long assigned = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_ASSIGNED) + success + failed;
+            
+            serverStats.put("serverId", serverId);
+            serverStats.put("serverName", server.getName() != null ? server.getName() : "服务器 #" + serverId);
+            serverStats.put("total", total);
+            serverStats.put("pending", pending);
+            serverStats.put("assigned", assigned);
+            serverStats.put("success", success);
+            serverStats.put("failed", failed);
+            
+            result.add(serverStats);
+        }
+        
+        return result;
     }
 
     /**

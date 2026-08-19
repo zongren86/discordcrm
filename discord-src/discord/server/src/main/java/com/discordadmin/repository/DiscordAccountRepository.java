@@ -11,6 +11,7 @@ import java.util.Optional;
 public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, Long> {
     Optional<DiscordAccount> findByToken(String token);
     Optional<DiscordAccount> findByDiscordId(String discordId);
+    Optional<DiscordAccount> findByName(String name);
     List<DiscordAccount> findByStatus(DiscordAccount.AccountStatus status);
     List<DiscordAccount> findByMerchantId(Long merchantId);
     List<DiscordAccount> findByAccountType(DiscordAccount.AccountType accountType);

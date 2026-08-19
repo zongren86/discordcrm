@@ -50,7 +50,8 @@ public class GuildMembersController {
             @RequestParam(required = false) Long guildServerId,
             @RequestParam(required = false) Long discordAccountId,
             @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String discordStatus,
+            @RequestParam(required = false) Integer friendStatus,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant fetchDateFrom,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant fetchDateTo,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant passDateFrom,
@@ -74,7 +75,7 @@ public class GuildMembersController {
 
         List<MemberDTO> dtos = buildDTOs(members, serverMap, accountMap, friendMap, conversationMap);
 
-        dtos = applyFilters(dtos, status, fetchDateFrom, fetchDateTo, passDateFrom, passDateTo);
+        dtos = applyFilters(dtos, discordStatus, friendStatus, fetchDateFrom, fetchDateTo, passDateFrom, passDateTo);
 
         return paginate(dtos, page, size);
     }
@@ -286,27 +287,12 @@ public class GuildMembersController {
             DiscordAccount account = server != null ? accountMap.get(server.getDiscordAccountId()) : null;
             Friend friend = friendMap.get(m.getId());
 
-            String memberStatus;
-            Instant passDate = null;
-
-            if (friend == null) {
-                memberStatus = "待添加";
-            } else if (friend.getStatus() == Friend.FriendStatus.PENDING_IN) {
-                memberStatus = "已请求添加";
-                passDate = friend.getCreatedAt();
-            } else {
-                Map<Long, Conversation> userConvs = conversationMap.get(m.getUserId());
-                Conversation conv = null;
-                if (userConvs != null && server != null && server.getDiscordAccountId() != null) {
-                    conv = userConvs.get(server.getDiscordAccountId());
-                }
-                if (conv != null) {
-                    memberStatus = conv.getStage().name();
-                } else {
-                    memberStatus = "PROSPECT";
-                }
-                passDate = friend.getCreatedAt();
-            }
+            // 好友添加状态
+            Integer friendStatus = m.getFriendStatus();
+            String friendStatusText = getFriendStatusText(friendStatus);
+            
+            // Discord在线状态
+            String discordStatus = m.getDiscordStatus();
 
             MemberDTO dto = new MemberDTO();
             dto.setId(m.getId());
@@ -319,8 +305,11 @@ public class GuildMembersController {
             dto.setNick(m.getNick());
             dto.setDisplayName(m.getDisplayName());
             dto.setGlobalName(m.getGlobalName());
-            dto.setStatus(memberStatus);
-            dto.setPassDate(passDate);
+            dto.setDiscordStatus(discordStatus);
+            dto.setFriendStatus(friendStatus);
+            dto.setFriendStatusText(friendStatusText);
+            dto.setPassDate(m.getFinishedAt() != null ? m.getFinishedAt() : 
+                (friend != null ? friend.getCreatedAt() : null));
             dto.setJoinedAt(m.getJoinedAt());
             dto.setLastFetchedAt(m.getLastFetchedAt());
 
@@ -330,14 +319,28 @@ public class GuildMembersController {
         return dtos;
     }
 
+    private String getFriendStatusText(Integer status) {
+        if (status == null) return "待添加";
+        return switch (status) {
+            case 0 -> "待添加";
+            case 1 -> "已分配";
+            case 2 -> "添加成功";
+            case 3 -> "添加失败";
+            default -> "未知";
+        };
+    }
+
     private List<MemberDTO> applyFilters(List<MemberDTO> dtos,
-                                         String status,
+                                         String discordStatus,
+                                         Integer friendStatus,
                                          Instant fetchDateFrom,
                                          Instant fetchDateTo,
                                          Instant passDateFrom,
                                          Instant passDateTo) {
         return dtos.stream()
-                .filter(d -> status == null || status.isBlank() || status.equals(d.getStatus()))
+                .filter(d -> discordStatus == null || discordStatus.isBlank() || 
+                        discordStatus.equalsIgnoreCase(d.getDiscordStatus()))
+                .filter(d -> friendStatus == null || friendStatus.equals(d.getFriendStatus()))
                 .filter(d -> fetchDateFrom == null ||
                         (d.getLastFetchedAt() != null && !d.getLastFetchedAt().isBefore(fetchDateFrom)))
                 .filter(d -> fetchDateTo == null ||
@@ -377,7 +380,9 @@ public class GuildMembersController {
         String nick;
         String displayName;
         String globalName;
-        String status;
+        String discordStatus;
+        Integer friendStatus;
+        String friendStatusText;
         Instant passDate;
         Instant joinedAt;
         Instant lastFetchedAt;

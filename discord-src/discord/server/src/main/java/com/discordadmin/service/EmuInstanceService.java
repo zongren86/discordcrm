@@ -26,6 +26,7 @@ public class EmuInstanceService {
     private final CloudWebSocketService webSocketService;
     private final ApkManagementService apkManagementService;
     private final DiscordAccountRepository discordAccountRepository;
+    private final DiscordService discordService;
 
     @Value("${emulator.local-mode:false}")
     private boolean localMode;
@@ -34,12 +35,14 @@ public class EmuInstanceService {
                                MumuClientService mumuClientService,
                                CloudWebSocketService webSocketService,
                                ApkManagementService apkManagementService,
-                               DiscordAccountRepository discordAccountRepository) {
+                               DiscordAccountRepository discordAccountRepository,
+                               DiscordService discordService) {
         this.instanceRepository = instanceRepository;
         this.mumuClientService = mumuClientService;
         this.webSocketService = webSocketService;
         this.apkManagementService = apkManagementService;
         this.discordAccountRepository = discordAccountRepository;
+        this.discordService = discordService;
     }
 
     private Long resolveMerchantId() {
@@ -505,21 +508,60 @@ public class EmuInstanceService {
         // 异步启动，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                mumuClientService.startEmulator(index);
-                log.info("模拟器 #{} 启动指令执行完成", index);
+                // 1. 启动模拟器（内部会检查 Discord 安装状态）
+                Map<String, Object> startResult = mumuClientService.startEmulator(index);
+                log.info("模拟器 #{} 启动指令执行完成, discordInstalled={}", index, startResult.get("discordInstalled"));
 
-                // 如果已安装 Discord，自动打开
-                if (instance.getDiscordInstalled()) {
+                // 2. 等待模拟器完全启动（8秒）
+                Thread.sleep(8000);
+
+                // 3. 从启动结果或物理数据判断是否安装了 Discord
+                boolean discordInstalled = Boolean.TRUE.equals(startResult.get("discordInstalled"));
+                if (!discordInstalled) {
+                    // 从物理模拟器数据再检查一次
+                    List<Map<String, Object>> physList = mumuClientService.getAllEmulatorsWithError();
+                    if (physList != null) {
+                        int mumuIdx = index - 1;
+                        for (Map<String, Object> phys : physList) {
+                            Object pIdx = phys.get("index");
+                            if (pIdx instanceof Number && ((Number) pIdx).intValue() == mumuIdx) {
+                                Object instObj = phys.get("discordInstalled");
+                                discordInstalled = Boolean.TRUE.equals(instObj) ||
+                                        "true".equalsIgnoreCase(String.valueOf(instObj));
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // 4. 先更新安装状态到数据库
+                EmuInstance inst = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(
+                        resolveMerchantId(), resolveUserId(), index).orElse(null);
+                if (inst != null) {
+                    inst.setDiscordInstalled(discordInstalled);
+                    inst.setUpdatedAt(Instant.now());
+                    instanceRepository.save(inst);
+                }
+
+                // 5. 如果已安装 Discord，打开并等待加载后检查登录状态
+                if (discordInstalled) {
                     log.info("模拟器 #{} Discord 已安装，自动打开...", index);
                     try {
-                        Thread.sleep(3000); // 等待模拟器完全启动
                         mumuClientService.launchDiscord(index);
                         log.info("模拟器 #{} Discord 已自动打开", index);
-                        // 更新 Discord 首页状态
                         updateDiscordOnHome(index, true);
+                        // 等待 Discord 加载完成
+                        Thread.sleep(5000);
+                        // 检查并更新所有 Discord 状态
+                        checkAndUpdateDiscordStatus(index);
                     } catch (Exception e) {
                         log.warn("模拟器 #{} 自动打开 Discord 失败: {}", index, e.getMessage());
+                        // 即使打开失败也检查一次状态
+                        checkAndUpdateDiscordStatus(index);
                     }
+                } else {
+                    // 未安装 Discord，只更新安装状态
+                    log.info("模拟器 #{} 未安装 Discord", index);
                 }
             } catch (Exception e) {
                 log.warn("模拟器 #{} 启动指令执行失败: {}", index, e.getMessage());
@@ -1280,6 +1322,96 @@ public class EmuInstanceService {
             }
         } catch (Exception e) {
             log.warn("更新模拟器 #{} Discord 首页状态失败: {}", index, e.getMessage());
+        }
+    }
+
+    /**
+     * 检查并更新模拟器的Discord登录状态
+     * 使用 DiscordService 直接通过 ADB 检测真实的 Discord 登录状态
+     */
+    private void checkAndUpdateDiscordStatus(int index) {
+        try {
+            EmuInstance inst = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(
+                    resolveMerchantId(), resolveUserId(), index).orElse(null);
+            if (inst == null) {
+                log.warn("模拟器 #{} 不存在，跳过Discord状态检查", index);
+                return;
+            }
+
+            int mumuIndex = index - 1; // DiscordService 使用 0-based index
+            boolean updated = false;
+
+            // 1. 检查 Discord 是否安装（通过物理模拟器数据）
+            List<Map<String, Object>> physicalList = mumuClientService.getAllEmulatorsWithError();
+            boolean discordInstalled = false;
+            if (physicalList != null) {
+                for (Map<String, Object> phys : physicalList) {
+                    Object idx = phys.get("index");
+                    if (idx instanceof Number && ((Number) idx).intValue() == mumuIndex) {
+                        Object installedObj = phys.get("discordInstalled");
+                        discordInstalled = Boolean.TRUE.equals(installedObj) ||
+                                "true".equalsIgnoreCase(String.valueOf(installedObj));
+                        break;
+                    }
+                }
+            }
+            if (discordInstalled != Boolean.TRUE.equals(inst.getDiscordInstalled())) {
+                inst.setDiscordInstalled(discordInstalled);
+                log.info("模拟器 #{} Discord安装状态: {}", index, discordInstalled);
+                updated = true;
+            }
+
+            // 2. 如果已安装 Discord，检测登录状态
+            if (discordInstalled) {
+                // 2a. 确认 Discord 在前台
+                boolean isForeground = discordService.isDiscordForeground(mumuIndex);
+                log.info("模拟器 #{} Discord前台状态: {}", index, isForeground);
+
+                if (isForeground) {
+                    // 2b. 检测是否已登录
+                    boolean loggedIn = discordService.isDiscordLoggedIn(mumuIndex);
+                    inst.setDiscordLoggedIn(loggedIn);
+                    log.info("模拟器 #{} Discord登录状态: {}", index, loggedIn);
+                    updated = true;
+
+                    if (loggedIn) {
+                        // 2c. 获取登录用户名
+                        String username = discordService.getLoggedInUser(mumuIndex);
+                        if (username != null && !username.isEmpty()) {
+                            // 查找或创建 DiscordAccount 记录
+                            DiscordAccount account = discordAccountRepository.findByName(username)
+                                    .orElseGet(() -> {
+                                        DiscordAccount newAcc = new DiscordAccount();
+                                        newAcc.setName(username);
+                                        newAcc.setCreatedAt(Instant.now());
+                                        return discordAccountRepository.save(newAcc);
+                                    });
+                            inst.setDiscordAccountId(account.getId());
+                            log.info("模拟器 #{} Discord账号已更新: {}", index, username);
+                        }
+                        // 清除之前的错误
+                        if (inst.getLastError() != null && inst.getLastError().contains("Discord")) {
+                            inst.setLastError(null);
+                            updated = true;
+                        }
+                    } else {
+                        // 未登录
+                        inst.setDiscordAccountId(null);
+                        updated = true;
+                    }
+                } else {
+                    // Discord 不在前台，保持现有登录状态不变
+                    log.info("模拟器 #{} Discord不在前台，跳过登录状态检测", index);
+                }
+            }
+
+            if (updated) {
+                inst.setUpdatedAt(Instant.now());
+                instanceRepository.save(inst);
+                log.info("模拟器 #{} Discord状态已更新到数据库", index);
+            }
+        } catch (Exception e) {
+            log.warn("检查模拟器 #{} Discord状态失败: {}", index, e.getMessage());
         }
     }
 
