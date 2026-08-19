@@ -6,7 +6,7 @@ import { API_BASE } from '@/config'
 // 使用配置文件中的 API_BASE
 const http = axios.create({
   baseURL: API_BASE,
-  timeout: 30000
+  timeout: 120000
 })
 
 // 请求拦截器：附加 Bearer Token

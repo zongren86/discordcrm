@@ -132,7 +132,7 @@ public class AutoAddService {
                 info.setDiscordLoggedIn(false);
                 info.setDiscordLoginFailed(false);
                 info.setAutoRunning(false);
-                info.setAutoLastResult(name + " Discord 未登录（自动登录开关已关闭）");
+                info.setAutoLastResult(name + " Discord 未登录");
                 return "ERROR: " + name + " Discord 未登录";
             }
             // 2-1-1 开关打开：从账号池取号并模拟自动登录
@@ -184,16 +184,24 @@ public class AutoAddService {
             log.info("模拟器{} Discord 自动登录成功，开始自动加好友", index + 1);
             info.setAutoLastResult("Discord 登录成功(" + acc.getEmail() + ")，开始自动加好友");
         } else {
-            // 2-2 已登录：在首页抓取用户名并回传给后台显示当前登录账号
+            // 2-2 已登录：只在有显式绑定账号时才显示登录信息
             DiscordAccount bound = dataStore.getAccountByEmulator(index);
-            info.setDiscordLoggedIn(true);
-            info.setDiscordLoginFailed(false);
-            info.setDiscordLoginError(null);
-            if (bound != null) info.setDiscordAccount(bound.getEmail());
-            String user = discordService.getLoggedInUser(index);
-            emulatorService.setDiscordActualUser(index, user);
-            log.info("模拟器{} Discord 已登录({})，开始自动加好友", index + 1, user);
-            info.setAutoLastResult("Discord 已登录" + (user != null ? "(" + user + ")" : "") + "，开始自动加好友");
+            if (bound != null) {
+                info.setDiscordLoggedIn(true);
+                info.setDiscordLoginFailed(false);
+                info.setDiscordLoginError(null);
+                info.setDiscordAccount(bound.getEmail());
+                String user = discordService.getLoggedInUser(index);
+                emulatorService.setDiscordActualUser(index, user);
+                log.info("模拟器{} Discord 已登录(绑定账号: {})，开始自动加好友", index + 1, bound.getEmail());
+                info.setAutoLastResult("Discord 已登录" + (user != null ? "(" + user + ")" : "") + "，开始自动加好友");
+            } else {
+                // 无绑定账号：不显示登录状态，防止多个模拟器共享账号
+                info.setDiscordLoggedIn(false);
+                info.setDiscordAccount(null);
+                info.setAutoLastResult("Discord 已检测到登录态，但未绑定账号，需要手工登录");
+                log.info("模拟器{} 检测到 Discord 登录态但未绑定账号，跳过自动登录显示", index + 1);
+            }
         }
 
         info.setAutoRunning(true);

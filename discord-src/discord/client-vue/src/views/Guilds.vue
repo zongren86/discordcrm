@@ -68,7 +68,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="最后抓取" width="160">
+        <el-table-column label="最后采集" width="160">
           <template #default="{ row }">
             <span v-if="row.lastFetchAt" class="text-muted">{{ formatTime(row.lastFetchAt) }}</span>
             <span v-else class="text-muted">从未</span>
@@ -92,7 +92,7 @@
                 @click="isServerSyncing(row.id) ? openProgressDialog(row, getServerTaskId(row.id)) : openSyncDialog(row)"
               >
                 <el-icon v-if="!isServerSyncing(row.id)"><Download /></el-icon>
-                {{ isServerSyncing(row.id) ? '同步中' : '同步' }}
+                {{ isServerSyncing(row.id) ? '采集中' : '采集' }}
               </el-button>
               <el-button size="small" link type="primary" @click="openProgressDialog(row)">
                 <el-icon><DataLine /></el-icon> 进度
@@ -150,8 +150,15 @@
       </template>
     </el-dialog>
 
-    <!-- 同步 Dialog -->
-    <el-dialog v-model="syncDialog.visible" title="同步服务器成员" width="620px" :close-on-click-modal="false" class="sync-dialog">
+    <!-- 采集 Dialog -->
+    <el-dialog 
+      v-model="syncDialog.visible" 
+      title="采集服务器成员" 
+      width="560px" 
+      :close-on-click-modal="false" 
+      class="sync-dialog"
+      align-center
+    >
       <div v-if="syncDialog.server" class="sync-info">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="所属账号">
@@ -166,38 +173,41 @@
           </el-descriptions-item>
         </el-descriptions>
 
-        <el-divider content-position="left">抓取配置（商户配置）</el-divider>
+        <el-divider content-position="left">抓取配置</el-divider>
 
-        <el-form :model="syncDialog.config" label-width="140px">
-          <el-form-item label="获取数量上限">
-            <el-input-number v-model="syncDialog.config.fetchLimit" :min="100" :max="2000000" :step="1000" />
+        <el-form :model="syncDialog.config" label-width="120px">
+          <el-form-item label="获取数量">
+            <el-input-number v-model="syncDialog.config.fetchLimit" :min="100" :max="2000000" :step="1000" style="width: 100%" />
           </el-form-item>
           <el-form-item label="请求间隔(秒)">
-            <el-input-number v-model="syncDialog.config.requestInterval" :min="1" :max="60" :step="1" />
+            <el-input-number v-model="syncDialog.config.requestInterval" :min="1" :max="60" :step="1" style="width: 100%" />
           </el-form-item>
           <el-form-item label="每次请求数">
-            <el-input-number v-model="syncDialog.config.requestCount" :min="10" :max="1000" :step="50" />
+            <el-input-number v-model="syncDialog.config.requestCount" :min="10" :max="1000" :step="50" style="width: 100%" />
           </el-form-item>
-          <el-form-item label="最大下钻深度">
-            <el-input-number v-model="syncDialog.config.maxDepth" :min="1" :max="20" />
+          <el-form-item label="下钻深度">
+            <el-input-number v-model="syncDialog.config.maxDepth" :min="1" :max="20" style="width: 100%" />
           </el-form-item>
-          <el-form-item label="最大请求数">
-            <el-input-number v-model="syncDialog.config.maxRequests" :min="1" :max="10000" :step="100" />
+          <el-form-item label="请求次数">
+            <el-input-number v-model="syncDialog.config.maxRequests" :min="1" :max="10000" :step="100" style="width: 100%" />
           </el-form-item>
-          <el-form-item label="续传同步">
-            <el-switch 
-              v-model="syncDialog.resumeSync" 
-              active-text="开启（从上次断点继续）" 
-              inactive-text="关闭（全量重新同步）"
-              style="--el-switch-on-color: #409eff;"
-            />
+          <el-form-item label="断点续采">
+            <div style="display: flex; flex-direction: column; align-items: flex-start; width: 100%;">
+              <el-switch 
+                v-model="syncDialog.resumeSync" 
+                active-text="开启（从上次断点继续）" 
+                inactive-text="关闭（全量重新采集）"
+                style="--el-switch-on-color: #409eff;"
+              />
+              <div class="switch-hint">开启后将从上次采集进度继续；关闭则从最新状态重新采集</div>
+            </div>
           </el-form-item>
         </el-form>
       </div>
       <template #footer>
         <el-button @click="syncDialog.visible = false">取消</el-button>
         <el-button type="primary" :loading="syncDialog.fetching" @click="startFetch">
-          {{ syncDialog.fetching ? '启动中...' : '开始同步' }}
+          {{ syncDialog.fetching ? '启动中...' : '开始采集' }}
         </el-button>
       </template>
     </el-dialog>
@@ -209,10 +219,8 @@
       width="900px" 
       @close="stopProgressPolling" 
       class="progress-dialog"
-      center
       align-center
       :close-on-click-modal="false"
-      top="0"
     >
       <div v-if="progressDialog.server" class="progress-content">
         <!-- 状态头部 -->
@@ -470,7 +478,7 @@
       <template #footer>
         <div v-if="currentProgressTask && !isTerminalStatus && isRunningTask" style="display:flex;justify-content:flex-end;gap:8px;">
           <el-button type="warning" :disabled="progressDialog.stopping" @click="handlePauseSync">
-            <el-icon><VideoPause /></el-icon> {{ progressDialog.stopping ? '正在停止...' : '暂停同步' }}
+            <el-icon><VideoPause /></el-icon> {{ progressDialog.stopping ? '正在停止...' : '暂停采集' }}
           </el-button>
           <el-button @click="progressDialog.visible = false">关闭</el-button>
         </div>
@@ -481,7 +489,7 @@
     </el-dialog>
 
     <!-- 成员明细 Dialog -->
-    <el-dialog v-model="memberDialog.visible" :title="memberDialogTitle" width="720px" :close-on-click-modal="false" @close="stopMemberAutoRefresh" class="member-dialog">
+    <el-dialog v-model="memberDialog.visible" :title="memberDialogTitle" width="920px" :close-on-click-modal="false" @close="stopMemberAutoRefresh" class="member-dialog">
       <div class="member-dialog-toolbar">
         <el-input
           v-model="memberDialog.search"
@@ -493,7 +501,21 @@
           @keyup.enter="searchMembers"
           @clear="searchMembers"
         />
-        <el-tag size="small" type="info" effect="plain">共 {{ memberDialog.total }} 名成员</el-tag>
+        <el-select
+          v-model="memberDialog.discordStatus"
+          size="small"
+          placeholder="Discord状态"
+          clearable
+          style="width: 140px; margin-left: 10px"
+          @change="searchMembers"
+        >
+          <el-option label="全部" value="" />
+          <el-option label="在线" value="online" />
+          <el-option label="空闲" value="idle" />
+          <el-option label="请勿打扰" value="dnd" />
+          <el-option label="离线" value="offline" />
+        </el-select>
+        <el-tag size="small" type="info" effect="plain" style="margin-left: 10px">共 {{ memberDialog.total }} 名成员</el-tag>
       </div>
       <el-table
         :data="memberDialog.members"
@@ -503,7 +525,7 @@
         height="380"
         style="width: 100%"
       >
-        <el-table-column label="成员" min-width="180">
+        <el-table-column label="成员" min-width="160">
           <template #default="{ row }">
             <div class="member-cell-simple">
               <span class="member-name-text">{{ row.displayName || row.globalName || row.username || '未知成员' }}</span>
@@ -511,17 +533,17 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="用户名" width="140">
+        <el-table-column label="用户名" width="130">
           <template #default="{ row }">
             <span class="mono">{{ row.username || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="昵称" width="140">
+        <el-table-column label="昵称" width="130">
           <template #default="{ row }">
             <span>{{ row.nick || '-' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="ID" width="180">
+        <el-table-column label="ID" width="160">
           <template #default="{ row }">
             <div class="id-cell">
               <span class="mono">{{ row.userId || '-' }}</span>
@@ -536,9 +558,65 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="加入时间" width="120">
+        <el-table-column label="加入时间" width="110">
           <template #default="{ row }">
             <span class="text-muted">{{ formatDate(row.joinedAt) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Discord状态" width="100">
+          <template #default="{ row }">
+            <el-tag
+              v-if="row.discordStatus === 'online'"
+              size="small"
+              type="success"
+            >在线</el-tag>
+            <el-tag
+              v-else-if="row.discordStatus === 'idle'"
+              size="small"
+              type="warning"
+            >空闲</el-tag>
+            <el-tag
+              v-else-if="row.discordStatus === 'dnd'"
+              size="small"
+              type="danger"
+            >请勿打扰</el-tag>
+            <el-tag
+              v-else-if="row.discordStatus === 'offline'"
+              size="small"
+              type="info"
+            >离线</el-tag>
+            <el-tag
+              v-else
+              size="small"
+            >未知</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="添加状态" width="100">
+          <template #default="{ row }">
+            <el-tag 
+              v-if="row.friendStatus === 0 || row.friendStatus === null" 
+              size="small" 
+              type="info"
+            >待添加</el-tag>
+            <el-tag 
+              v-else-if="row.friendStatus === 1" 
+              size="small" 
+              type="warning"
+            >已分配</el-tag>
+            <el-tag 
+              v-else-if="row.friendStatus === 2" 
+              size="small" 
+              type="success"
+            >添加成功</el-tag>
+            <el-tag 
+              v-else-if="row.friendStatus === 3" 
+              size="small" 
+              type="danger"
+            >添加失败</el-tag>
+            <el-tag 
+              v-else 
+              size="small"
+            >未知</el-tag>
           </template>
         </el-table-column>
         <template #empty>
@@ -609,7 +687,7 @@ const syncDialog = reactive({
   token: '', 
   resumeSync: true,
   config: {
-    fetchLimit: 2000000,
+    fetchLimit: 100000,
     requestInterval: 3,
     requestCount: 100,
     maxDepth: 5,
@@ -633,6 +711,7 @@ const memberDialog = reactive({
   total: 0,
   loading: false,
   search: '',
+  discordStatus: '',  // Discord 原生状态筛选
   page: 0,
   size: 50,
   totalPages: 0
@@ -889,7 +968,7 @@ function openSyncDialog(server) {
   guildServers.loadMerchantConfig().then(config => {
     if (config) {
       syncDialog.config = {
-        fetchLimit: config.fetchLimit || 10000,
+        fetchLimit: config.fetchLimit || 100000,
         requestInterval: config.requestInterval || 3,
         requestCount: config.requestCount || 100,
         maxDepth: config.maxDepth || 5,
@@ -1159,6 +1238,7 @@ async function openMemberDialog(server) {
   memberDialog.server = server
   memberDialog.visible = true
   memberDialog.search = ''
+  memberDialog.discordStatus = ''
   memberDialog.members = []
   memberDialog.total = 0
   memberDialog.page = 0
@@ -1206,11 +1286,15 @@ async function loadMemberPage() {
   if (!memberDialog.server) return
   memberDialog.loading = true
   try {
-    const result = await guildServers.fetchMembersList(memberDialog.server.id, {
+    const params = {
       page: memberDialog.page,
       size: memberDialog.size,
       keyword: memberDialog.search || undefined
-    })
+    }
+    if (memberDialog.discordStatus && memberDialog.discordStatus.trim()) {
+      params.discordStatus = memberDialog.discordStatus.trim()
+    }
+    const result = await guildServers.fetchMembersList(memberDialog.server.id, params)
     memberDialog.members = result.list || []
     memberDialog.total = result.total || 0
     memberDialog.totalPages = result.totalPages || 0
@@ -1720,13 +1804,12 @@ onUnmounted(() => {
 .action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 
 /* Progress dialog - centered, full-height, scrollable body */
+.progress-dialog {
+  max-height: 85vh;
+}
+
 .progress-dialog :deep(.el-dialog) {
-  margin: 0 !important;
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  max-height: 90vh;
+  max-height: 85vh;
   max-width: 95vw;
   display: flex;
   flex-direction: column;
@@ -1753,7 +1836,7 @@ onUnmounted(() => {
 @media screen and (max-width: 1200px) {
   .progress-dialog :deep(.el-dialog) {
     width: 95vw !important;
-    max-height: 95vh;
+    max-height: 90vh;
   }
   .progress-stats-enhanced {
     grid-template-columns: repeat(2, 1fr);
@@ -1763,7 +1846,7 @@ onUnmounted(() => {
 @media screen and (max-width: 768px) {
   .progress-dialog :deep(.el-dialog) {
     width: 98vw !important;
-    max-height: 98vh;
+    max-height: 95vh;
   }
   .progress-stats-enhanced {
     grid-template-columns: 1fr;
@@ -1771,8 +1854,35 @@ onUnmounted(() => {
 }
 
 /* Sync dialog centering */
+.sync-dialog {
+  max-height: 90vh;
+}
+
 .sync-dialog :deep(.el-dialog) {
-  margin-top: 8vh !important;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.sync-dialog :deep(.el-dialog__header) {
+  flex-shrink: 0;
+}
+
+.sync-dialog :deep(.el-dialog__body) {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.sync-dialog :deep(.el-dialog__footer) {
+  flex-shrink: 0;
+}
+
+/* Switch hint text */
+.switch-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 6px;
+  line-height: 1.4;
 }
 
 /* Member dialog centering */

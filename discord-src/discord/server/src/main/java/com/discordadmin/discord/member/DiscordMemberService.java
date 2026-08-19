@@ -53,6 +53,9 @@ public class DiscordMemberService {
     @Value("${discord.proxy.port:0}")
     private int proxyPort;
 
+    @Value("${discord.proxy.websocket-direct:true}")
+    private boolean websocketDirect;
+
     public DiscordMemberService(GuildMemberRepository guildMemberRepository,
                                  GuildServerRepository guildServerRepository,
                                  FetchProgressRepository fetchProgressRepository,
@@ -389,7 +392,7 @@ public class DiscordMemberService {
 
             fetcher = new GatewayMemberFetcher(
                     req.getToken(), guildId, proxyHost, proxyPort,
-                    listener, batchListener, req.getMaxRequests(), req.getMaxMembers(), pageDelayMs);
+                    listener, batchListener, req.getMaxRequests(), req.getMaxMembers(), pageDelayMs, websocketDirect);
 
             // 注册 fetcher 引用，用于后续停止
             activeFetchers.put(taskId, fetcher);
@@ -704,6 +707,7 @@ public class DiscordMemberService {
         gm.setAvatarUrl(rec.getAvatarUrl());
         gm.setIsBot(rec.getIsBot());
         gm.setLastFetchedAt(Instant.now());
+        gm.setDiscordStatus(rec.getDiscordStatus());
 
         if (rec.getJoinedAt() != null && !rec.getJoinedAt().isEmpty()) {
             try {
@@ -796,6 +800,14 @@ public class DiscordMemberService {
                     roleNames.add(role.asText(""));
                 }
                 r.setRoles(String.join(",", roleNames));
+            }
+
+            // 提取 Discord 在线状态
+            String discordStatus = m.path("presence").path("status").asText("");
+            if (discordStatus != null && !discordStatus.isEmpty()) {
+                r.setDiscordStatus(discordStatus);
+            } else {
+                r.setDiscordStatus("offline");
             }
 
             out.add(r);

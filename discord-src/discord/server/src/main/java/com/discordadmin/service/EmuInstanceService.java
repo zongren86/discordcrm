@@ -138,7 +138,8 @@ public class EmuInstanceService {
                         }
                         Object memoryMB = phys.get("memoryMB");
                         if (memoryMB != null) {
-                            emu.put("memoryGb", memoryMB);
+                            int memMb = ((Number) memoryMB).intValue();
+                            emu.put("memoryGb", memMb / 1024);
                         }
                         // 合并自动加好友相关字段
                         Object autoRunning = phys.get("autoRunning");
@@ -1134,7 +1135,7 @@ public class EmuInstanceService {
             DiscordAccount account = discordAccountRepository.findById(instance.getDiscordAccountId()).orElse(null);
             item.put("discordAccount", account != null ? account.getName() : instance.getDiscordAccountId().toString());
         } else {
-            item.put("discordAccount", "-");
+            item.put("discordAccount", null);
         }
         
         item.put("autoRunning", instance.getAutoRunning());

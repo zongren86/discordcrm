@@ -147,9 +147,11 @@ public class GuildServerController {
             @PathVariable Long id,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "50") int size,
-            @RequestParam(required = false) String keyword) {
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Integer friendStatus,
+            @RequestParam(required = false) String discordStatus) {
         checkServerAccess(id);
-        Page<GuildMember> memberPage = guildService.listMembersPaginated(id, keyword, page, size);
+        Page<GuildMember> memberPage = guildService.listMembersPaginated(id, keyword, friendStatus, discordStatus, page, size);
         List<Map<String, Object>> members = memberPage.getContent().stream().map(this::toMemberMap).collect(Collectors.toList());
 
         Map<String, Object> result = new HashMap<>();
@@ -302,9 +304,55 @@ public class GuildServerController {
         map.put("joinedAt", member.getJoinedAt());
         map.put("roles", member.getRoles());
         map.put("lastFetchedAt", member.getLastFetchedAt());
-        // 添加状态字段（如果有状态字段的话）
-        map.put("status", "ACTIVE");
-        map.put("statusText", "活跃");
+        
+        // Discord 原生状态字段
+        map.put("discordStatus", member.getDiscordStatus());
+        
+        // 添加好友池状态字段
+        Integer friendStatus = member.getFriendStatus();
+        map.put("friendStatus", friendStatus);
+        
+        // 状态文字映射为中文
+        String friendStatusText;
+        if (friendStatus == null || friendStatus == 0) {
+            friendStatusText = "待添加";
+        } else if (friendStatus == 1) {
+            friendStatusText = "已分配";
+        } else if (friendStatus == 2) {
+            friendStatusText = "添加成功";
+        } else if (friendStatus == 3) {
+            friendStatusText = "添加失败";
+        } else {
+            friendStatusText = "未知";
+        }
+        map.put("friendStatusText", friendStatusText);
+        
+        // 其他好友池相关字段
+        map.put("discordAccountId", member.getDiscordAccountId());
+        map.put("assignedTaskId", member.getAssignedTaskId());
+        map.put("emulatorIndex", member.getEmulatorIndex());
+        map.put("lastError", member.getLastError());
+        map.put("startedAt", member.getStartedAt());
+        map.put("finishedAt", member.getFinishedAt());
+        map.put("retryCount", member.getRetryCount());
+        map.put("updatedAt", member.getUpdatedAt());
+        
         return map;
+    }
+
+    /**
+     * 统计跨服务器重复成员
+     */
+    @GetMapping("/duplicates/count")
+    public Map<String, Object> countCrossServerDuplicates() {
+        return guildService.countCrossServerDuplicates();
+    }
+
+    /**
+     * 清理跨服务器重复成员（保留最早采集的，删除其余）
+     */
+    @PostMapping("/duplicates/clean")
+    public Map<String, Object> cleanCrossServerDuplicates() {
+        return guildService.cleanCrossServerDuplicates();
     }
 }

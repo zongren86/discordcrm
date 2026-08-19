@@ -49,6 +49,16 @@
                 <el-option label="自定义" value="custom" />
               </el-select>
             </div>
+
+            <!-- 翻译功能：语言检测模式配置 -->
+            <div v-if="f.key === 'translate'" class="config-row">
+              <label class="config-label">好友语言检测</label>
+              <el-radio-group v-model="f.languageDetectionMode" class="config-input">
+                <el-radio value="first_message">好友首次信息</el-radio>
+                <el-radio value="every_message">好友每条信息</el-radio>
+              </el-radio-group>
+              <div class="config-hint">选择"好友首次信息"：仅根据好友第一条消息检测语言，适用于固定语言会话；选择"好友每条信息"：每条消息都会重新检测语言，适用于多语言会话</div>
+            </div>
             
             <!-- 翻译功能 + 千问：显示预设翻译模型 -->
             <div v-if="f.key === 'translate' && f.provider === 'qwen'" class="config-row">
@@ -150,7 +160,8 @@ function initFeatures() {
       hasFreeOption: !!d.hasFreeOption,
       enabled: false, provider: '', model: '', apiEndpoint: '', apiKey: '',
       temperature: 0.7, maxTokens: 1024, systemPrompt: d.promptPlaceholder,
-      thinking: false, webSearch: false, id: null, saving: false
+      thinking: false, webSearch: false, id: null, saving: false,
+      languageDetectionMode: 'first_message'
     })
   }
 }
@@ -190,6 +201,7 @@ async function fetchList() {
         f.systemPrompt = s.systemPrompt || f.promptPlaceholder
         f.thinking = !!s.thinking
         f.webSearch = !!s.webSearch
+        f.languageDetectionMode = s.languageDetectionMode || 'first_message'
       }
     }
   } catch (e) {
@@ -247,9 +259,12 @@ async function saveFeature(f) {
       maxTokens: f.maxTokens,
       systemPrompt: f.systemPrompt,
       thinking: f.thinking,
-      webSearch: f.webSearch
+      webSearch: f.webSearch,
+      languageDetectionMode: f.languageDetectionMode
     }, effectiveMerchantId.value)
     ElMessage.success('已保存')
+    // 通知其他页面配置已更新（确保即时生效）
+    window.dispatchEvent(new CustomEvent('ai-settings-updated', { detail: { feature: f.key } }))
   } catch (e) {
     ElMessage.error('保存失败')
   } finally {
@@ -285,6 +300,8 @@ onMounted(async () => {
 .config-input :deep(.el-input__wrapper),
 .config-input :deep(.el-select__wrapper) { width:100% !important; }
 .config-tag { font-size:13px; padding:6px 12px; }
+.config-hint { font-size:12px; color:var(--color-text-3); margin-top:4px; line-height:1.4; }
+.config-input :deep(.el-radio-group) { display:flex; gap:16px; }
 
 .params-row { display:flex; align-items:center; gap:10px; color:var(--color-text-2); font-size:12px; flex-wrap:wrap; }
 .param-label { color:var(--color-text-2); }

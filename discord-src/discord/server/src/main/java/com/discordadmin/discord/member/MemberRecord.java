@@ -20,4 +20,5 @@ public class MemberRecord {
     private String avatarUrl;
     private Boolean isBot;
     private String roles;
+    private String discordStatus; // online, idle, dnd, offline
 }

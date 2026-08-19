@@ -42,6 +42,9 @@ discord:
   proxy:
     host: ${DISCORD_PROXY_HOST:127.0.0.1}
     port: ${DISCORD_PROXY_PORT:7890}
+    # WebSocket 直连模式：true=WebSocket 连接绕过代理直连 Discord Gateway
+    # HTTP 请求（API调用）仍会使用代理，仅 WebSocket 直连
+    websocket-direct: ${DISCORD_WEBSOCKET_DIRECT:true}
   emulator:
     apk-path: /tmp/discord-emulator
 

@@ -14,7 +14,8 @@ import java.time.Instant;
         @Index(name = "idx_gm_display_name", columnList = "display_name(64)"),
         @Index(name = "idx_gm_username", columnList = "username(64)"),
         @Index(name = "idx_gm_friend_status", columnList = "friend_status"),
-        @Index(name = "idx_gm_server_friend_status", columnList = "guild_server_id, friend_status")
+        @Index(name = "idx_gm_server_friend_status", columnList = "guild_server_id, friend_status"),
+        @Index(name = "idx_gm_discord_status", columnList = "discord_status")
 })
 @Getter
 @Setter
@@ -118,6 +119,14 @@ public class GuildMember {
      */
     @Column(name = "updated_at")
     private Instant updatedAt;
+
+    // ========== Discord 原生状态字段 ==========
+
+    /**
+     * Discord 原生状态：online, idle, dnd, offline
+     */
+    @Column(name = "discord_status", length = 32)
+    private String discordStatus;
 
     /**
      * 好友添加状态枚举

@@ -103,7 +103,7 @@
                 <div class="conv-main">
                   <div class="conv-line-1">
                     <el-icon class="pin-icon" :size="12"><Top /></el-icon>
-                    <span class="conv-name">{{ truncateText(c.remark || c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
+                    <span class="conv-name">{{ truncateText(c.remark || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
                     <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-mini">
                       {{ stageLabel(c.stage) }}
                     </el-tag>
@@ -153,7 +153,7 @@
                 </div>
                 <div class="conv-main">
                   <div class="conv-line-1">
-                    <span class="conv-name">{{ truncateText(c.remark || c.globalName || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
+                    <span class="conv-name">{{ truncateText(c.remark || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
                     <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-mini">
                       {{ stageLabel(c.stage) }}
                     </el-tag>
@@ -315,7 +315,7 @@
                   :type="stageTagType(conversations.currentConversation.stage)" size="small" effect="light" class="header-stage-tag">
                   {{ stageLabel(conversations.currentConversation.stage) }}
                 </el-tag>
-                <span class="customer-name">{{ conversations.currentConversation.remark || conversations.currentConversation.globalName || conversations.currentConversation.username || '客户' }}</span>
+                <span class="customer-name">{{ conversations.currentConversation.remark || conversations.currentConversation.username || '客户' }}</span>
               </div>
               <div class="chat-header-sub">
                 @{{ conversations.currentConversation.username || '-' }}
@@ -864,7 +864,7 @@ import {
   listMessageTemplates, getTemplateCategories, createMessageTemplate,
   updateMessageTemplate, deleteMessageTemplate,
   transcribeVoiceAsr, translateAsrText,
-  getSupportedLanguages
+  getSupportedLanguages, getAISettingByFeature
 } from '@/api'
 
 const auth = useAuthStore()
@@ -935,19 +935,36 @@ const targetLang = ref('zh')
 const detectedLang = ref('未知')
 const supportedLanguages = ref([])  // AI 翻译模型支持的所有语种
 let userChangedTargetLang = false  // 标记用户是否手动修改过目标语言
+const languageDetectionMode = ref('first_message')  // 语言检测模式：first_message / every_message
+let firstMessageDetectedLang = null  // 好友首次消息检测到的语言
 
 // 加载后端 AI 翻译模型支持的所有语种
 async function loadSupportedLanguages() {
   try {
     const res = await getSupportedLanguages()
-    if (res?.data?.data && Array.isArray(res.data.data)) {
-      supportedLanguages.value = res.data.data
+    if (res?.data && Array.isArray(res.data)) {
+      supportedLanguages.value = res.data
     }
   } catch (e) {
     console.warn('加载支持语种失败:', e)
   }
 }
 loadSupportedLanguages()
+
+// 加载语言检测模式配置
+async function loadLanguageDetectionConfig() {
+  try {
+    const merchantId = auth.agent?.merchantId
+    if (!merchantId) return
+    const res = await getAISettingByFeature('translate', merchantId)
+    if (res && res.languageDetectionMode) {
+      languageDetectionMode.value = res.languageDetectionMode
+    }
+  } catch (e) {
+    console.warn('加载语言检测配置失败:', e)
+  }
+}
+loadLanguageDetectionConfig()
 const isEditing = ref(false)
 const editingMsgId = ref(null)
 const showGifPanel = ref(false)
@@ -1943,12 +1960,15 @@ watch(() => conversations.currentMessages.length, (cnt) => {
   updateDetectedLang()
 })
 
-watch(() => conversations.currentConversationId, (newId, oldId) => {
+watch(() => conversations.currentConversationId, async (newId, oldId) => {
   replyToMsg.value = null
   userChangedTargetLang = false
+  firstMessageDetectedLang = null  // 切换会话时重置首次检测缓存
   if (showProfile.value && conversations.currentConversation) {
     loadUserProfile(conversations.currentConversation)
   }
+  // 重新加载语言检测配置（确保即时生效）
+  await loadLanguageDetectionConfig()
   updateDetectedLang()
   if (newId && (conversations.currentMessages || []).length > 0) {
     nextTick().then(() => scrollToBottom({ force: true }))
@@ -1982,24 +2002,57 @@ function updateDetectedLang() {
   const msgs = conversations.currentMessages
   if (!msgs || msgs.length === 0) {
     detectedLang.value = '未知'
+    firstMessageDetectedLang = null
     return
   }
-  // 优先使用最近一条入站消息的检测语言
+
+  // 获取所有入站消息
+  const inboundMsgs = msgs.filter(m => m.direction === 'INBOUND' && !isVoiceMsg(m) && m.content?.trim())
+  if (inboundMsgs.length === 0) {
+    detectedLang.value = '未知'
+    return
+  }
+
   let detectedCode = null
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const msg = msgs[i]
-    if (msg.direction === 'INBOUND' && msg.language && msg.language !== 'unknown') {
-      detectedCode = msg.language
-      break
+
+  if (languageDetectionMode.value === 'first_message') {
+    // 好友首次信息模式：只看第一条入站消息的语言
+    // 先检查是否已经缓存了首次消息的检测结果
+    if (firstMessageDetectedLang) {
+      detectedCode = firstMessageDetectedLang
+    } else {
+      const firstMsg = inboundMsgs[0]
+      // 优先使用后端返回的语言检测结果
+      if (firstMsg.language && firstMsg.language !== 'unknown') {
+        detectedCode = firstMsg.language
+      } else {
+        detectedCode = heuristicDetectLang(firstMsg.content)
+      }
+      if (detectedCode) {
+        firstMessageDetectedLang = detectedCode
+      }
+    }
+  } else {
+    // 好友每条信息模式：使用最近一条入站消息的检测语言
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const msg = msgs[i]
+      if (msg.direction === 'INBOUND' && !isVoiceMsg(msg) && msg.language && msg.language !== 'unknown') {
+        detectedCode = msg.language
+        break
+      }
+    }
+    // 如果没有检测到，使用启发式检测最近一条入站消息
+    if (!detectedCode) {
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i]
+        if (msg.direction === 'INBOUND' && !isVoiceMsg(msg) && msg.content?.trim()) {
+          detectedCode = heuristicDetectLang(msg.content)
+          break
+        }
+      }
     }
   }
-  // 如果没有检测到，使用启发式检测
-  if (!detectedCode) {
-    const lastMsg = msgs[msgs.length - 1]
-    if (lastMsg?.content) {
-      detectedCode = heuristicDetectLang(lastMsg.content)
-    }
-  }
+
   if (detectedCode) {
     detectedLang.value = getLanguageName(detectedCode)
     // 如果用户没有手动修改目标语言，则自动跟随检测到的语言
@@ -2017,15 +2070,35 @@ function onTargetLangChange() {
 
 function heuristicDetectLang(text) {
   if (!text) return null
-  const zhRegex = /[\u4e00-\u9fa5]/
-  const jaRegex = /[\u3040-\u309F]/
-  const koRegex = /[\uAC00-\uD7AF]/
+  const zhRegex = /[\u4e00-\u9fa5]/     // 汉字
+  const hiraganaRegex = /[\u3040-\u309F]/  // 平假名
+  const katakanaRegex = /[\u30A0-\u30FF]/  // 片假名
+  const koRegex = /[\uAC00-\uD7AF]/      // 韩文
+  const jaKanaRegex = /[\u3040-\u30FF\u30A0-\u30FF]/  // 所有假名
+
+  // 优先检测：如果有假名（平假名或片假名），一定是日文
+  // 因为中文不会使用假名
+  if (hiraganaRegex.test(text) || katakanaRegex.test(text)) return 'ja'
+  
+  // 检测韩文
   if (koRegex.test(text)) return 'ko'
-  if (jaRegex.test(text) && zhRegex.test(text)) return 'ja'
+  
+  // 检测中文
   if (zhRegex.test(text)) return 'zh'
+  
+  // 检测阿拉伯文
   if (/[\u0600-\u06FF]/.test(text)) return 'ar'
+  
+  // 检测泰文
   if (/[\u0E00-\u0E7F]/.test(text)) return 'th'
-  return 'en'
+  
+  // 检测俄文（西里尔字母）
+  if (/[\u0400-\u04FF]/.test(text)) return 'ru'
+  
+  // 检测英文（拉丁字母）
+  if (/[a-zA-Z]/.test(text)) return 'en'
+  
+  return null
 }
 
 let pollTimer = null
@@ -2804,6 +2877,18 @@ async function translateCurrentMsg() {
   ElMessage.success(`正在翻译 ${inboundMsgs.length} 条消息...`)
 }
 
+// AI配置更新事件处理 - 确保配置修改即时生效
+async function onAISettingsUpdated(event) {
+  if (event.detail?.feature === 'translate') {
+    await loadLanguageDetectionConfig()
+    await loadSupportedLanguages()
+    // 重置首次检测缓存，重新检测语言
+    firstMessageDetectedLang = null
+    userChangedTargetLang = false
+    updateDetectedLang()
+  }
+}
+
 onMounted(async () => {
   if (accounts.accounts.length === 0) {
     try { await accounts.fetchAccounts() } catch (e) {}
@@ -2813,11 +2898,15 @@ onMounted(async () => {
   }
   pollTimer = setInterval(pollCurrentMessages, 1000)
   convPollTimer = setInterval(pollConversations, 2000)
+  // 监听AI配置更新事件
+  window.addEventListener('ai-settings-updated', onAISettingsUpdated)
 })
 
 onUnmounted(() => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (convPollTimer) { clearInterval(convPollTimer); convPollTimer = null }
+  // 移除AI配置更新事件监听
+  window.removeEventListener('ai-settings-updated', onAISettingsUpdated)
 })
 </script>
 

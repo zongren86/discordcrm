@@ -99,7 +99,9 @@ public class EmuFriendPoolService {
         
         long total = memberRepository.countWithFriendStatusByGuildServerId(serverId);
         long pending = memberRepository.countPendingByGuildServerId(serverId);
-        long assigned = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_ASSIGNED);
+        long assigned = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_ASSIGNED)
+                + memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_SUCCESS)
+                + memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_FAILED);
         long success = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_SUCCESS);
         long failed = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_FAILED);
         
@@ -124,7 +126,9 @@ public class EmuFriendPoolService {
             Long serverId = binding.getServerId();
             total += memberRepository.countWithFriendStatusByGuildServerId(serverId);
             pending += memberRepository.countPendingByGuildServerId(serverId);
-            assigned += memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_ASSIGNED);
+            assigned += memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_ASSIGNED)
+                    + memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_SUCCESS)
+                    + memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_FAILED);
             success += memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_SUCCESS);
             failed += memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_FAILED);
         }

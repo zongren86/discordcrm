@@ -47,6 +47,7 @@ public class GatewayMemberFetcher {
     private final String guildId;
     private final String proxyHost;
     private final int proxyPort;
+    private final boolean websocketDirect;  // WebSocket 直连模式
     private final ObjectMapper mapper = new ObjectMapper();
 
     private final Map<String, JsonNode> members = new ConcurrentHashMap<>();
@@ -112,7 +113,15 @@ public class GatewayMemberFetcher {
                                 ProgressListener progress,
                                 int maxRequests, int maxMembers,
                                 int pageDelayMs) {
-        this(token, guildId, proxyHost, proxyPort, progress, null, maxRequests, maxMembers, pageDelayMs);
+        this(token, guildId, proxyHost, proxyPort, progress, null, maxRequests, maxMembers, pageDelayMs, false);
+    }
+
+    public GatewayMemberFetcher(String token, String guildId,
+                                String proxyHost, int proxyPort,
+                                ProgressListener progress,
+                                int maxRequests, int maxMembers,
+                                int pageDelayMs, boolean websocketDirect) {
+        this(token, guildId, proxyHost, proxyPort, progress, null, maxRequests, maxMembers, pageDelayMs, websocketDirect);
     }
 
     public GatewayMemberFetcher(String token, String guildId,
@@ -121,10 +130,20 @@ public class GatewayMemberFetcher {
                                 MemberBatchListener memberBatchListener,
                                 int maxRequests, int maxMembers,
                                 int pageDelayMs) {
+        this(token, guildId, proxyHost, proxyPort, progress, memberBatchListener, maxRequests, maxMembers, pageDelayMs, false);
+    }
+
+    public GatewayMemberFetcher(String token, String guildId,
+                                String proxyHost, int proxyPort,
+                                ProgressListener progress,
+                                MemberBatchListener memberBatchListener,
+                                int maxRequests, int maxMembers,
+                                int pageDelayMs, boolean websocketDirect) {
         this.token = token;
         this.guildId = guildId;
         this.proxyHost = proxyHost;
         this.proxyPort = proxyPort;
+        this.websocketDirect = websocketDirect;
         this.progress = progress;
         this.memberBatchListener = memberBatchListener;
         this.maxRequestsRef = maxRequests;
@@ -717,19 +736,24 @@ public class GatewayMemberFetcher {
         }
 
         try {
-            // 探测代理是否可用于 WebSocket CONNECT 隧道，不可用则回退直连
-            boolean proxyUsable = isProxyUsableForWebSocket(proxyHost, proxyPort);
             WebSocketFactory factory = new WebSocketFactory();
             factory.setConnectionTimeout(30000);
             factory.setSocketTimeout(60000);
 
-            if (proxyUsable) {
-                ProxySettings proxySettings = factory.getProxySettings();
-                proxySettings.setHost(proxyHost);
-                proxySettings.setPort(proxyPort);
-                log.info("WebSocketFactory 使用代理: {}:{}", proxyHost, proxyPort);
-            } else if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
-                log.warn("代理 {}:{} 不支持 WebSocket CONNECT 隧道或不可达，回退为直连 Discord", proxyHost, proxyPort);
+            if (websocketDirect) {
+                // 直连模式：跳过代理，直接连接 Discord Gateway
+                log.info("WebSocket 直连模式：跳过代理，直接连接 Discord Gateway");
+            } else {
+                // 代理模式：探测代理是否可用于 WebSocket CONNECT 隧道
+                boolean proxyUsable = isProxyUsableForWebSocket(proxyHost, proxyPort);
+                if (proxyUsable) {
+                    ProxySettings proxySettings = factory.getProxySettings();
+                    proxySettings.setHost(proxyHost);
+                    proxySettings.setPort(proxyPort);
+                    log.info("WebSocketFactory 使用代理: {}:{}", proxyHost, proxyPort);
+                } else if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+                    log.warn("代理 {}:{} 不支持 WebSocket CONNECT 隧道或不可达，回退为直连 Discord", proxyHost, proxyPort);
+                }
             }
 
             webSocket = factory.createSocket(GATEWAY_URL);

@@ -54,6 +54,10 @@ public class AISetting {
     @Column(name = "web_search")
     private Boolean webSearch = false;
 
+    /** 语言检测模式：first_message=好友首次信息 / every_message=好友每条信息 */
+    @Column(name = "language_detection_mode", length = 32)
+    private String languageDetectionMode = "first_message";
+
     @Column(name = "updated_at")
     private Instant updatedAt = Instant.now();
 }

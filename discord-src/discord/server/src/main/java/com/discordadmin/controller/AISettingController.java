@@ -62,6 +62,7 @@ public class AISettingController {
         setting.setSystemPrompt(req.systemPrompt());
         if (req.thinking() != null) setting.setThinking(req.thinking());
         if (req.webSearch() != null) setting.setWebSearch(req.webSearch());
+        if (req.languageDetectionMode() != null) setting.setLanguageDetectionMode(req.languageDetectionMode());
         setting.setUpdatedAt(Instant.now());
         return aiSettingRepository.save(setting);
     }
@@ -85,5 +86,6 @@ public class AISettingController {
     public record AISettingRequest(String feature, Boolean enabled, String provider, String model,
                                    String apiEndpoint, String apiKey, Double temperature,
                                    Integer maxTokens, String systemPrompt,
-                                   Boolean thinking, Boolean webSearch) {}
+                                   Boolean thinking, Boolean webSearch,
+                                   String languageDetectionMode) {}
 }

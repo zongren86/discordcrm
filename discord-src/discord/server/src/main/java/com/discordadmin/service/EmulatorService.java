@@ -998,20 +998,49 @@ public class EmulatorService {
     }
 
     /**
-     * 通过 mumutool info 获取模拟器运行信息：返回 running 状态下的真实 adb_port，
+     * 通过 mumutool info 获取模拟器运行信息：返回 running/launching 状态下的真实 adb_port，
      * 未运行返回 -1。vm.json 中的 adbPort 是静态值，与实际端口不匹配。
+     * 兼容 MuMu 的 "running" 和 "launching" 状态（部分版本模拟器启动过程中返回 launching）
      */
     private int getMumuRunningPort(int index) {
         try {
             String result = execMumuTool("info", String.valueOf(index));
             JsonNode json = objectMapper.readTree(result);
             String state = json.path("return").path("state").asText("");
-            if (!"running".equals(state)) {
+            // 兼容 running / launching / booting 等运行中状态
+            boolean isActive = "running".equals(state) || "launching".equals(state) || "booting".equals(state);
+            if (!isActive) {
                 return -1;
             }
-            return json.path("return").path("adb_port").asInt(-1);
+            int port = json.path("return").path("adb_port").asInt(-1);
+            if (port <= 0) {
+                // 虽然返回 running 但端口无效，尝试通过 ADB 兜底检测
+                port = tryAdbFallback(index);
+            }
+            return port;
         } catch (Exception e) {
-            log.warn("mumutool info {} 失败: {}", index, e.getMessage());
+            log.warn("mumutool info {} 失败: {}，尝试 ADB 兜底", index, e.getMessage());
+            return tryAdbFallback(index);
+        }
+    }
+
+    /**
+     * ADB 兜底检测：直接用 adb connect + get-state 判断模拟器是否在运行
+     */
+    private int tryAdbFallback(int index) {
+        try {
+            int adbPort = getAdbPort(index);
+            if (adbPort <= 0) return -1;
+            String device = "127.0.0.1:" + adbPort;
+            execAdbRaw("connect", device);
+            Thread.sleep(500);
+            String state = execAdbRaw("-s", device, "get-state").trim();
+            if ("device".equals(state)) {
+                log.info("模拟器{} ADB 兜底检测: 端口={}, 状态=device", index, adbPort);
+                return adbPort;
+            }
+            return -1;
+        } catch (Exception e) {
             return -1;
         }
     }

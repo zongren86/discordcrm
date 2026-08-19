@@ -36,28 +36,28 @@ public class LanguageDetectionService {
             .build();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // 语言代码映射（AI 翻译模型支持的所有语种）
+    // 语言代码映射（AI 翻译模型支持的所有语种，显示名称为中文）
     public static final Map<String, String> LANGUAGE_NAMES = new LinkedHashMap<>();
     static {
         LANGUAGE_NAMES.put("zh", "中文");
-        LANGUAGE_NAMES.put("en", "English");
-        LANGUAGE_NAMES.put("ja", "日本語");
-        LANGUAGE_NAMES.put("ko", "한국어");
-        LANGUAGE_NAMES.put("fr", "Français");
-        LANGUAGE_NAMES.put("de", "Deutsch");
-        LANGUAGE_NAMES.put("es", "Español");
-        LANGUAGE_NAMES.put("ru", "Русский");
-        LANGUAGE_NAMES.put("pt", "Português");
-        LANGUAGE_NAMES.put("it", "Italiano");
-        LANGUAGE_NAMES.put("ar", "العربية");
-        LANGUAGE_NAMES.put("th", "ไทย");
-        LANGUAGE_NAMES.put("vi", "Tiếng Việt");
-        LANGUAGE_NAMES.put("id", "Indonesia");
-        LANGUAGE_NAMES.put("hi", "हिन्दी");
-        LANGUAGE_NAMES.put("tr", "Türkçe");
-        LANGUAGE_NAMES.put("nl", "Nederlands");
-        LANGUAGE_NAMES.put("pl", "Polski");
-        LANGUAGE_NAMES.put("sv", "Svenska");
+        LANGUAGE_NAMES.put("en", "英语");
+        LANGUAGE_NAMES.put("ja", "日语");
+        LANGUAGE_NAMES.put("ko", "韩语");
+        LANGUAGE_NAMES.put("fr", "法语");
+        LANGUAGE_NAMES.put("de", "德语");
+        LANGUAGE_NAMES.put("es", "西班牙语");
+        LANGUAGE_NAMES.put("ru", "俄语");
+        LANGUAGE_NAMES.put("pt", "葡萄牙语");
+        LANGUAGE_NAMES.put("it", "意大利语");
+        LANGUAGE_NAMES.put("ar", "阿拉伯语");
+        LANGUAGE_NAMES.put("th", "泰语");
+        LANGUAGE_NAMES.put("vi", "越南语");
+        LANGUAGE_NAMES.put("id", "印尼语");
+        LANGUAGE_NAMES.put("hi", "印地语");
+        LANGUAGE_NAMES.put("tr", "土耳其语");
+        LANGUAGE_NAMES.put("nl", "荷兰语");
+        LANGUAGE_NAMES.put("pl", "波兰语");
+        LANGUAGE_NAMES.put("sv", "瑞典语");
     }
 
     /**
@@ -120,26 +120,28 @@ public class LanguageDetectionService {
     private LanguageResult fastDetect(String text) {
         // 中文字符检测
         long chineseCount = countMatches(text, "[\\u4e00-\\u9fa5]");
-        long japaneseCount = countMatches(text, "[\\u3040-\\u309F]");
+        long hiraganaCount = countMatches(text, "[\\u3040-\\u309F]");  // 平假名
+        long katakanaCount = countMatches(text, "[\\u30A0-\\u30FF]");  // 片假名
+        long japaneseKanaCount = hiraganaCount + katakanaCount;  // 所有假名
         long koreanCount = countMatches(text, "[\\uAC00-\\uD7AF]");
         long arabicCount = countMatches(text, "[\\u0600-\\u06FF]");
         long thaiCount = countMatches(text, "[\\u0E00-\\u0E7F]");
+        long cyrillicCount = countMatches(text, "[\\u0400-\\u04FF]");
         long totalChars = text.replaceAll("\\s", "").length();
 
         if (totalChars == 0) {
             return new LanguageResult("unknown", "未知", 0.0);
         }
 
-        // 日文检测（同时包含汉字和假名）
-        if (japaneseCount > 0 && chineseCount > 0) {
-            double confidence = (double) (japaneseCount + chineseCount) / totalChars;
-            if (japaneseCount > chineseCount * 0.3) {
-                return new LanguageResult("ja", "日文", confidence);
-            }
+        // 日文检测（优先检测：只要有假名就是日文，因为中文不会使用假名）
+        // 支持仅有假名的日文（如"をしています"）和假名+汉字混合的日文
+        if (japaneseKanaCount > 0) {
+            double confidence = (double) (japaneseKanaCount + chineseCount) / totalChars;
+            return new LanguageResult("ja", "日文", Math.min(confidence, 0.95));
         }
 
-        // 中文检测
-        if (chineseCount > 0 && japaneseCount == 0) {
+        // 中文检测（没有假名的情况下，有汉字就是中文）
+        if (chineseCount > 0) {
             double confidence = (double) chineseCount / totalChars;
             return new LanguageResult("zh", "中文", confidence);
         }
@@ -160,6 +162,12 @@ public class LanguageDetectionService {
         if (thaiCount > 0) {
             double confidence = (double) thaiCount / totalChars;
             return new LanguageResult("th", "泰文", confidence);
+        }
+
+        // 俄文检测（西里尔字母）
+        if (cyrillicCount > 0) {
+            double confidence = (double) cyrillicCount / totalChars;
+            return new LanguageResult("ru", "俄文", confidence);
         }
 
         // 拉丁文检测

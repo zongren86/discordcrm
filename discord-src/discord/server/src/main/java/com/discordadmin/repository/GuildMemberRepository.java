@@ -4,6 +4,7 @@ import com.discordadmin.entity.GuildMember;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -13,7 +14,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface GuildMemberRepository extends JpaRepository<GuildMember, Long> {
+public interface GuildMemberRepository extends JpaRepository<GuildMember, Long>, JpaSpecificationExecutor<GuildMember> {
     List<GuildMember> findByGuildServerId(Long guildServerId);
 
     long countByGuildServerId(Long guildServerId);
@@ -157,4 +158,36 @@ public interface GuildMemberRepository extends JpaRepository<GuildMember, Long> 
            "LOWER(m.userId) LIKE LOWER(CONCAT('%', :keyword, '%')))")
     long countByGuildServerIdAndKeyword(@Param("guildServerId") Long guildServerId,
                                         @Param("keyword") String keyword);
+
+    // ========== 跨服务器去重相关 ==========
+
+    /**
+     * 检查userId是否存在于指定的任意服务器中（用于商户级去重）
+     */
+    @Query("SELECT m.userId FROM GuildMember m WHERE m.guildServerId IN :serverIds AND m.userId = :userId")
+    List<String> findUserIdsInServers(@Param("serverIds") List<Long> serverIds, @Param("userId") String userId);
+
+    /**
+     * 检查userId是否存在于指定服务器（排除某个服务器ID）
+     */
+    @Query("SELECT m FROM GuildMember m WHERE m.guildServerId IN :serverIds AND m.userId = :userId AND m.guildServerId != :excludeServerId")
+    List<GuildMember> findExistingInOtherServers(@Param("serverIds") List<Long> serverIds, 
+                                                  @Param("userId") String userId, 
+                                                  @Param("excludeServerId") Long excludeServerId);
+
+    /**
+     * 查找同一userId在多个服务器中都存在的记录（用于清理重复）
+     */
+    @Query("SELECT m FROM GuildMember m WHERE m.userId IN (" +
+           "SELECT m2.userId FROM GuildMember m2 GROUP BY m2.userId HAVING COUNT(DISTINCT m2.guildServerId) > 1" +
+           ") ORDER BY m.userId, m.guildServerId, m.id")
+    List<GuildMember> findCrossServerDuplicates();
+
+    /**
+     * 统计重复成员数（同一userId在多个服务器中都存在）
+     */
+    @Query("SELECT COUNT(DISTINCT m.userId) FROM GuildMember m WHERE m.userId IN (" +
+           "SELECT m2.userId FROM GuildMember m2 GROUP BY m2.userId HAVING COUNT(DISTINCT m2.guildServerId) > 1" +
+           ")")
+    long countCrossServerDuplicates();
 }

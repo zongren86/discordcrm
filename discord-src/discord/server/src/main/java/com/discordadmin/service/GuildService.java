@@ -4,12 +4,14 @@ import com.discordadmin.discord.DiscordUserClient;
 import com.discordadmin.entity.*;
 import com.discordadmin.repository.*;
 import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.persistence.criteria.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -80,12 +82,46 @@ public class GuildService {
     }
 
     /** 分页获取服务器成员列表 */
-    public Page<GuildMember> listMembersPaginated(Long guildServerId, String keyword, int page, int size) {
+    public Page<GuildMember> listMembersPaginated(Long guildServerId, String keyword, Integer friendStatus, String discordStatus, int page, int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "id"));
-        if (keyword != null && !keyword.trim().isEmpty()) {
-            return guildMemberRepository.searchByGuildServerId(guildServerId, keyword.trim(), pageable);
-        }
-        return guildMemberRepository.findByGuildServerId(guildServerId, pageable);
+        
+        // 使用 Specification 构建筛选条件
+        Specification<GuildMember> spec = (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            predicates.add(cb.equal(root.get("guildServerId"), guildServerId));
+            
+            // 关键词搜索（使用 OR 组合）
+            if (keyword != null && !keyword.trim().isEmpty()) {
+                String kw = "%" + keyword.trim().toLowerCase() + "%";
+                predicates.add(cb.or(
+                    cb.like(cb.lower(root.get("username")), kw),
+                    cb.like(cb.lower(root.get("nick")), kw),
+                    cb.like(cb.lower(root.get("displayName")), kw),
+                    cb.like(cb.lower(root.get("userId")), kw)
+                ));
+            }
+            
+            // 好友池状态筛选
+            if (friendStatus != null) {
+                if (friendStatus == 0) {
+                    predicates.add(cb.or(
+                        cb.equal(root.get("friendStatus"), 0),
+                        cb.isNull(root.get("friendStatus"))
+                    ));
+                } else {
+                    predicates.add(cb.equal(root.get("friendStatus"), friendStatus));
+                }
+            }
+
+            // Discord 原生状态筛选
+            if (discordStatus != null && !discordStatus.trim().isEmpty()) {
+                predicates.add(cb.equal(root.get("discordStatus"), discordStatus.trim()));
+            }
+            
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+        
+        return guildMemberRepository.findAll(spec, pageable);
     }
 
     /** 获取成员数量 */
@@ -142,6 +178,18 @@ public class GuildService {
         DiscordAccount account = accountRepository.findById(server.getDiscordAccountId()).orElse(null);
         if (account == null) return;
 
+        // 获取当前商户下所有服务器的ID，用于跨服务器去重
+        Long merchantId = server.getMerchantId();
+        Set<Long> merchantServerIds = new HashSet<>();
+        merchantServerIds.add(server.getId());
+        if (merchantId != null) {
+            List<GuildServer> merchantServers = guildServerRepository.findByMerchantId(merchantId);
+            for (GuildServer ms : merchantServers) {
+                merchantServerIds.add(ms.getId());
+            }
+        }
+        log.info("商户级去重: 当前服务器={}, 商户下所有服务器{}台", server.getId(), merchantServerIds.size());
+
         // 创建进度记录
         FetchProgress progress = new FetchProgress();
         progress.setGuildServerId(guildServerId);
@@ -167,7 +215,7 @@ public class GuildService {
         progressCache.put(guildServerId, saved);
 
         try {
-            fetchMembersBatch(account, server, config, progress, lastMemberId);
+            fetchMembersBatch(account, server, config, progress, lastMemberId, merchantServerIds);
             
             progress.setStatus("COMPLETED");
             progress.setCompletedAt(Instant.now());
@@ -184,10 +232,10 @@ public class GuildService {
         progressCache.put(guildServerId, progress);
     }
 
-    /** 批量抓取成员（带分页、去重、断点续抓） */
+    /** 批量抓取成员（带分页、去重、断点续抓、商户级跨服务器去重） */
     private void fetchMembersBatch(DiscordAccount account, GuildServer server, 
                                     MerchantConfig config, FetchProgress progress, 
-                                    String startAfter) throws Exception {
+                                    String startAfter, Set<Long> merchantServerIds) throws Exception {
         String token = account.getToken();
         String guildId = server.getGuildId();
         int limit = Math.min(config.getRequestCount(), 1000);
@@ -198,7 +246,11 @@ public class GuildService {
         int requestCount = 0;
         int totalRaw = 0;
         int totalDeduped = 0;
+        int totalCrossServerDeduped = 0;
         Set<String> seenUserIds = new HashSet<>();
+        
+        // 将商户级服务器ID集合转为List用于查询
+        List<Long> merchantServerIdList = new ArrayList<>(merchantServerIds);
 
         while (requestCount < maxRequests) {
             requestCount++;
@@ -231,28 +283,45 @@ public class GuildService {
                 String userId = user.path("id").asText(null);
                 lastUserId = userId;
 
-                // 去重
+                // 本地内存去重（当前批次内）
                 if (userId != null && seenUserIds.contains(userId)) continue;
                 if (userId != null) seenUserIds.add(userId);
 
                 totalRaw++;
-                totalDeduped++;
 
-                // 检查是否已存在
-                Optional<GuildMember> existing = guildMemberRepository
+                // 1. 先检查当前服务器是否已存在
+                Optional<GuildMember> existingInServer = guildMemberRepository
                         .findByGuildServerIdAndUserId(server.getId(), userId);
-                if (existing.isPresent()) {
-                    GuildMember member = existing.get();
+                if (existingInServer.isPresent()) {
+                    // 当前服务器已存在 → 更新
+                    totalDeduped++;
+                    GuildMember member = existingInServer.get();
                     updateMemberFromJson(member, m, server.getId(), guildId);
                     batch.add(member);
-                } else {
-                    GuildMember member = new GuildMember();
-                    member.setGuildServerId(server.getId());
-                    member.setGuildId(guildId);
-                    member.setUserId(userId);
-                    fillMemberFromJson(member, m);
-                    batch.add(member);
+                    continue;
                 }
+
+                // 2. 商户级跨服务器去重：检查是否在商户的其他服务器中已存在
+                if (userId != null && merchantServerIdList.size() > 1) {
+                    List<GuildMember> existingInOtherServers = guildMemberRepository
+                            .findExistingInOtherServers(merchantServerIdList, userId, server.getId());
+                    if (!existingInOtherServers.isEmpty()) {
+                        // 已在其他服务器存在 → 跳过，不重复采集
+                        totalCrossServerDeduped++;
+                        log.debug("用户 {} 已在其他服务器(id={})中存在，跳过服务器(id={})的重复采集",
+                                userId, existingInOtherServers.get(0).getGuildServerId(), server.getId());
+                        continue;
+                    }
+                }
+
+                // 3. 完全新用户 → 插入
+                totalDeduped++;
+                GuildMember member = new GuildMember();
+                member.setGuildServerId(server.getId());
+                member.setGuildId(guildId);
+                member.setUserId(userId);
+                fillMemberFromJson(member, m);
+                batch.add(member);
             }
 
             // 批量保存
@@ -281,8 +350,8 @@ public class GuildService {
             if (membersNode.size() < limit) break;
         }
 
-        log.info("服务器[id={}]成员抓取完成：请求{}次，原始{}条，去重{}条",
-                server.getId(), requestCount, totalRaw, totalDeduped);
+        log.info("服务器[id={}]成员抓取完成：请求{}次，原始{}条，当前服务器去重{}条，跨服务器去重{}条",
+                server.getId(), requestCount, totalRaw, totalDeduped, totalCrossServerDeduped);
     }
 
     private void fillMemberFromJson(GuildMember member, JsonNode m) {
@@ -332,5 +401,97 @@ public class GuildService {
     /** 获取最近的进度记录 */
     public List<FetchProgress> listProgressHistory(Long guildServerId) {
         return fetchProgressRepository.findByGuildServerIdOrderByCreatedAtDesc(guildServerId);
+    }
+
+    /**
+     * 清理商户级跨服务器重复成员记录。
+     * 规则：同一userId在多个服务器中都存在时，保留最早采集的那条（id最小），删除其余。
+     * @return 清理结果统计
+     */
+    @Transactional
+    public Map<String, Object> cleanCrossServerDuplicates() {
+        List<GuildMember> duplicates = guildMemberRepository.findCrossServerDuplicates();
+        long totalDuplicateUsers = guildMemberRepository.countCrossServerDuplicates();
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("totalDuplicateUsers", totalDuplicateUsers);
+        
+        if (duplicates.isEmpty()) {
+            result.put("cleanedCount", 0);
+            result.put("message", "没有重复数据");
+            return result;
+        }
+
+        // 按userId分组，每组保留最早的（id最小），删除其余
+        Map<String, List<GuildMember>> groupedByUserId = new LinkedHashMap<>();
+        for (GuildMember m : duplicates) {
+            groupedByUserId.computeIfAbsent(m.getUserId(), k -> new ArrayList<>()).add(m);
+        }
+
+        int cleanedCount = 0;
+        Map<Long, Integer> cleanedByServer = new HashMap<>();
+
+        for (Map.Entry<String, List<GuildMember>> entry : groupedByUserId.entrySet()) {
+            List<GuildMember> members = entry.getValue();
+            if (members.size() <= 1) continue;
+            
+            // 按id升序排序，保留最早的
+            members.sort(Comparator.comparingLong(GuildMember::getId));
+            
+            // 保留第一个，删除其余
+            for (int i = 1; i < members.size(); i++) {
+                GuildMember toDelete = members.get(i);
+                guildMemberRepository.delete(toDelete);
+                cleanedCount++;
+                Long serverId = toDelete.getGuildServerId();
+                cleanedByServer.merge(serverId, 1, Integer::sum);
+                log.info("清理重复成员: userId={}, 保留服务器id={}, 删除服务器id={}",
+                        entry.getKey(), members.get(0).getGuildServerId(), serverId);
+            }
+        }
+
+        // 重新统计各服务器成员数
+        Map<Long, Long> updatedCounts = new HashMap<>();
+        for (Long serverId : cleanedByServer.keySet()) {
+            long count = guildMemberRepository.countByGuildServerId(serverId);
+            updatedCounts.put(serverId, count);
+            GuildServer server = guildServerRepository.findById(serverId).orElse(null);
+            if (server != null) {
+                server.setMemberCount((int) count);
+                guildServerRepository.save(server);
+            }
+        }
+
+        result.put("cleanedCount", cleanedCount);
+        result.put("cleanedByServer", cleanedByServer);
+        result.put("updatedCounts", updatedCounts);
+        result.put("message", "清理完成：共清理 " + cleanedCount + " 条重复记录，涉及 " + cleanedByServer.size() + " 台服务器");
+        log.info("跨服务器重复成员清理完成: 清理{}条，涉及{}台服务器", cleanedCount, cleanedByServer.size());
+        return result;
+    }
+
+    /**
+     * 统计商户级跨服务器重复成员数量
+     */
+    public Map<String, Object> countCrossServerDuplicates() {
+        long totalUsers = guildMemberRepository.countCrossServerDuplicates();
+        
+        // 按服务器统计重复数
+        List<GuildMember> duplicates = guildMemberRepository.findCrossServerDuplicates();
+        Map<Long, Integer> byServer = new HashMap<>();
+        Set<String> seenUsers = new HashSet<>();
+        for (GuildMember m : duplicates) {
+            if (!seenUsers.contains(m.getUserId())) {
+                seenUsers.add(m.getUserId());
+                // 该userId出现在多个服务器中时，除了第一个，其余都算重复
+            }
+            byServer.merge(m.getGuildServerId(), 1, Integer::sum);
+        }
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("totalDuplicateUsers", totalUsers);
+        result.put("affectedServers", byServer.size());
+        result.put("byServer", byServer);
+        return result;
     }
 }
