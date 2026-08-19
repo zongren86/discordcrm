@@ -282,6 +282,17 @@ public class GuildMembersController {
                                       Map<String, Map<Long, Conversation>> conversationMap) {
         List<MemberDTO> dtos = new ArrayList<>();
 
+        // 批量获取分配给成员的Discord账号（用于添加账号列）
+        Set<Long> assignedAccountIds = members.stream()
+                .map(GuildMember::getDiscordAccountId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, DiscordAccount> assignedAccountMap = new HashMap<>();
+        if (!assignedAccountIds.isEmpty()) {
+            discordAccountRepository.findByIdIn(new ArrayList<>(assignedAccountIds))
+                    .forEach(a -> assignedAccountMap.put(a.getId(), a));
+        }
+
         for (GuildMember m : members) {
             GuildServer server = serverMap.get(m.getGuildServerId());
             DiscordAccount account = server != null ? accountMap.get(server.getDiscordAccountId()) : null;
@@ -293,6 +304,15 @@ public class GuildMembersController {
             
             // Discord在线状态
             String discordStatus = m.getDiscordStatus();
+
+            // 获取添加好友时使用的账号名称
+            String assignedAccountName = null;
+            if (m.getDiscordAccountId() != null) {
+                DiscordAccount assignedAccount = assignedAccountMap.get(m.getDiscordAccountId());
+                if (assignedAccount != null) {
+                    assignedAccountName = assignedAccount.getName();
+                }
+            }
 
             MemberDTO dto = new MemberDTO();
             dto.setId(m.getId());
@@ -308,6 +328,8 @@ public class GuildMembersController {
             dto.setDiscordStatus(discordStatus);
             dto.setFriendStatus(friendStatus);
             dto.setFriendStatusText(friendStatusText);
+            dto.setLastError(m.getLastError());
+            dto.setAssignedAccountName(assignedAccountName);
             dto.setPassDate(m.getFinishedAt() != null ? m.getFinishedAt() : 
                 (friend != null ? friend.getCreatedAt() : null));
             dto.setJoinedAt(m.getJoinedAt());
@@ -383,6 +405,8 @@ public class GuildMembersController {
         String discordStatus;
         Integer friendStatus;
         String friendStatusText;
+        String lastError;
+        String assignedAccountName;
         Instant passDate;
         Instant joinedAt;
         Instant lastFetchedAt;

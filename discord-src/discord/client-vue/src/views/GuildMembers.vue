@@ -180,6 +180,22 @@
           </template>
         </el-table-column>
 
+        <el-table-column v-if="showErrorColumn" prop="lastError" label="添加结果说明" min-width="200">
+          <template #default="{ row }">
+            <span v-if="row.friendStatus === 3 && row.lastError" class="error-text">{{ row.lastError }}</span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column prop="assignedAccountName" label="添加账号" min-width="140">
+          <template #default="{ row }">
+            <el-tag v-if="row.assignedAccountName" size="small" type="info" effect="plain">
+              {{ row.assignedAccountName }}
+            </el-tag>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+
         <el-table-column prop="passDate" label="通过日期" width="120">
           <template #default="{ row }">
             <span v-if="row.passDate">{{ formatDate(row.passDate) }}</span>
@@ -223,7 +239,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { api } from '@/api'
@@ -234,6 +250,11 @@ const filterCollapsed = ref(false)
 
 const serverOptions = ref([])
 const accountOptions = ref([])
+
+// 当存在失败记录时显示"添加结果说明"列
+const showErrorColumn = computed(() => {
+  return tableData.value.some(row => row.friendStatus === 3 && row.lastError)
+})
 
 const filters = reactive({
   guildServerId: null,
@@ -438,6 +459,12 @@ onMounted(async () => {
 .text-muted {
   color: var(--color-text-3);
   font-size: 12px;
+}
+
+.error-text {
+  color: var(--el-color-danger);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .pagination-wrap {
