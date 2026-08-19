@@ -196,11 +196,15 @@ public class AutoAddService {
                 log.info("模拟器{} Discord 已登录(绑定账号: {})，开始自动加好友", index + 1, bound.getEmail());
                 info.setAutoLastResult("Discord 已登录" + (user != null ? "(" + user + ")" : "") + "，开始自动加好友");
             } else {
-                // 无绑定账号：不显示登录状态，防止多个模拟器共享账号
-                info.setDiscordLoggedIn(false);
+                // 无绑定账号：保持登录状态为true，仅清除账号信息
+                info.setDiscordLoggedIn(true);
                 info.setDiscordAccount(null);
-                info.setAutoLastResult("Discord 已检测到登录态，但未绑定账号，需要手工登录");
-                log.info("模拟器{} 检测到 Discord 登录态但未绑定账号，跳过自动登录显示", index + 1);
+                String user = discordService.getLoggedInUser(index);
+                if (user != null && !user.isEmpty()) {
+                    info.setDiscordAccount(user);
+                }
+                info.setAutoLastResult("Discord 已登录" + (user != null ? "(" + user + ")" : "") + "，未绑定系统账号");
+                log.info("模拟器{} 检测到 Discord 登录态但未绑定账号，显示登录状态但不绑定账号", index + 1);
             }
         }
 

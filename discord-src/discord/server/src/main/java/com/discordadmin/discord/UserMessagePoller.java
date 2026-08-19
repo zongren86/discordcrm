@@ -19,6 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -43,6 +46,7 @@ public class UserMessagePoller {
     private final MessageService messageService;
     private final SimpMessagingTemplate messagingTemplate;
     private final Executor pollExecutor;
+    private final TransactionTemplate transactionTemplate;
 
     /** 已处理的消息ID缓存（防止并发轮询重复处理），key=convId:msgId */
     private final Map<String, Boolean> processedMsgIds = new ConcurrentHashMap<>();
@@ -62,6 +66,7 @@ public class UserMessagePoller {
     private static final int FAIL_THRESHOLD = 3;      // 连续失败多少次触发熔断
     private static final long COOLDOWN_MS = 30_000;    // 熔断冷却期30秒
     private static final long COOLDOWN_STEP_MS = 15_000; // 每次冷却递增15秒
+    private static final long TRANSLATE_WINDOW_MS = 7L * 24 * 60 * 60 * 1000; // 7天自动翻译窗口
 
     public UserMessagePoller(DiscordAccountRepository accountRepository,
                               ConversationRepository conversationRepository,
@@ -70,7 +75,8 @@ public class UserMessagePoller {
                               DiscordUserClient discordUserClient,
                               MessageService messageService,
                               SimpMessagingTemplate messagingTemplate,
-                              @Qualifier("pollExecutor") Executor pollExecutor) {
+                              @Qualifier("pollExecutor") Executor pollExecutor,
+                              PlatformTransactionManager transactionManager) {
         this.accountRepository = accountRepository;
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
@@ -79,6 +85,7 @@ public class UserMessagePoller {
         this.messageService = messageService;
         this.messagingTemplate = messagingTemplate;
         this.pollExecutor = pollExecutor;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     public void init() {
@@ -331,8 +338,8 @@ public class UserMessagePoller {
             return 0;
         }
 
-        final int PAGE_SIZE = 100;
-        final int MAX_INITIAL_PAGES = 3;
+        final int PAGE_SIZE = 20;
+        final int MAX_INITIAL_PAGES = 5;  // 回填上限 = 20×5 = 100条
 
         // 从缓存获取该频道上次处理的最新消息ID
         String cacheKey = account.getId() + ":" + channelId;
@@ -460,12 +467,15 @@ public class UserMessagePoller {
     }
 
     /**
-     * 处理一页 Discord 消息
+     * 处理一页 Discord 消息（批量事务优化：一页消息共享一个数据库连接）
      */
     private ProcessResult processFetchedMessages(DiscordAccount account, Conversation conv, JsonNode messages, Set<String> existingMsgIdSet) {
-        int newCount = 0;
-        String oldestId = null;
         String convKey = conv.getId() + ":";
+
+        // ===== Phase 1: 解析所有消息，构建实体（无数据库操作） =====
+        record ParsedMessage(Message entity, boolean isOutbound, String content, Instant discordCreatedAt, boolean isVoice) {}
+        List<ParsedMessage> parsedList = new ArrayList<>();
+        String oldestId = null;
 
         for (int i = 0; i < messages.size(); i++) {
             JsonNode msgNode = messages.get(i);
@@ -473,16 +483,12 @@ public class UserMessagePoller {
             if (msgId == null) continue;
             if (i == messages.size() - 1) oldestId = msgId;
 
-            // 1. 内存去重
-            if (existingMsgIdSet.contains(msgId)) {
-                continue;
-            }
+            // 内存去重
+            if (existingMsgIdSet.contains(msgId)) continue;
 
-            // 2. 并发去重
+            // 并发去重
             String processedKey = convKey + msgId;
-            if (processedMsgIds.containsKey(processedKey)) {
-                continue;
-            }
+            if (processedMsgIds.containsKey(processedKey)) continue;
             processedMsgIds.put(processedKey, Boolean.TRUE);
 
             JsonNode author = msgNode.path("author");
@@ -512,7 +518,7 @@ public class UserMessagePoller {
             msgEntity.setSenderName(isOutbound ? account.getName() : authorName);
             msgEntity.setSenderDiscordUserId(authorId);
 
-            // 解析附件
+            // 解析附件（网络调用：下载语音数据在此处完成，不在事务内）
             JsonNode attachments = msgNode.get("attachments");
             String attachmentsJson = null;
             String resolvedMessageType = "text";
@@ -561,65 +567,60 @@ public class UserMessagePoller {
                 msgEntity.setAudioMimeType(resolvedAudioMime);
                 msgEntity.setAudioDuration(resolvedAudioDuration);
                 msgEntity.setAudioData(resolvedAudioData);
+                msgEntity.setAsrStatus("pending");
             }
             msgEntity.setDiscordCreatedAt(discordCreatedAt);
             msgEntity.setCreatedAt(discordCreatedAt);
+            msgEntity.setTranslatedContent(content);
 
-            // 翻译：先设置原文占位
-            if (!isOutbound) {
-                msgEntity.setTranslatedContent(content);
-            } else {
-                msgEntity.setTranslatedContent(content);
+            parsedList.add(new ParsedMessage(msgEntity, isOutbound, content, discordCreatedAt, "voice".equals(resolvedMessageType)));
+            existingMsgIdSet.add(msgId);
+        }
+
+        if (parsedList.isEmpty()) {
+            return new ProcessResult(0, oldestId);
+        }
+
+        // ===== Phase 2: 批量保存（单事务，共享一个数据库连接） =====
+        List<Message> savedList = transactionTemplate.execute(status -> {
+            List<Message> result = new ArrayList<>();
+            for (ParsedMessage pm : parsedList) {
+                Message saved = messageRepository.save(pm.entity());
+                result.add(saved);
             }
+            return result;
+        });
 
-            msgEntity = messageRepository.save(msgEntity);
+        // ===== Phase 3: 后处理（翻译触发、ASR、会话更新、WebSocket推送） =====
+        int newCount = 0;
+        for (int idx = 0; idx < savedList.size(); idx++) {
+            Message msgEntity = savedList.get(idx);
+            ParsedMessage pm = parsedList.get(idx);
             newCount++;
 
-            // 加入内存已存在集合
-            existingMsgIdSet.add(msgId);
+            Long finalMsgId = msgEntity.getId();
 
-            // 入站非语音消息：事务提交后异步翻译
-            if (!isOutbound && !"voice".equals(resolvedMessageType) && content != null && !content.isBlank()) {
-                final Long finalMsgId = msgEntity.getId();
-                if (TransactionSynchronizationManager.isSynchronizationActive()) {
-                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            try {
-                                messageService.translateMessageAsync(finalMsgId, "zh-CN");
-                            } catch (Exception e) {
-                                log.warn("异步翻译触发失败 msgId={}: {}", finalMsgId, e.getMessage());
-                            }
-                        }
-                    });
-                } else {
+            // 入站非语音消息：异步翻译（仅限7天内的消息）
+            if (!pm.isOutbound() && !pm.isVoice() && pm.content() != null && !pm.content().isBlank()) {
+                boolean withinTranslateWindow = pm.discordCreatedAt() != null
+                        && (System.currentTimeMillis() - pm.discordCreatedAt().toEpochMilli()) <= TRANSLATE_WINDOW_MS;
+                if (withinTranslateWindow) {
                     messageService.translateMessageAsync(finalMsgId, "zh-CN");
+                } else {
+                    log.debug("消息超过7天窗口，跳过自动翻译 msgId={}, createdAt={}",
+                            finalMsgId, pm.discordCreatedAt());
                 }
             }
 
-            // 语音消息：事务提交后触发ASR
-            if ("voice".equals(resolvedMessageType)) {
+            // 语音消息：触发ASR
+            if (pm.isVoice()) {
                 try {
                     Long merchantId = conv.getMerchantId();
                     if (merchantId == null && conv.getDiscordAccount() != null) {
                         merchantId = conv.getDiscordAccount().getMerchantId();
                     }
-                    boolean autoTranslate = !isOutbound;
-                    final Long finalMsgId = msgEntity.getId();
-                    final Long finalMerchantId = merchantId;
-                    msgEntity.setAsrStatus("pending");
-                    msgEntity = messageRepository.save(msgEntity);
-                    if (TransactionSynchronizationManager.isSynchronizationActive()) {
-                        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                            @Override
-                            public void afterCommit() {
-                                log.info("事务提交后触发 ASR: msgId={}", finalMsgId);
-                                messageService.runAsrAsync(finalMsgId, finalMerchantId, autoTranslate);
-                            }
-                        });
-                    } else {
-                        messageService.runAsrAsync(finalMsgId, finalMerchantId, autoTranslate);
-                    }
+                    boolean autoTranslate = !pm.isOutbound();
+                    messageService.runAsrAsync(finalMsgId, merchantId, autoTranslate);
                 } catch (Exception e) {
                     log.warn("触发语音 ASR 失败 conv={} msg={}: {}", conv.getId(),
                             msgEntity.getDiscordMessageId(), e.getMessage());
@@ -627,11 +628,11 @@ public class UserMessagePoller {
             }
 
             // 更新会话最后消息信息
-            String preview = content.length() > 200 ? content.substring(0, 200) : content;
+            String preview = pm.content().length() > 200 ? pm.content().substring(0, 200) : pm.content();
             if (msgEntity.getDiscordCreatedAt() != null
                     && (conv.getLastMessageAt() == null || !msgEntity.getDiscordCreatedAt().isBefore(conv.getLastMessageAt()))) {
                 conv.setLastMessagePreview(preview);
-                conv.setLastMessageDirection(isOutbound ? "OUTBOUND" : "INBOUND");
+                conv.setLastMessageDirection(pm.isOutbound() ? Message.Direction.OUTBOUND.name() : Message.Direction.INBOUND.name());
                 conv.setLastMessageAt(msgEntity.getDiscordCreatedAt());
             }
 
@@ -639,6 +640,7 @@ public class UserMessagePoller {
             MessageDtos.MessageDto dto = MessageDtos.MessageDto.from(msgEntity);
             messagingTemplate.convertAndSend("/topic/messages", dto);
         }
+
         return new ProcessResult(newCount, oldestId);
     }
 

@@ -674,7 +674,8 @@ public class EmuInstanceService {
     }
 
     /**
-     * 启动所有模拟器
+     * 启动所有模拟器 — 异步执行，立即返回
+     * 串行启动每台模拟器，避免 MuMu 并发启动导致进程异常退出
      */
     @Transactional
     public List<Map<String, Object>> startAllInstances() {
@@ -692,19 +693,96 @@ public class EmuInstanceService {
                 }
             }
         } else if (localMode) {
-            mumuClientService.startAllEmulators(null);
+            // 获取目标模拟器列表
+            List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+            List<Integer> targetIndexes = instances.stream()
+                .map(EmuInstance::getInstanceIndex)
+                .sorted()
+                .collect(Collectors.toList());
+
+            // 异步串行启动，不阻塞前端
+            CompletableFuture.runAsync(() -> {
+                log.info("开始异步批量启动 {} 台模拟器", targetIndexes.size());
+                int successCount = 0;
+                int failCount = 0;
+                Random random = new Random();
+
+                for (int i = 0; i < targetIndexes.size(); i++) {
+                    int idx = targetIndexes.get(i);
+                    log.info("批量启动进度: {}/{} (index={})", i + 1, targetIndexes.size(), idx);
+
+                    // 启动前随机等待 0.5-2 秒
+                    try { Thread.sleep(500 + random.nextInt(1500)); } catch (InterruptedException ignored) {}
+
+                    try {
+                        Map<String, Object> startResult = mumuClientService.startEmulator(idx);
+                        boolean success = "RUNNING".equals(startResult.get("status"));
+
+                        // 更新数据库状态
+                        EmuInstance inst = instanceRepository
+                            .findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, idx).orElse(null);
+                        if (inst != null) {
+                            if (success) {
+                                inst.setStatus(EmuInstance.EmuStatus.RUNNING);
+                                inst.setLastError(null);
+                                successCount++;
+                                log.info("模拟器 #{} 启动成功", idx);
+
+                                // 启动 Discord
+                                boolean discordInstalled = Boolean.TRUE.equals(startResult.get("discordInstalled"));
+                                inst.setDiscordInstalled(discordInstalled);
+                                if (discordInstalled) {
+                                    try {
+                                        mumuClientService.launchDiscord(idx);
+                                        log.info("模拟器 #{} Discord 已自动打开", idx);
+                                    } catch (Exception de) {
+                                        log.warn("模拟器 #{} Discord 打开失败: {}", idx, de.getMessage());
+                                    }
+                                }
+                            } else {
+                                inst.setStatus(EmuInstance.EmuStatus.STOPPED);
+                                inst.setLastError((String) startResult.getOrDefault("lastError", "启动失败"));
+                                failCount++;
+                                log.warn("模拟器 #{} 启动失败: {}", idx, inst.getLastError());
+                            }
+                            inst.setUpdatedAt(Instant.now());
+                            instanceRepository.save(inst);
+                        }
+
+                        // 启动下一台前随机等待 1-5 秒
+                        if (i < targetIndexes.size() - 1) {
+                            int delay = 1000 + random.nextInt(4000);
+                            log.info("随机等待 {}ms 后启动下一台...", delay);
+                            try { Thread.sleep(delay); } catch (InterruptedException ignored) {}
+                        }
+                    } catch (Exception e) {
+                        log.error("模拟器 #{} 启动异常", idx, e);
+                        EmuInstance inst = instanceRepository
+                            .findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, idx).orElse(null);
+                        if (inst != null) {
+                            inst.setStatus(EmuInstance.EmuStatus.ERROR);
+                            inst.setLastError(e.getMessage());
+                            inst.setUpdatedAt(Instant.now());
+                            instanceRepository.save(inst);
+                        }
+                        failCount++;
+                    }
+                }
+                log.info("批量启动完成: 成功={}, 失败={}", successCount, failCount);
+            });
+
+            // 先给前端一个响应（清除错误状态）
+            List<EmuInstance> initInstances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+            for (EmuInstance inst : initInstances) {
+                inst.setLastError(null);
+                inst.setUpdatedAt(Instant.now());
+                instanceRepository.save(inst);
+            }
         } else {
             throw new RuntimeException("本地 Agent 未上线，无法启动模拟器。请启动 mumu-agent。");
         }
 
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
-        for (EmuInstance inst : instances) {
-            inst.setStatus(EmuInstance.EmuStatus.RUNNING);
-            inst.setLastError(null);
-            inst.setUpdatedAt(Instant.now());
-            instanceRepository.save(inst);
-        }
-
         return instances.stream()
             .map(this::convertToMap)
             .collect(Collectors.toList());
@@ -1435,6 +1513,7 @@ public class EmuInstanceService {
                     } else {
                         // 未登录
                         inst.setDiscordAccountId(null);
+                        inst.setDiscordAccountName(null);
                         updated = true;
                     }
                 } else {
@@ -1593,6 +1672,7 @@ public class EmuInstanceService {
                 } else if (inst.getDiscordLoggedIn() != null && inst.getDiscordLoggedIn()) {
                     // 之前已登录现在未登录
                     inst.setDiscordAccountId(null);
+                    inst.setDiscordAccountName(null);
                     inst.setDiscordLoggedIn(false);
                     updated = true;
                 }

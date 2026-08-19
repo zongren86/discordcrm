@@ -452,7 +452,7 @@
                       检测语言: {{ getLanguageName(msg.language) }}
                     </el-tag>
                     <el-button size="small" link type="primary" :loading="translatingSet[msg.id]" @click="translateMsg(msg)">
-                      <el-icon><Location /></el-icon> 翻译成{{ getLanguageName(targetLang) }}
+                      <el-icon><Location /></el-icon> 翻译成中文
                     </el-button>
                     <div v-if="msg.userTranslated" class="translated-text">翻译：{{ msg.userTranslated }}</div>
                   </div>
@@ -934,7 +934,8 @@ const asrLoadingSet = ref({})
 // 语音消息"查看原文"展开状态（在译文下方展开，不是切换）
 const originalBelowExpanded = ref({})
 
-const targetLang = ref('zh')
+const targetLang = ref('zh')  // 目标语言：发送消息时自动翻译成好友的语言
+const readTranslateLang = 'zh'  // 阅读翻译：一键翻译时固定翻译成中文
 const detectedLang = ref('未知')
 const supportedLanguages = ref([])  // AI 翻译模型支持的所有语种
 let userChangedTargetLang = false  // 标记用户是否手动修改过目标语言
@@ -1339,7 +1340,8 @@ async function translateMsg(msg) {
   if (translatingSet.value[msg.id]) return
   translatingSet.value[msg.id] = true
   try {
-    const res = await translateMessage(conversations.currentConversationId, msg.id, targetLang.value)
+    // 阅读翻译：固定翻译成中文，不受目标语言影响
+    const res = await translateMessage(conversations.currentConversationId, msg.id, readTranslateLang)
     if (res?.translatedContent) {
       msg.translatedContent = res.translatedContent
       msg.userTranslated = res.translatedContent
@@ -1446,14 +1448,14 @@ async function triggerAsr(msg, autoTranslate) {
   }
 }
 
-/** 对已转写出来的 asrText 触发单独翻译（INBOUND 默认译中文，目标语言用全局翻译框） */
+/** 对已转写出来的 asrText 触发单独翻译（阅读翻译：固定翻译成中文） */
 async function triggerTranslateAsr(msg) {
   const key = msg.id + '|tr'
   if (asrLoadingSet.value[key]) return
   asrLoadingSet.value[key] = true
   try {
-    const targetLangCode = targetLang.value === 'zh' ? 'zh-CN' : targetLang.value
-    const res = await translateAsrText(conversations.currentConversationId, msg.id, targetLangCode)
+    // 阅读翻译：固定翻译成中文
+    const res = await translateAsrText(conversations.currentConversationId, msg.id, 'zh-CN')
     if (res) applyAsrFields(msg, res)
   } catch (e) {
     ElMessage.error('ASR翻译失败')

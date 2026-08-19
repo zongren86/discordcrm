@@ -675,19 +675,78 @@ public class EmulatorService {
         }
         log.info("全部启动（串行）：共 {} 台，目标 {}", targets.size(), targets);
 
-        // 改为串行启动，每台间隔 5 秒，避免 Mumu 并发启动导致进程异常退出
-        for (int idx : targets) {
+        // 串行启动，每台随机间隔 1-5 秒，避免 Mumu 并发启动导致进程异常退出
+        // 随机间隔可防止大量模拟器同时启动时资源竞争
+        List<EmulatorInfo> results = new ArrayList<>();
+        Random random = new Random();
+        for (int i = 0; i < targets.size(); i++) {
+            int idx = targets.get(i);
+            log.info("启动第 {}/{} 台模拟器: index={}", i + 1, targets.size(), idx);
+
+            // 启动前短暂等待守护进程就绪
+            if (!waitForDaemonReady(10)) {
+                log.warn("守护进程未就绪，跳过模拟器 {}", idx);
+                EmulatorInfo failInfo = emulators.getOrDefault(idx,
+                        EmulatorInfo.builder().index(idx).status("ERROR")
+                                .lastError("守护进程未就绪，启动超时").build());
+                failInfo.setStatus("ERROR");
+                emulators.put(idx, failInfo);
+                results.add(failInfo);
+                continue;
+            }
+
             try {
-                log.info("启动第 {}/{} 台模拟器: index={}", targets.indexOf(idx) + 1, targets.size(), idx);
-                startEmulator(idx);
-                // 启动间隔 5 秒，让模拟器有足够时间初始化
-                try { Thread.sleep(5000); } catch (InterruptedException ignored) {}
+                EmulatorInfo started = startEmulator(idx);
+                results.add(started);
+
+                // 如果启动失败，快速重试一次
+                if (!"RUNNING".equals(started.getStatus())) {
+                    log.warn("模拟器{} 首次启动未成功，等待 3 秒后重试...", idx);
+                    try { Thread.sleep(3000); } catch (InterruptedException ignored) {}
+
+                    waitForDaemonReady(10);
+                    started = startEmulator(idx);
+                    results.set(results.size() - 1, started);
+
+                    if (!"RUNNING".equals(started.getStatus())) {
+                        log.error("模拟器{} 重试启动仍失败", idx);
+                    }
+                }
+
+                // 启动成功后随机间隔 1-5 秒再启动下一台
+                if (i < targets.size() - 1) {
+                    int delay = 1000 + random.nextInt(4000); // 1000-5000ms
+                    log.info("随机等待 {}ms 后启动下一台...", delay);
+                    try { Thread.sleep(delay); } catch (InterruptedException ignored) {}
+                }
             } catch (Exception e) {
-                log.error("启动模拟器{}失败，继续下一个", idx, e);
+                log.error("启动模拟器{}失败", idx, e);
+                EmulatorInfo failInfo = emulators.getOrDefault(idx,
+                        EmulatorInfo.builder().index(idx).status("ERROR")
+                                .lastError(e.getMessage()).build());
+                failInfo.setStatus("ERROR");
+                emulators.put(idx, failInfo);
+                results.add(failInfo);
             }
         }
         refreshEmulatorList();
         return sortedEmulators();
+    }
+
+    /**
+     * 等待 MuMuPlayer 守护进程就绪
+     */
+    private boolean waitForDaemonReady(int timeoutSeconds) {
+        log.info("等待 MuMuPlayer 守护进程就绪 (超时={}s)...", timeoutSeconds);
+        for (int i = 0; i < timeoutSeconds; i++) {
+            if (isDaemonReady()) {
+                daemonReady = true;
+                return true;
+            }
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+        }
+        log.warn("守护进程等待超时");
+        return false;
     }
 
     public EmulatorInfo stopEmulator(int index) {

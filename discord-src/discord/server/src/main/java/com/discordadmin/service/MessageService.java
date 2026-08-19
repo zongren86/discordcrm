@@ -9,9 +9,11 @@ import com.discordadmin.dto.MessageDtos.MessageDto;
 import com.discordadmin.entity.Conversation;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.Message;
+import com.discordadmin.entity.TranslationCache;
 import com.discordadmin.repository.ConversationRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.MessageRepository;
+import com.discordadmin.repository.TranslationCacheRepository;
 import com.discordadmin.translation.LanguageDetectionService;
 import com.discordadmin.translation.TranslationService;
 import com.discordadmin.translation.TranslationServiceFactory;
@@ -27,6 +29,8 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.discordadmin.asr.SpeechRecognitionService;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.List;
 
@@ -48,6 +52,7 @@ public class MessageService {
     private final TranslationServiceFactory translationServiceFactory;
     private final LanguageDetectionService languageDetectionService;
     private final SpeechRecognitionService speechRecognitionService;
+    private final TranslationCacheRepository translationCacheRepository;
 
     public MessageService(ConversationRepository conversationRepository,
                            MessageRepository messageRepository,
@@ -58,7 +63,8 @@ public class MessageService {
                            TranslationService translationService,
                            TranslationServiceFactory translationServiceFactory,
                            LanguageDetectionService languageDetectionService,
-                           SpeechRecognitionService speechRecognitionService) {
+                           SpeechRecognitionService speechRecognitionService,
+                           TranslationCacheRepository translationCacheRepository) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.discordAccountRepository = discordAccountRepository;
@@ -69,6 +75,7 @@ public class MessageService {
         this.translationServiceFactory = translationServiceFactory;
         this.languageDetectionService = languageDetectionService;
         this.speechRecognitionService = speechRecognitionService;
+        this.translationCacheRepository = translationCacheRepository;
     }
 
     @Transactional(readOnly = true)
@@ -488,23 +495,78 @@ public class MessageService {
                     && !message.getTranslatedContent().equals(message.getContent())) {
                 return;
             }
-            log.info("异步翻译消息 msgId={}, contentLen={}", messageId,
-                    message.getContent() != null ? message.getContent().length() : 0);
+
+            String content = message.getContent();
+            if (content == null || content.isBlank()) return;
+
+            // 1. 检查翻译缓存
+            String sourceHash = sha256(content);
+            TranslationCache cached = translationCacheRepository
+                    .findBySourceHashAndTargetLanguage(sourceHash, targetLanguage)
+                    .orElse(null);
+
+            if (cached != null) {
+                // 缓存命中，直接使用
+                String translated = cached.getTranslatedContent();
+                message.setTranslatedContent(translated);
+                messageRepository.save(message);
+                log.info("翻译缓存命中 msgId={}, hash={}, translatedLen={}", messageId, sourceHash.substring(0, 8), translated.length());
+                // 推送更新给前端
+                MessageDtos.MessageDto dto = MessageDtos.MessageDto.from(message);
+                messagingTemplate.convertAndSend("/topic/messages", dto);
+                // 更新缓存命中统计
+                cached.setHitCount(cached.getHitCount() + 1);
+                cached.setLastHitAt(Instant.now());
+                translationCacheRepository.save(cached);
+                return;
+            }
+
+            // 2. 缓存未命中，调用翻译API
+            log.info("异步翻译消息 msgId={}, contentLen={}, hash={}", messageId, content.length(), sourceHash.substring(0, 8));
             Long merchantId = message.getMerchantId();
             if (merchantId == null && message.getConversation() != null) {
                 merchantId = message.getConversation().getMerchantId();
             }
             String translated = translationServiceFactory.translate(
-                    message.getContent(), targetLanguage, merchantId)
-                    .orElse(message.getContent());
+                    content, targetLanguage, merchantId)
+                    .orElse(content);
             message.setTranslatedContent(translated);
             messageRepository.save(message);
+
+            // 3. 存入缓存（异步，避免阻塞主流程）
+            try {
+                TranslationCache cache = new TranslationCache();
+                cache.setSourceHash(sourceHash);
+                cache.setSourceContent(content.length() > 5000 ? content.substring(0, 5000) : content);
+                cache.setTargetLanguage(targetLanguage);
+                cache.setTranslatedContent(translated);
+                cache.setCreatedAt(Instant.now());
+                translationCacheRepository.save(cache);
+                log.info("翻译缓存已存储 hash={}, translatedLen={}", sourceHash.substring(0, 8), translated.length());
+            } catch (Exception e) {
+                log.warn("翻译缓存存储失败 hash={}: {}", sourceHash.substring(0, 8), e.getMessage());
+            }
+
             log.info("异步翻译完成 msgId={}", messageId);
             // 推送更新给前端
             MessageDtos.MessageDto dto = MessageDtos.MessageDto.from(message);
             messagingTemplate.convertAndSend("/topic/messages", dto);
         } catch (Exception e) {
             log.warn("异步翻译失败 msgId={}: {}", messageId, e.getMessage());
+        }
+    }
+
+    /** SHA-256 哈希，用于翻译缓存查找 */
+    private static String sha256(String text) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(text.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            // fallback: 用 hashCode 转十六进制
+            return Integer.toHexString(text.hashCode());
         }
     }
 

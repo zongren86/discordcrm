@@ -94,10 +94,8 @@
                 <el-button size="small" @click="downloadApk" :disabled="apkLoading">下载</el-button>
                 <el-button size="small" @click="triggerApkUpload" :disabled="apkLoading">上传</el-button>
                 <input ref="apkInput" type="file" accept=".apk" @change="handleApkUpload" style="display:none" />
-              </div>
-              <div class="form-row">
                 <el-button type="primary" size="small" @click="installAllDiscord" :disabled="emuLoading">
-                  全部安装 Discord
+                  全部安装DS
                 </el-button>
               </div>
             </div>
@@ -125,33 +123,20 @@
                 <span class="unit">分钟</span>
               </div>
               <div class="form-row">
-                <label>自动登录</label>
-                <el-switch v-model="autoConfig.autoLoginDiscord" size="small" />
-                <span class="hint-sm" style="margin-left: 8px">关闭后需手动登录Discord账号（各模拟器独立）</span>
-              </div>
-              <div class="form-row">
                 <el-button type="primary" size="small" @click="saveAutoConfig">保存配置</el-button>
                 <span class="hint-sm">间隔+随机延迟(下限~上限)后添加下一个好友</span>
-              </div>
-              <div class="form-row" style="margin-top: 8px">
-                <el-button type="primary" size="small" @click="startAutoAll">
-                  全部开始
-                </el-button>
-                <el-button type="primary" size="small" @click="stopAutoAll">
-                  全部停止
-                </el-button>
               </div>
             </div>
           </el-card>
         </el-col>
 
-        <!-- 右侧：配置面板 -->
+        <!-- 右侧：服务器+好友号池合并 -->
         <el-col :span="18">
           <el-card class="panel" shadow="hover">
             <template #header>
               <div class="panel-header">
                 <el-icon><User /></el-icon>
-                <span>服务器管理（{{ addedServers.length }} 个）</span>
+                <span>服务器管理 & 好友号池（{{ addedServers.length }} 个服务器）</span>
                 <el-button type="primary" size="small" @click="showServerDialog = true">
                   添加服务器
                 </el-button>
@@ -161,92 +146,94 @@
               <div v-if="addedServers.length === 0" class="empty-hint">
                 暂未添加服务器，点击上方"添加服务器"按钮开始
               </div>
-              <div v-else class="server-list">
+              <div v-else class="server-card-list">
                 <div 
                   v-for="srv in addedServers" 
                   :key="srv.id" 
-                  class="server-item"
-                  :class="{ 'server-item--selected': selectedServerId === srv.serverId }"
+                  class="server-card"
+                  :class="{ 'server-card--selected': selectedServerId === srv.serverId }"
                   @click="selectServer(srv.serverId)"
                 >
-                  <div class="server-info">
-                    <span class="server-name">{{ srv.serverName || srv.name || '-' }}</span>
-                    <span class="server-count" v-if="srv.memberCount">{{ srv.memberCount }} 成员</span>
-                    <el-tag v-if="selectedServerId === srv.serverId" type="primary" size="small" class="server-selected-tag">当前</el-tag>
-                  </div>
-                  <div class="server-actions" @click.stop>
-                    <el-button type="primary" size="small" link @click="removeServer(srv.id)">删除</el-button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </el-card>
-
-          <!-- 好友号池 -->
-          <el-card class="panel" shadow="hover" style="margin-top: 8px">
-            <template #header>
-              <div class="panel-header">
-                <el-icon><Avatar /></el-icon>
-                <span>好友号池</span>
-                <span v-if="currentServerName" class="friend-pool-server-tag">（{{ currentServerName }}）</span>
-                <el-button size="small" @click="refreshFriendPool" :disabled="friendPoolLoading">
-                  <el-icon style="margin-right: 4px"><Refresh /></el-icon>刷新
-                </el-button>
-              </div>
-            </template>
-            <div class="panel-body">
-              <div v-if="friendPoolLoading" class="loading-hint">加载中...</div>
-              <div v-else>
-                <!-- 统计卡片 -->
-                <el-row :gutter="6" class="friend-pool-stats">
-                  <el-col :span="4">
-                    <div class="stat-card">
-                      <div class="stat-value">{{ friendPoolStats.total || 0 }}</div>
+                  <!-- 统计信息 -->
+                  <div class="server-card-stats">
+                    <!-- 服务器名称（左边） -->
+                    <div class="stat-item stat-server-name">
+                      <div class="server-name-text" :title="srv.serverName || srv.name || '-'">
+                        {{ srv.serverName || srv.name || '-' }}
+                      </div>
+                      <el-tag v-if="selectedServerId === srv.serverId" type="primary" size="small" style="margin-top: 2px">当前</el-tag>
+                    </div>
+                    <div class="stat-item">
+                      <div class="stat-value">{{ getFriendPoolStatsForServer(srv.serverId)?.total || 0 }}</div>
                       <div class="stat-label">总数</div>
                     </div>
-                  </el-col>
-                  <el-col :span="4">
-                    <div class="stat-card stat-pending">
-                      <div class="stat-value">{{ friendPoolStats.pending || 0 }}</div>
-                      <div class="stat-progress-row">
-                        <el-progress :percentage="getRatioNum(friendPoolStats.pending)" :stroke-width="6" :show-text="false" />
-                        <span class="stat-ratio">{{ getRatio(friendPoolStats.pending) }}%</span>
+                    <div class="stat-item stat-pending">
+                      <div class="stat-value-row">
+                        <span class="stat-value">{{ getFriendPoolStatsForServer(srv.serverId)?.pending || 0 }}</span>
+                        <span class="stat-pct">{{ getRatioForServer(srv.serverId, 'pending') }}%</span>
                       </div>
+                      <el-progress 
+                        :percentage="getRatioNumForServer(srv.serverId, 'pending')" 
+                        :stroke-width="4" 
+                        :show-text="false" 
+                        color="#e6a23c"
+                        style="width: 100%"
+                      />
                       <div class="stat-label">待添加</div>
                     </div>
-                  </el-col>
-                  <el-col :span="4">
-                    <div class="stat-card stat-assigned">
-                      <div class="stat-value">{{ friendPoolStats.assigned || 0 }}</div>
-                      <div class="stat-progress-row">
-                        <el-progress :percentage="getRatioNum(friendPoolStats.assigned)" :stroke-width="6" :show-text="false" />
-                        <span class="stat-ratio">{{ getRatio(friendPoolStats.assigned) }}%</span>
+                    <div class="stat-item stat-assigned">
+                      <div class="stat-value-row">
+                        <span class="stat-value">{{ getFriendPoolStatsForServer(srv.serverId)?.assigned || 0 }}</span>
+                        <span class="stat-pct">{{ getRatioForServer(srv.serverId, 'assigned') }}%</span>
                       </div>
+                      <el-progress 
+                        :percentage="getRatioNumForServer(srv.serverId, 'assigned')" 
+                        :stroke-width="4" 
+                        :show-text="false" 
+                        color="#409eff"
+                        style="width: 100%"
+                      />
                       <div class="stat-label">已分配</div>
                     </div>
-                  </el-col>
-                  <el-col :span="4">
-                    <div class="stat-card stat-success">
-                      <div class="stat-value">{{ friendPoolStats.success || 0 }}</div>
-                      <div class="stat-progress-row">
-                        <el-progress :percentage="getRatioNum(friendPoolStats.success)" :stroke-width="6" :show-text="false" />
-                        <span class="stat-ratio">{{ getRatio(friendPoolStats.success) }}%</span>
+                    <div class="stat-item stat-success">
+                      <div class="stat-value-row">
+                        <span class="stat-value">{{ getFriendPoolStatsForServer(srv.serverId)?.success || 0 }}</span>
+                        <span class="stat-pct">{{ getRatioForServer(srv.serverId, 'success') }}%</span>
                       </div>
+                      <el-progress 
+                        :percentage="getRatioNumForServer(srv.serverId, 'success')" 
+                        :stroke-width="4" 
+                        :show-text="false" 
+                        color="#67c23a"
+                        style="width: 100%"
+                      />
                       <div class="stat-label">成功</div>
                     </div>
-                  </el-col>
-                  <el-col :span="4">
-                    <div class="stat-card stat-failed">
-                      <div class="stat-value">{{ friendPoolStats.failed || 0 }}</div>
-                      <div class="stat-progress-row">
-                        <el-progress :percentage="getRatioNum(friendPoolStats.failed)" :stroke-width="6" :show-text="false" />
-                        <span class="stat-ratio">{{ getRatio(friendPoolStats.failed) }}%</span>
+                    <div class="stat-item stat-failed">
+                      <div class="stat-value-row">
+                        <span class="stat-value">{{ getFriendPoolStatsForServer(srv.serverId)?.failed || 0 }}</span>
+                        <span class="stat-pct">{{ getRatioForServer(srv.serverId, 'failed') }}%</span>
                       </div>
+                      <el-progress 
+                        :percentage="getRatioNumForServer(srv.serverId, 'failed')" 
+                        :stroke-width="4" 
+                        :show-text="false" 
+                        color="#f56c6c"
+                        style="width: 100%"
+                      />
                       <div class="stat-label">失败</div>
                     </div>
-                  </el-col>
-                </el-row>
-
+                    <!-- 删除按钮（右边） -->
+                    <div class="stat-item stat-delete">
+                      <el-button 
+                        type="danger" 
+                        size="small" 
+                        link 
+                        @click.stop="removeServer(srv.id)"
+                      >删除</el-button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </el-card>
@@ -266,13 +253,19 @@
             批量重启
           </el-button>
           <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall || !physicalStatus.available">
-            批量安装 Discord
+            批量安装DS
+          </el-button>
+          <el-button type="primary" size="small" @click="startAutoAll">
+            全部开始加好友
+          </el-button>
+          <el-button type="primary" size="small" @click="stopAutoAll">
+            全部停止加好友
           </el-button>
           <el-button type="primary" size="small" @click="batchAction('startAuto')" :disabled="!canBatchStartAuto">
-            批量启动自动加好友
+            选中启动加好友
           </el-button>
           <el-button type="primary" size="small" @click="batchAction('stopAuto')" :disabled="!canBatchStopAuto">
-            批量停止添加
+            选中停止添加
           </el-button>
           <el-button type="primary" size="small" @click="batchAction('delete')" :disabled="selectedEmulators.length === 0 || !physicalStatus.available">
             批量删除
@@ -295,6 +288,46 @@
             <span>{{ row.index }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="操作" width="350">
+          <template #default="{ row }">
+            <template v-if="row.status !== 'RUNNING'">
+              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="startEmulator(row.index)">
+                {{ isOperating(row.index) ? '启动中...' : '启动' }}
+              </el-button>
+            </template>
+            <template v-else>
+              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="stopEmulator(row.index)">
+                {{ isOperating(row.index) ? '停止中...' : '停止' }}
+              </el-button>
+              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="restartEmulator(row.index)">
+                {{ isOperating(row.index) ? '重启中...' : '重启' }}
+              </el-button>
+            </template>
+            <el-button 
+              v-if="row.damaged || row.status === 'DAMAGED'"
+              size="small" 
+              link 
+              type="warning" 
+              :disabled="isOperating(row.index)" 
+              @click="repairEmulator(row.index)"
+            >一键修复</el-button>
+            <el-button
+              v-if="!row.autoRunning && row.discordInstalled && !isAutoStarting(row.index)"
+              size="small" link type="primary"
+              @click="startAuto(row.index)"
+            >自动加好友</el-button>
+            <el-button
+              v-else-if="!row.autoRunning && row.discordInstalled && isAutoStarting(row.index)"
+              size="small" link type="primary" disabled
+            >加好友启动中</el-button>
+            <el-button
+              v-else-if="row.autoRunning"
+              size="small" link type="primary"
+              @click="stopAuto(row.index)"
+            >停止添加</el-button>
+            <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="deleteEmulator(row.index)">删除</el-button>
+          </template>
+        </el-table-column>
         <el-table-column label="名称" width="110">
           <template #default="{ row }">
             <el-button link type="primary" @click="showEmuDetail(row)" style="font-size: 13px; padding: 0; height: auto; text-align: left">
@@ -308,9 +341,9 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="75">
+        <el-table-column label="状态" width="85">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
+            <el-tag :type="statusTagType(row.status)" size="small" style="white-space: nowrap">{{ statusText(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="Discord账号" width="120">
@@ -356,45 +389,6 @@
             <span v-if="row.autoLastResult" style="color: #409eff; font-size: 12px">{{ row.autoLastResult }}</span>
             <span v-else-if="row.lastError" style="color: #f56c6c; font-size: 12px">{{ row.lastError }}</span>
             <span v-else style="color: #909399; font-size: 12px">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="250" fixed="right">
-          <template #default="{ row }">
-            <template v-if="row.status !== 'RUNNING'">
-              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="startEmulator(row.index)">
-                {{ isOperating(row.index) ? '启动中...' : '启动' }}
-              </el-button>
-            </template>
-            <template v-else>
-              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="stopEmulator(row.index)">
-                {{ isOperating(row.index) ? '停止中...' : '停止' }}
-              </el-button>
-              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="restartEmulator(row.index)">
-                {{ isOperating(row.index) ? '重启中...' : '重启' }}
-              </el-button>
-            </template>
-            <el-button 
-              size="small" 
-              link 
-              type="warning" 
-              :disabled="isOperating(row.index)" 
-              @click="repairEmulator(row.index)"
-            >一键修复</el-button>
-            <el-button
-              v-if="!row.autoRunning && row.discordInstalled && !isAutoStarting(row.index)"
-              size="small" link type="primary"
-              @click="startAuto(row.index)"
-            >自动加好友</el-button>
-            <el-button
-              v-else-if="!row.autoRunning && row.discordInstalled && isAutoStarting(row.index)"
-              size="small" link type="primary" disabled
-            >加好友启动中</el-button>
-            <el-button
-              v-else-if="row.autoRunning"
-              size="small" link type="primary"
-              @click="stopAuto(row.index)"
-            >停止添加</el-button>
-            <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="deleteEmulator(row.index)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -583,6 +577,9 @@ const friendPoolLoading = ref(false)
 const friendPoolFilter = ref('PENDING')
 let friendPoolPollTimer = null
 
+// 每个服务器的好友号池统计
+const serverFriendPoolStats = ref({})
+
 // 模拟器详情
 const emuDetailVisible = ref(false)
 const emuDetailData = ref(null)
@@ -676,6 +673,34 @@ function getRatioNum(count) {
   const total = friendPoolStats.value.total || 0
   if (total === 0) return 0
   return Math.round((count / total) * 100)
+}
+
+// 获取指定服务器的好友号池统计
+function getFriendPoolStatsForServer(serverId) {
+  if (!serverId) return { total: 0, pending: 0, assigned: 0, success: 0, failed: 0 }
+  // 使用字符串键名匹配，避免类型不匹配
+  const key = String(serverId)
+  return serverFriendPoolStats.value[key] || { total: 0, pending: 0, assigned: 0, success: 0, failed: 0 }
+}
+
+// 计算指定服务器的某字段占比（低于0.01%显示4位小数，否则显示2位小数）
+function getRatioForServer(serverId, field) {
+  const stats = getFriendPoolStatsForServer(serverId)
+  const total = stats.total || 0
+  if (total === 0) return '0.00'
+  const ratio = (stats[field] || 0) / total * 100
+  if (ratio > 0 && ratio < 0.01) {
+    return ratio.toFixed(4)
+  }
+  return ratio.toFixed(2)
+}
+
+// 计算指定服务器的某字段占比（数值型，用于进度条）
+function getRatioNumForServer(serverId, field) {
+  const stats = getFriendPoolStatsForServer(serverId)
+  const total = stats.total || 0
+  if (total === 0) return 0
+  return Math.round(((stats[field] || 0) / total) * 100)
 }
 
 let healthCheckTimer = null
@@ -798,6 +823,7 @@ onMounted(async () => {
       loadAutoConfig(),
       checkApkStatus(),
       loadFriendPoolStats(),
+      loadAllServerFriendPoolStats(),
       loadFriendPool(),
       checkPhysicalStatus()
     ])
@@ -1048,7 +1074,7 @@ async function addServer(server) {
       await syncFriends({ serverId: server.serverId, name: server.name })
     }
     // 刷新好友池统计
-    await loadFriendPoolStats()
+    await Promise.all([loadFriendPoolStats(), loadAllServerFriendPoolStats()])
   } catch (e) {
     ElMessage.error('添加失败: ' + (e.response?.data?.message || e.message))
   }
@@ -1068,7 +1094,7 @@ async function removeServer(bindingId) {
       selectedServerId.value = addedServers.value.length > 0 ? addedServers.value[0].serverId : null
     }
     // 刷新好友池统计
-    await loadFriendPoolStats()
+    await Promise.all([loadFriendPoolStats(), loadAllServerFriendPoolStats()])
   } catch (e) {
     ElMessage.error('移除失败: ' + (e.response?.data?.message || e.message))
   }
@@ -1184,8 +1210,36 @@ async function loadFriendPoolStats(silent = false) {
   }
 }
 
+// 加载所有服务器的统计数据
+async function loadAllServerFriendPoolStats() {
+  try {
+    const resp = await friendApi.get('/emu/friend-pool/stats-by-server')
+    console.log('stats-by-server response:', resp)
+    const list = resp.data || []
+    console.log('stats-by-server data:', list)
+    const statsMap = {}
+    for (const item of list) {
+      if (item.serverId) {
+        // 统一转为字符串键名，避免类型不匹配
+        const key = String(item.serverId)
+        statsMap[key] = {
+          total: item.total || 0,
+          pending: item.pending || 0,
+          assigned: item.assigned || 0,
+          success: item.success || 0,
+          failed: item.failed || 0
+        }
+      }
+    }
+    console.log('serverFriendPoolStats:', statsMap)
+    serverFriendPoolStats.value = statsMap
+  } catch (e) {
+    console.error('loadAllServerFriendPoolStats error:', e)
+  }
+}
+
 async function refreshFriendPool() {
-  await Promise.all([loadFriendPool(), loadFriendPoolStats()])
+  await Promise.all([loadFriendPool(), loadFriendPoolStats(), loadAllServerFriendPoolStats()])
   ElMessage.success('刷新完成')
 }
 
@@ -1193,6 +1247,7 @@ function startFriendPoolPolling() {
   stopFriendPoolPolling()
   friendPoolPollTimer = setInterval(() => {
     loadFriendPoolStats(true)
+    loadAllServerFriendPoolStats()
   }, 5000)
 }
 
@@ -1902,5 +1957,148 @@ function formatCountdown(timestamp) {
   font-weight: 500;
   color: #303133;
   margin: 0;
+}
+
+/* 服务器卡片列表 */
+.server-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.server-card {
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.server-card:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.1);
+}
+
+.server-card--selected {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+
+/* 统计信息区域 */
+.server-card-stats {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.server-card-stats .stat-item {
+  flex: 1;
+  text-align: center;
+  padding: 6px 4px;
+  background: #f5f7fa;
+  border-radius: 6px;
+  min-width: 0;
+}
+
+/* 服务器名称特殊样式 - 放在左边 */
+.server-card-stats .stat-server-name {
+  flex: 1.2;
+  background: #ecf5ff;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.server-card-stats .server-name-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  padding: 0 4px;
+}
+
+/* 删除按钮样式 - 放在右边 */
+.server-card-stats .stat-delete {
+  flex: 0.3;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+/* 其他统计项 */
+.server-card-stats .stat-pending .stat-value { color: #e6a23c; }
+.server-card-stats .stat-assigned .stat-value { color: #409eff; }
+.server-card-stats .stat-success .stat-value { color: #67c23a; }
+.server-card-stats .stat-failed .stat-value { color: #f56c6c; }
+
+.server-card-stats .stat-value-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  margin-bottom: 2px;
+}
+
+.server-card-stats .stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+  white-space: nowrap;
+}
+
+.server-card-stats .stat-pct {
+  font-size: 10px;
+  color: #909399;
+  white-space: nowrap;
+}
+
+.server-card-stats .stat-label {
+  font-size: 11px;
+  color: #909399;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+/* 带进度条的统计（保留兼容） */
+.stat-with-progress {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.stat-with-progress .stat-num-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.stat-with-progress .stat-num {
+  font-size: 13px;
+  font-weight: 500;
+  color: #303133;
+}
+
+.stat-with-progress .stat-pct {
+  font-size: 11px;
+  color: #909399;
+}
+
+/* 批量操作工具栏 */
+.batch-toolbar {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fff;
+  border-radius: 6px;
+  border: 1px solid #e4e7ed;
 }
 </style>

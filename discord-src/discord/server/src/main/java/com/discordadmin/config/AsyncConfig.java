@@ -42,8 +42,8 @@ public class AsyncConfig implements AsyncConfigurer, SchedulingConfigurer {
     @Bean(name = "asyncExecutor")
     public ThreadPoolTaskExecutor asyncExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(5);
-        executor.setMaxPoolSize(20);
+        executor.setCorePoolSize(3);
+        executor.setMaxPoolSize(10);
         executor.setQueueCapacity(200);
         executor.setThreadNamePrefix("async-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
@@ -55,8 +55,8 @@ public class AsyncConfig implements AsyncConfigurer, SchedulingConfigurer {
     @Bean(name = "pollExecutor")
     public ThreadPoolTaskExecutor pollExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(8);
-        executor.setMaxPoolSize(32);
+        executor.setCorePoolSize(5);
+        executor.setMaxPoolSize(15);
         executor.setQueueCapacity(500);
         executor.setThreadNamePrefix("poll-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
