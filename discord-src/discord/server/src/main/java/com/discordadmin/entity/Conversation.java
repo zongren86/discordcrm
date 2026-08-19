@@ -74,6 +74,10 @@ public class Conversation {
     @Column(name = "last_message_direction", length = 16)
     private String lastMessageDirection;
 
+    /** 最后已处理的Discord消息ID（用于增量拉取，持久化到DB避免重启后全量回填） */
+    @Column(name = "last_discord_message_id", length = 32)
+    private String lastDiscordMessageId;
+
     /** 销售漏斗阶段 */
     @Enumerated(EnumType.STRING)
     @Column(name = "stage", length = 16)

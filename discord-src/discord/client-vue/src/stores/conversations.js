@@ -309,7 +309,20 @@ export const useConversationsStore = defineStore('conversations', {
     appendMessage(convId, msg) {
       if (!msg || !msg.id) return
       const existing = this.messagesMap[convId] || []
-      if (existing.some(m => m.id === msg.id || (m.discordMessageId && msg.discordMessageId && m.discordMessageId === msg.discordMessageId))) {
+      const idx = existing.findIndex(m => m.id === msg.id || (m.discordMessageId && msg.discordMessageId && m.discordMessageId === msg.discordMessageId))
+      if (idx >= 0) {
+        // 相同ID消息：UPDATE而非SKIP（用于翻译结果回填、ASR完成等场景）
+        existing[idx] = { ...existing[idx], ...msg }
+        this.messagesMap[convId] = existing
+        // 更新会话预览（用最新的翻译内容）
+        const conv = this.conversations.find(c => c.id === convId)
+        if (conv) {
+          const snippet = (msg.translatedContent || msg.content || '').slice(0, 60)
+          conv.lastMessagePreview = snippet
+          if (this.currentConversationId === convId) {
+            conv.lastMessageSnippet = snippet
+          }
+        }
         return
       }
       existing.push(msg)

@@ -319,13 +319,13 @@ public class DiscordUserClient {
     }
 
     /**
-     * 轮询专用请求：短超时（5s）、快速重试（500ms），防止阻塞轮询线程池。
+     * 轮询专用请求：适中超时（8s）、快速重试（500ms），防止阻塞轮询线程池。
      * 仅用于消息拉取等对实时性要求高的场景。
      */
     private JsonNode pollRequest(String token, String path) throws Exception {
         HttpRequest.Builder b = HttpRequest.newBuilder()
                 .uri(URI.create(BASE + path))
-                .timeout(Duration.ofSeconds(5))
+                .timeout(Duration.ofSeconds(8))
                 .header("Authorization", token)
                 .header("User-Agent", UA)
                 .header("Accept", "application/json");

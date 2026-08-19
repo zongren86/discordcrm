@@ -88,11 +88,22 @@
             <div class="panel-body">
               <div class="form-row">
                 <label>APK</label>
-                <el-tag :type="apkDownloaded ? 'success' : 'warning'" size="small">
-                  {{ apkDownloaded ? '已下载' : '未下载' }}
+                <el-tag :type="apkDownloaded ? 'success' : 'info'" size="small">
+                  {{ apkDownloaded ? '已上传' : '未上传' }}
                 </el-tag>
-                <el-button size="small" @click="downloadApk" :disabled="apkLoading">下载</el-button>
-                <el-button size="small" @click="triggerApkUpload" :disabled="apkLoading">上传</el-button>
+                <el-button 
+                  v-if="apkDownloaded" 
+                  size="small" 
+                  @click="downloadApk" 
+                  :disabled="apkLoading"
+                >下载</el-button>
+                <el-button 
+                  v-else 
+                  size="small" 
+                  type="primary"
+                  @click="triggerApkUpload" 
+                  :disabled="apkLoading"
+                >上传</el-button>
                 <input ref="apkInput" type="file" accept=".apk" @change="handleApkUpload" style="display:none" />
                 <el-button type="primary" size="small" @click="installAllDiscord" :disabled="emuLoading">
                   全部安装DS
@@ -237,6 +248,56 @@
               </div>
             </div>
           </el-card>
+
+          <!-- 服务器成员列表 -->
+          <el-card v-if="selectedServerId" class="panel" shadow="hover" style="margin-top: 8px">
+            <template #header>
+              <div class="panel-header">
+                <el-icon><User /></el-icon>
+                <span>服务器成员 - {{ currentServerName }}</span>
+                <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
+                  <el-select v-model="friendPoolFilter" size="small" style="width: 100px" @change="loadFriendPool">
+                    <el-option label="全部" value="" />
+                    <el-option label="待添加" value="PENDING" />
+                    <el-option label="已分配" value="ASSIGNED" />
+                    <el-option label="成功" value="SUCCESS" />
+                    <el-option label="失败" value="FAILED" />
+                  </el-select>
+                  <el-button size="small" @click="refreshFriendPool">刷新</el-button>
+                </div>
+              </div>
+            </template>
+            <div class="panel-body">
+              <div v-if="friendPoolLoading" class="loading-hint">加载中...</div>
+              <el-table v-else-if="friendPool.length > 0" :data="friendPool" size="small" style="width: 100%" max-height="200">
+                <el-table-column prop="username" label="用户名" width="120" show-overflow-tooltip />
+                <el-table-column prop="displayName" label="显示名" width="120" show-overflow-tooltip />
+                <el-table-column label="状态" width="80">
+                  <template #default="{ row }">
+                    <el-tag :type="getFriendStatusType(row.friendStatus)" size="small">
+                      {{ row.statusText || getFriendStatusText(row.friendStatus) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="添加账号" width="120">
+                  <template #default="{ row }">
+                    <span v-if="row.discordAccountName && row.discordAccountName !== '-'" style="color: #409eff">{{ row.discordAccountName }}</span>
+                    <span v-else style="color: #909399">-</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="添加结果说明" min-width="150">
+                  <template #default="{ row }">
+                    <span v-if="row.friendStatus === 2" style="color: #67c23a">-</span>
+                    <span v-else-if="row.friendStatus === 3 && row.lastError" style="color: #f56c6c; font-size: 12px">{{ row.lastError }}</span>
+                    <span v-else style="color: #909399">-</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <div v-else class="empty-hint">
+                {{ friendPoolFilter ? '当前筛选条件下暂无成员' : '暂无成员数据，请先同步好友' }}
+              </div>
+            </div>
+          </el-card>
         </el-col>
       </el-row>
 
@@ -341,14 +402,16 @@
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="85">
+        <el-table-column label="状态" width="95">
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small" style="white-space: nowrap">{{ statusText(row.status) }}</el-tag>
+            <el-tag :type="statusTagType(row.status)" size="small" style="white-space: nowrap; display: inline-flex; align-items: center; max-width: 100%;">
+              {{ statusText(row.status) }}
+            </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Discord账号" width="120">
+        <el-table-column label="Discord账号" width="140">
           <template #default="{ row }">
-            <span v-if="row.discordAccount">{{ row.discordAccount }}</span>
+            <span v-if="row.discordLoggedIn && row.discordAccount">{{ row.discordAccount }}</span>
             <span v-else-if="row.discordLoggedIn" style="color: #e6a23c">未获取</span>
             <span v-else style="color: #f56c6c">未登录</span>
           </template>
@@ -1268,6 +1331,28 @@ function friendStatusTag(status) {
   return map[status] || 'info'
 }
 
+// 根据数字状态获取标签类型
+function getFriendStatusType(status) {
+  const map = {
+    0: 'info',
+    1: 'warning',
+    2: 'success',
+    3: 'danger'
+  }
+  return map[status] || 'info'
+}
+
+// 根据数字状态获取状态文本
+function getFriendStatusText(status) {
+  const map = {
+    0: '待添加',
+    1: '已分配',
+    2: '成功',
+    3: '失败'
+  }
+  return map[status] || '未知'
+}
+
 // ========== 模拟器操作 ==========
 
 async function loadAutoConfig() {
@@ -1607,7 +1692,7 @@ function formatCountdown(timestamp) {
 .batch-info { display: flex; align-items: center; gap: 8px; }
 .batch-count { font-size: 13px; color: #606266; }
 
-.batch-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.batch-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 
 .emu-name { font-weight: 600; font-size: 13px; }
 
@@ -1916,8 +2001,16 @@ function formatCountdown(timestamp) {
 /* 按钮排列 */
 .batch-actions {
   display: flex;
-  gap: 6px;
+  gap: 4px;
   flex-wrap: wrap;
+}
+
+/* 操作列按钮间距：1个空格（约4px） */
+:deep(.el-table .cell .el-button + .el-button) {
+  margin-left: 4px !important;
+}
+:deep(.el-table .cell .el-button) {
+  margin-right: 0 !important;
 }
 
 .more-hint {
@@ -2100,5 +2193,14 @@ function formatCountdown(timestamp) {
   background: #fff;
   border-radius: 6px;
   border: 1px solid #e4e7ed;
+}
+
+/* 操作列按钮间距 - 只保留1个空格 */
+:deep(.el-table .cell .el-button + .el-button) {
+  margin-left: 4px;
+}
+
+:deep(.el-table .cell .el-button) {
+  margin-right: 0;
 }
 </style>

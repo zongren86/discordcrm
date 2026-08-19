@@ -2900,8 +2900,9 @@ async function onAISettingsUpdated(event) {
 onMounted(async () => {
   try { await accounts.fetchAccounts() } catch (e) {}
   try { await conversations.fetchConversations() } catch (e) {}
-  pollTimer = setInterval(pollCurrentMessages, 1000)
-  convPollTimer = setInterval(pollConversations, 2000)
+  // 优化：WebSocket已为主力通道，前端轮询仅作为兜底，降低到3秒间隔
+  pollTimer = setInterval(pollCurrentMessages, 3000)
+  convPollTimer = setInterval(pollConversations, 5000)
   // 监听AI配置更新事件
   window.addEventListener('ai-settings-updated', onAISettingsUpdated)
 })

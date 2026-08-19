@@ -51,13 +51,13 @@ public class AsyncConfig implements AsyncConfigurer, SchedulingConfigurer {
         return executor;
     }
 
-    /** 专门用于消息轮询的线程池（IO密集型） */
+    /** 专门用于消息轮询的线程池（IO密集型，处理大量并发HTTP请求） */
     @Bean(name = "pollExecutor")
     public ThreadPoolTaskExecutor pollExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(5);
-        executor.setMaxPoolSize(15);
-        executor.setQueueCapacity(500);
+        executor.setCorePoolSize(20);
+        executor.setMaxPoolSize(60);
+        executor.setQueueCapacity(1000);
         executor.setThreadNamePrefix("poll-");
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);

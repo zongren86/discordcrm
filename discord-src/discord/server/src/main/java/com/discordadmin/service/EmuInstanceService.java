@@ -1511,9 +1511,11 @@ public class EmuInstanceService {
                             updated = true;
                         }
                     } else {
-                        // 未登录
+                        // 未登录：清除账号信息以及残留的登录结果提示
                         inst.setDiscordAccountId(null);
                         inst.setDiscordAccountName(null);
+                        inst.setAutoLastResult(null);
+                        inst.setLastError(null);
                         updated = true;
                     }
                 } else {
@@ -1674,6 +1676,8 @@ public class EmuInstanceService {
                     inst.setDiscordAccountId(null);
                     inst.setDiscordAccountName(null);
                     inst.setDiscordLoggedIn(false);
+                    inst.setAutoLastResult(null);
+                    inst.setLastError(null);
                     updated = true;
                 }
             }

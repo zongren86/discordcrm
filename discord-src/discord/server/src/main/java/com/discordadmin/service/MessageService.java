@@ -88,7 +88,7 @@ public class MessageService {
      *  当指定天数内（常见是当天）没有消息时，会自动向前回退，展示"最后一天有消息"的最近一页（最多回退 30 天）。 */
     @Transactional(readOnly = true)
     public MessageSlice listRecentMessages(Long conversationId, Integer daysBack, Integer pageSize) {
-        int days = (daysBack == null || daysBack <= 0) ? 1 : daysBack;
+        int days = (daysBack == null || daysBack <= 0) ? 7 : daysBack;
         int size = pageSize == null ? DEFAULT_PAGE_SIZE : pageSize;
         Instant since = Instant.now().minus(days, java.time.temporal.ChronoUnit.DAYS);
         MessageSlice slice = listRecentOrAll(conversationId, since, null, null, size);
@@ -118,7 +118,7 @@ public class MessageService {
         return listRecentOrAll(conversationId, null, oldestCreatedAt, oldestId, size);
     }
 
-    public static final int DEFAULT_PAGE_SIZE = 10;
+    public static final int DEFAULT_PAGE_SIZE = 20;
 
     /**
      * 统一的消息列表加载：

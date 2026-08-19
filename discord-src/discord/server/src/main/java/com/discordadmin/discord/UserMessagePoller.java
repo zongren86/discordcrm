@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 
 @Service
 public class UserMessagePoller {
@@ -63,10 +64,20 @@ public class UserMessagePoller {
     /** 熔断器：会话进入冷却期的时间戳（毫秒），冷却期内跳过该会话 */
     private final Map<Long, Long> conversationCooldownUntil = new ConcurrentHashMap<>();
 
-    private static final int FAIL_THRESHOLD = 3;      // 连续失败多少次触发熔断
-    private static final long COOLDOWN_MS = 30_000;    // 熔断冷却期30秒
-    private static final long COOLDOWN_STEP_MS = 15_000; // 每次冷却递增15秒
+    /** 轮询批次游标：Round-robin方式分批轮询所有会话 */
+    private final AtomicInteger pollCursor = new AtomicInteger(0);
+
+    // 熔断参数（放宽以避免网络抖动导致长时间跳过）
+    private static final int FAIL_THRESHOLD = 8;        // 连续8次失败才触发熔断
+    private static final long COOLDOWN_MS = 5_000;       // 初始冷却5秒
+    private static final long COOLDOWN_STEP_MS = 2_000;  // 每次递增2秒
     private static final long TRANSLATE_WINDOW_MS = 7L * 24 * 60 * 60 * 1000; // 7天自动翻译窗口
+
+    // 任务超时10秒（匹配HTTP 8s + 重试+缓冲）
+    private static final long TASK_TIMEOUT_SECONDS = 10;
+
+    // 每轮最多提交的会话数（减小批次以提高轮询频率）
+    private static final int MAX_BATCH_SIZE = 30;
 
     public UserMessagePoller(DiscordAccountRepository accountRepository,
                               ConversationRepository conversationRepository,
@@ -88,24 +99,22 @@ public class UserMessagePoller {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
+    /** Token过期账号ID缓存（10分钟内不再尝试） */
+    private final Map<Long, Long> tokenExpiredAccountCooldown = new ConcurrentHashMap<>();
+
     public void init() {
-        log.info("USER 账号 DM 消息轮询器已启动（并行轮询模式，每 1 秒触发）");
+        log.info("USER 账号 DM 消息轮询器已启动（分批轮询模式，每 1 秒触发，每批 {} 会话）", MAX_BATCH_SIZE);
     }
 
     /**
-     * 主轮询任务：每 1 秒触发，非阻塞地并行处理所有账号的所有会话。
+     * 主轮询任务：每 1 秒触发，采用分批轮询策略。
      *
-     * 优化策略：
-     * 1. DM频道同步在独立线程执行，不阻塞消息轮询主流程
-     * 2. 每个会话独立提交到线程池，单会话3秒超时，不互相阻塞
-     * 3. 移除 allOf().join() 阻塞等待，每轮只提交任务，不等待完成
-     * 4. 预计单轮提交耗时 < 50ms，实际处理在后台并行完成
-     *
-     * 性能分析：
-     * - 假设 3 个账号，共 60 个会话
-     * - 单轮提交耗时 ≈ 30ms（纯内存操作）
-     * - 每个会话实际处理 ≈ 1-3 秒（后台并行）
-     * - 消息从发送到显示 ≈ 1-4 秒（之前 20-60 秒）
+     * 策略：
+     * 1. 每轮最多提交 MAX_BATCH_SIZE 个会话，使用 Round-robin 游标循环
+     * 2. 避免一次性提交所有会话导致线程池过载
+     * 3. 每个会话约每 (总会话数/MAX_BATCH_SIZE)*1 秒被轮询一次
+     *    例如 322 会话 / 30 * 1s ≈ 10.7s 轮询一次
+     * 4. 单会话 HTTP 超时 8s + 重试，任务超时 10s
      */
     @Scheduled(fixedRate = 1000, initialDelay = 5000)
     public void pollNewMessages() {
@@ -123,12 +132,17 @@ public class UserMessagePoller {
 
         // 非阻塞：DM频道同步在独立线程执行，不阻塞消息轮询
         for (DiscordAccount account : userAccounts) {
+            // Token过期账号跳过DM同步
+            Long tokenExpireUntil = tokenExpiredAccountCooldown.get(account.getId());
+            if (tokenExpireUntil != null && now < tokenExpireUntil) {
+                continue;
+            }
+
             Long lastSync = lastSyncDmTimeByAccount.get(account.getId());
             boolean needSyncDm = lastSync == null || (now - lastSync) > 30_000;
 
             if (needSyncDm) {
                 lastSyncDmTimeByAccount.put(account.getId(), now);
-                // 在独立线程中执行DM同步，5秒超时，不阻塞主流程
                 CompletableFuture.runAsync(() -> {
                     try {
                         int newConvs = self.syncDmChannelsInTx(account.getId());
@@ -146,89 +160,147 @@ public class UserMessagePoller {
             }
         }
 
-        // 非阻塞：并行提交所有会话的轮询任务，不等待完成
-        int totalConversations = 0;
-        int skippedByCircuitBreaker = 0;
+        // 收集所有活跃会话（扁平化列表，便于分批轮询）
+        List<Conversation> allConversations = new ArrayList<>();
+        Map<Long, DiscordAccount> convAccountMap = new HashMap<>();
 
         for (DiscordAccount account : userAccounts) {
             try {
                 List<Conversation> conversations = conversationRepository
                         .findByDiscordAccountAndType(account, Conversation.ConversationType.DM);
-
-                if (conversations.isEmpty()) continue;
-
-                totalConversations += conversations.size();
-
                 for (Conversation conv : conversations) {
-                    // 熔断器检查：会话是否在冷却期
-                    Long cooldownUntil = conversationCooldownUntil.get(conv.getId());
-                    if (cooldownUntil != null && now < cooldownUntil) {
-                        skippedByCircuitBreaker++;
-                        continue;
-                    }
-
-                    // 每个会话独立提交，3秒超时，不互相阻塞
-                    CompletableFuture.runAsync(() -> {
-                        try {
-                            int newCount = self.pollOneConversationInTx(account.getId(), conv.getId());
-                            // 成功：重置失败计数
-                            conversationFailCount.remove(conv.getId());
-                            conversationCooldownUntil.remove(conv.getId());
-                            if (newCount > 0) {
-                                log.debug("会话 [convId={}] 轮询完成, 新增 {} 条消息", conv.getId(), newCount);
-                            }
-                        } catch (Exception e) {
-                            // 失败：增加失败计数，触发熔断
-                            int fails = conversationFailCount.merge(conv.getId(), 1, Integer::sum);
-                            if (fails >= FAIL_THRESHOLD) {
-                                long cooldown = COOLDOWN_MS + (long)(fails - FAIL_THRESHOLD) * COOLDOWN_STEP_MS;
-                                conversationCooldownUntil.put(conv.getId(), System.currentTimeMillis() + cooldown);
-                                log.warn("会话 [convId={}] 连续失败{}次，进入熔断冷却{}ms: {}",
-                                        conv.getId(), fails, cooldown, e.getMessage());
-                            } else {
-                                log.debug("轮询会话 [convId={}] 失败({}/{}): {}",
-                                        conv.getId(), fails, FAIL_THRESHOLD, e.getMessage());
-                            }
-                        }
-                    }, pollExecutor).orTimeout(3, TimeUnit.SECONDS)
-                      .exceptionally(ex -> {
-                          log.debug("会话 [convId={}] 轮询超时或异常: {}", conv.getId(), ex.getMessage());
-                          return null;
-                      });
+                    allConversations.add(conv);
+                    convAccountMap.put(conv.getId(), account);
                 }
             } catch (Exception e) {
-                log.warn("轮询账号 [{}] 消息失败: {}", account.getName(), e.getMessage());
+                log.warn("加载账号 [{}] 会话失败: {}", account.getName(), e.getMessage());
             }
         }
 
-        long elapsed = System.currentTimeMillis() - cycleStart;
-        if (elapsed > 100 || skippedByCircuitBreaker > 0) {
-            log.info("消息轮询周期: 提交耗时={}ms, 会话数={}, 熔断跳过={}", elapsed, totalConversations, skippedByCircuitBreaker);
+        if (allConversations.isEmpty()) return;
+
+        int totalConversations = allConversations.size();
+        int skippedByCircuitBreaker = 0;
+        int submitted = 0;
+
+        // Round-robin 分批：从游标位置开始，最多提交 MAX_BATCH_SIZE 个
+        int startIdx = pollCursor.get();
+        List<Conversation> batch = new ArrayList<>();
+        int visitedCount = 0;  // 实际遍历的会话数
+
+        for (int i = 0; i < totalConversations && batch.size() < MAX_BATCH_SIZE; i++) {
+            int idx = (startIdx + i) % totalConversations;
+            Conversation conv = allConversations.get(idx);
+            visitedCount++;
+
+            // 熔断器检查
+            Long cooldownUntil = conversationCooldownUntil.get(conv.getId());
+            if (cooldownUntil != null && now < cooldownUntil) {
+                skippedByCircuitBreaker++;
+                continue;
+            }
+
+            // 注：不再使用lastMessageId缓存跳过会话
+            // 因为新消息可能在处理完后才到达，缓存会导致新消息被遗漏
+            // pollOneConversation内部会做增量拉取（使用after参数），无需跳过
+
+            batch.add(conv);
         }
 
-        // 清理过期的已处理消息ID（保留最近10分钟）
-        if (processedMsgIds.size() > 10000) {
-            processedMsgIds.clear();
+        // 根据实际遍历的会话数更新游标（确保每个会话都能被轮询到）
+        pollCursor.set((startIdx + Math.max(visitedCount, 1)) % totalConversations);
+
+        // 提交批次到线程池
+        long nowMs = System.currentTimeMillis();
+        for (Conversation conv : batch) {
+            DiscordAccount account = convAccountMap.get(conv.getId());
+            if (account == null) continue;
+
+            // Token过期账号跳过（10分钟内不再尝试，避免反复触发熔断）
+            Long tokenExpireUntil = tokenExpiredAccountCooldown.get(account.getId());
+            if (tokenExpireUntil != null && nowMs < tokenExpireUntil) {
+                log.debug("账号[{}] Token已过期，跳过会话[convId={}]", account.getName(), conv.getId());
+                continue;
+            }
+
+            submitted++;
+            CompletableFuture.runAsync(() -> {
+                try {
+                    int newCount = self.pollOneConversationInTx(account.getId(), conv.getId());
+                    conversationFailCount.remove(conv.getId());
+                    conversationCooldownUntil.remove(conv.getId());
+                    if (newCount > 0) {
+                        log.debug("会话 [convId={}] 轮询完成, 新增 {} 条消息", conv.getId(), newCount);
+                    }
+                } catch (Exception e) {
+                    int fails = conversationFailCount.merge(conv.getId(), 1, Integer::sum);
+                    if (fails >= FAIL_THRESHOLD) {
+                        long cooldown = COOLDOWN_MS + (long)(fails - FAIL_THRESHOLD) * COOLDOWN_STEP_MS;
+                        conversationCooldownUntil.put(conv.getId(), System.currentTimeMillis() + cooldown);
+                        log.warn("会话 [convId={}] 连续失败{}次，进入熔断冷却{}ms: {}",
+                                conv.getId(), fails, cooldown, e.getMessage());
+                    } else {
+                        log.debug("轮询会话 [convId={}] 失败({}/{}): {}",
+                                conv.getId(), fails, FAIL_THRESHOLD, e.getMessage());
+                    }
+                }
+            }, pollExecutor).orTimeout(TASK_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+              .exceptionally(ex -> {
+                  log.debug("会话 [convId={}] 轮询超时或异常: {}", conv.getId(), ex.getMessage());
+                  return null;
+              });
         }
-        // 清理过期的频道缓存
-        if (lastMessageIdByChannel.size() > 10000) {
-            lastMessageIdByChannel.clear();
+
+        long elapsed = System.currentTimeMillis() - cycleStart;
+        if (elapsed > 100 || submitted > 0 || skippedByCircuitBreaker > 0) {
+            log.info("消息轮询周期: 耗时={}ms, 总会话={}, 本批提交={}, 熔断跳过={}, 游标={}/{}",
+                    elapsed, totalConversations, submitted, skippedByCircuitBreaker,
+                    pollCursor.get(), totalConversations);
+        }
+
+        // 清理过期缓存
+        if (processedMsgIds.size() > 50000) processedMsgIds.clear();
+        if (lastMessageIdByChannel.size() > 100000) lastMessageIdByChannel.clear();
+
+        // 清理已过期的Token冷却记录
+        if (!tokenExpiredAccountCooldown.isEmpty()) {
+            long currentTime = System.currentTimeMillis();
+            tokenExpiredAccountCooldown.entrySet().removeIf(entry -> currentTime >= entry.getValue());
         }
     }
 
     /**
-     * 轮询单个会话（在独立事务中执行）。
+     * 轮询单个会话：先用独立事务加载必要数据，释放连接后再做HTTP调用。
+     * 避免在长耗时HTTP调用期间占用数据库连接。
      * @return 新增的消息数量
      */
-    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public int pollOneConversationInTx(Long accountId, Long conversationId) {
-        DiscordAccount account = accountRepository.findById(accountId).orElse(null);
-        Conversation conv = conversationRepository.findById(conversationId).orElse(null);
-        if (account == null || conv == null) {
-            log.warn("轮询失败: account={}, conv={}", account, conv);
+        // Phase 1: 在短事务中加载数据（加载后立即释放连接）
+        LoadedConversationData data = transactionTemplate.execute(status -> {
+            DiscordAccount account = accountRepository.findById(accountId).orElse(null);
+            Conversation conv = conversationRepository.findById(conversationId).orElse(null);
+            if (account == null || conv == null) {
+                return null;
+            }
+            // 直接从Repository加载完整的DiscordUser（避免懒加载代理问题）
+            DiscordUser user = null;
+            if (conv.getDiscordUser() != null && conv.getDiscordUser().getId() != null) {
+                user = discordUserRepository.findById(conv.getDiscordUser().getId()).orElse(null);
+            }
+            String channelId = conv.getChannelId();
+            String lastMsgId = conv.getLastDiscordMessageId();
+            Long convId = conv.getId();
+            
+            return new LoadedConversationData(account, conv, user, channelId, lastMsgId, convId);
+        });
+
+        if (data == null) {
+            log.warn("轮询失败: account={}, conv={}", accountId, conversationId);
             return 0;
         }
-        return pollOneConversation(account, conv);
+
+        // Phase 2: HTTP调用（此时DB连接已释放）
+        return pollOneConversation(data);
     }
 
     /**
@@ -247,7 +319,9 @@ public class UserMessagePoller {
             if (e.statusCode == 401) {
                 account.setLastError("Token 已过期，请用 Chrome 插件重新导入 Token 续期");
                 accountRepository.save(account);
-                log.warn("账号[{}] Token 已过期（同步DM频道失败）", account.getName());
+                // 标记账号Token过期，10分钟内不再尝试
+                tokenExpiredAccountCooldown.put(account.getId(), System.currentTimeMillis() + 10 * 60 * 1000L);
+                log.warn("账号[{}](id={}) Token 已过期（同步DM频道失败），已标记为10分钟内跳过", account.getName(), account.getId());
             }
             log.warn("同步DM频道 API 失败: account={} status={} err={}", account.getName(), e.statusCode, e.getMessage());
             return 0;
@@ -324,28 +398,36 @@ public class UserMessagePoller {
      *
      * @return 新增的消息数量
      */
-    private int pollOneConversation(DiscordAccount account, Conversation conv) {
+    private int pollOneConversation(LoadedConversationData data) {
+        DiscordAccount account = data.account();
+        Conversation conv = data.conv();
+        DiscordUser user = data.user();
+        String channelId = data.channelId();
+        String lastKnownMsgId = data.lastMsgId();
+        
         long convStart = System.currentTimeMillis();
-        DiscordUser user = conv.getDiscordUser();
+
         if (user == null) {
             log.warn("会话 [convId={}] 关联的 DiscordUser 为 null", conv.getId());
             return 0;
         }
 
-        String channelId = conv.getChannelId();
         if (channelId == null || channelId.isBlank()) {
             log.warn("会话 [convId={}] channelId 为空", conv.getId());
             return 0;
         }
 
         final int PAGE_SIZE = 20;
-        final int MAX_INITIAL_PAGES = 5;  // 回填上限 = 20×5 = 100条
+        final int MAX_INITIAL_PAGES = 2;
 
-        // 从缓存获取该频道上次处理的最新消息ID
+        // 内存缓存更新为最新值（DB可能滞后）
         String cacheKey = account.getId() + ":" + channelId;
-        String lastKnownMsgId = lastMessageIdByChannel.get(cacheKey);
+        String cachedId = lastMessageIdByChannel.get(cacheKey);
+        if (cachedId != null && !cachedId.isBlank()) {
+            lastKnownMsgId = cachedId;
+        }
 
-        // 构建增量拉取请求
+        // 构建增量拉取请求（HTTP调用，不在DB事务内）
         JsonNode pageMessages;
         try {
             if (lastKnownMsgId != null && !lastKnownMsgId.isBlank()) {
@@ -353,15 +435,20 @@ public class UserMessagePoller {
                 pageMessages = discordUserClient.listMessagesAfter(
                         account.getToken(), channelId, lastKnownMsgId, PAGE_SIZE);
             } else {
-                // 首次拉取：获取最新100条消息用于初始化缓存
+                // 首次拉取：获取最新20条消息
                 pageMessages = discordUserClient.listMessages(
                         account.getToken(), channelId, PAGE_SIZE);
             }
         } catch (DiscordUserClient.DiscordUserApiException e) {
             if (e.statusCode == 401) {
                 account.setLastError("Token 已过期，请用 Chrome 插件重新导入 Token 续期");
-                accountRepository.save(account);
-                log.warn("账号[{}] Token 已过期", account.getName());
+                transactionTemplate.execute(status -> {
+                    accountRepository.save(account);
+                    return null;
+                });
+                // 标记账号Token过期，10分钟内不再尝试（避免反复触发熔断）
+                tokenExpiredAccountCooldown.put(account.getId(), System.currentTimeMillis() + 10 * 60 * 1000L);
+                log.warn("账号[{}](id={}) Token 已过期，已标记为10分钟内跳过", account.getName(), account.getId());
             } else {
                 log.warn("拉取频道消息失败: status={}, channelId={}", e.statusCode, channelId);
             }
@@ -379,9 +466,12 @@ public class UserMessagePoller {
             return 0;
         }
 
-        // 更新用户活跃度
+        // 更新用户活跃度（轻量DB操作）
         user.setLastActiveAt(Instant.now());
-        discordUserRepository.save(user);
+        transactionTemplate.execute(status -> {
+            discordUserRepository.save(user);
+            return null;
+        });
 
         // 构建已有消息ID集合用于去重
         Set<String> existingMsgIdSet = new HashSet<>();
@@ -408,8 +498,9 @@ public class UserMessagePoller {
         }
 
         // 更新缓存的最新消息ID（Discord返回倒序，index 0是最新的）
+        String newestId = null;
         if (pageMessages.size() > 0) {
-            String newestId = pageMessages.get(0).path("id").asText();
+            newestId = pageMessages.get(0).path("id").asText();
             lastMessageIdByChannel.put(cacheKey, newestId);
         }
 
@@ -439,29 +530,44 @@ public class UserMessagePoller {
             }
         }
 
-        // 检查漏斗阶段升级
-        if (conv.getStage() == Conversation.Stage.PROSPECT) {
-            boolean hasIn = messageRepository.countInboundMessages(conv) > 0;
-            boolean hasOut = messageRepository.countOutboundMessages(conv) > 0;
-            if (hasIn && hasOut) {
-                conv.setStage(Conversation.Stage.NEW);
-                conv.setStageChangedAt(Instant.now());
-                log.info("会话 [convId={}] 双方已互动，漏斗阶段升级为 NEW", conv.getId());
-            }
-        }
+        // 会话更新 + lastDiscordMessageId持久化（在独立事务中执行）
+        final int finalTotalNew = totalNew;
+        final String finalNewestId = newestId;
+        final long elapsedMs = System.currentTimeMillis() - convStart;
 
-        // 会话更新推送
-        if (totalNew > 0) {
-            int unreadCount = calculateUnreadCount(conv.getId());
-            log.info("会话 [convId={}] 新增 {} 条消息, 未读数: {}, 耗时={}ms, 模式={}",
-                    conv.getId(), totalNew, unreadCount, System.currentTimeMillis() - convStart,
-                    isInitialFetch ? "initial" : "incremental");
-            ConversationDtos.ConversationDto convDto = ConversationDtos.ConversationDto.from(conv, unreadCount);
-            messagingTemplate.convertAndSend("/topic/conversations", convDto);
-            conversationRepository.save(conv);
-        } else {
-            conversationRepository.save(conv);
-        }
+        transactionTemplate.execute(status -> {
+            // 刷新会话引用（避免懒加载问题）
+            Conversation convRef = conversationRepository.findById(conv.getId()).orElse(conv);
+            
+            // 持久化最后处理的Discord消息ID
+            if (finalNewestId != null && !finalNewestId.isBlank()) {
+                convRef.setLastDiscordMessageId(finalNewestId);
+            }
+
+            // 检查漏斗阶段升级
+            if (convRef.getStage() == Conversation.Stage.PROSPECT) {
+                boolean hasIn = messageRepository.countInboundMessages(convRef) > 0;
+                boolean hasOut = messageRepository.countOutboundMessages(convRef) > 0;
+                if (hasIn && hasOut) {
+                    convRef.setStage(Conversation.Stage.NEW);
+                    convRef.setStageChangedAt(Instant.now());
+                    log.info("会话 [convId={}] 双方已互动，漏斗阶段升级为 NEW", convRef.getId());
+                }
+            }
+
+            // 会话更新推送
+            if (finalTotalNew > 0) {
+                int unreadCount = calculateUnreadCount(convRef.getId());
+                log.info("会话 [convId={}] 新增 {} 条消息, 未读数: {}, 耗时={}ms, 模式={}",
+                        convRef.getId(), finalTotalNew, unreadCount, elapsedMs,
+                        isInitialFetch ? "initial" : "incremental");
+                ConversationDtos.ConversationDto convDto = ConversationDtos.ConversationDto.from(convRef, unreadCount);
+                messagingTemplate.convertAndSend("/topic/conversations", convDto);
+            }
+
+            conversationRepository.save(convRef);
+            return null;
+        });
 
         return totalNew;
     }
@@ -591,7 +697,7 @@ public class UserMessagePoller {
             return result;
         });
 
-        // ===== Phase 3: 后处理（翻译触发、ASR、会话更新、WebSocket推送） =====
+        // ===== Phase 3: 先推送前端（立即展示原文），再异步触发翻译/ASR =====
         int newCount = 0;
         for (int idx = 0; idx < savedList.size(); idx++) {
             Message msgEntity = savedList.get(idx);
@@ -600,7 +706,11 @@ public class UserMessagePoller {
 
             Long finalMsgId = msgEntity.getId();
 
-            // 入站非语音消息：异步翻译（仅限7天内的消息）
+            // ① 先推送到前端（用户立即可见原文）
+            MessageDtos.MessageDto dto = MessageDtos.MessageDto.from(msgEntity);
+            messagingTemplate.convertAndSend("/topic/messages", dto);
+
+            // ② 再异步触发翻译（@Async，不阻塞主流程，翻译完成后自动推送更新版本）
             if (!pm.isOutbound() && !pm.isVoice() && pm.content() != null && !pm.content().isBlank()) {
                 boolean withinTranslateWindow = pm.discordCreatedAt() != null
                         && (System.currentTimeMillis() - pm.discordCreatedAt().toEpochMilli()) <= TRANSLATE_WINDOW_MS;
@@ -612,7 +722,7 @@ public class UserMessagePoller {
                 }
             }
 
-            // 语音消息：触发ASR
+            // ③ 异步触发ASR（@Async）
             if (pm.isVoice()) {
                 try {
                     Long merchantId = conv.getMerchantId();
@@ -627,7 +737,7 @@ public class UserMessagePoller {
                 }
             }
 
-            // 更新会话最后消息信息
+            // ④ 更新会话最后消息信息
             String preview = pm.content().length() > 200 ? pm.content().substring(0, 200) : pm.content();
             if (msgEntity.getDiscordCreatedAt() != null
                     && (conv.getLastMessageAt() == null || !msgEntity.getDiscordCreatedAt().isBefore(conv.getLastMessageAt()))) {
@@ -635,10 +745,6 @@ public class UserMessagePoller {
                 conv.setLastMessageDirection(pm.isOutbound() ? Message.Direction.OUTBOUND.name() : Message.Direction.INBOUND.name());
                 conv.setLastMessageAt(msgEntity.getDiscordCreatedAt());
             }
-
-            // 推送消息到前端
-            MessageDtos.MessageDto dto = MessageDtos.MessageDto.from(msgEntity);
-            messagingTemplate.convertAndSend("/topic/messages", dto);
         }
 
         return new ProcessResult(newCount, oldestId);
@@ -676,4 +782,14 @@ public class UserMessagePoller {
         if (fn.endsWith(".m4a") || fn.endsWith(".mp4")) return "audio/mp4";
         return "audio/ogg";
     }
+
+    /** 预加载的会话数据（在短事务中完成加载，供后续HTTP调用使用） */
+    private record LoadedConversationData(
+            DiscordAccount account,
+            Conversation conv,
+            DiscordUser user,
+            String channelId,
+            String lastMsgId,
+            Long convId
+    ) {}
 }
