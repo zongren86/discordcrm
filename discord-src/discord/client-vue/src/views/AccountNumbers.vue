@@ -204,6 +204,9 @@ import {
   unbindAccountNumber,
   deleteAccountNumber
 } from '@/api'
+import { useAccountsStore } from '@/stores/accounts'
+
+const accountsStore = useAccountsStore()
 
 const loading = ref(false)
 const tableData = ref([])
@@ -371,6 +374,8 @@ async function handleBind() {
     bindDialog.visible = false
     resetBindDialog()
     fetchData()
+    // 同步账号 store，供消息中心等页面使用
+    accountsStore.fetchAccounts()
   } catch (e) {
     ElMessage.error('绑定失败')
   }
@@ -392,6 +397,8 @@ async function handleUnbind(row) {
     await unbindAccountNumber(row.id)
     ElMessage.success('解绑成功')
     fetchData()
+    // 同步账号 store
+    accountsStore.fetchAccounts()
   } catch (e) {
     if (e !== 'cancel') {
       ElMessage.error('解绑失败')

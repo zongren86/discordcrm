@@ -23,6 +23,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DeadlockLoserDataAccessException;
+import org.springframework.dao.TransientDataAccessResourceException;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -36,6 +41,7 @@ import java.util.stream.Collectors;
 public class DiscordAccountService {
 
     private static final Logger log = LoggerFactory.getLogger(DiscordAccountService.class);
+    private static final int MAX_DELETE_RETRIES = 3;
 
     private final DiscordAccountRepository accountRepository;
     private final DiscordBotManager botManager;
@@ -50,6 +56,7 @@ public class DiscordAccountService {
     private final FetchProgressRepository fetchProgressRepository;
     private final DiscordAccountNumberRepository accountNumberRepository;
     private final AgentAccountNumberRelRepository relRepository;
+    private final PlatformTransactionManager transactionManager;
 
     public DiscordAccountService(DiscordAccountRepository accountRepository,
                                  DiscordBotManager botManager,
@@ -63,7 +70,8 @@ public class DiscordAccountService {
                                  GuildMemberRepository guildMemberRepository,
                                  FetchProgressRepository fetchProgressRepository,
                                  DiscordAccountNumberRepository accountNumberRepository,
-                                 AgentAccountNumberRelRepository relRepository) {
+                                 AgentAccountNumberRelRepository relRepository,
+                                 PlatformTransactionManager transactionManager) {
         this.accountRepository = accountRepository;
         this.botManager = botManager;
         this.userClient = userClient;
@@ -77,6 +85,7 @@ public class DiscordAccountService {
         this.fetchProgressRepository = fetchProgressRepository;
         this.accountNumberRepository = accountNumberRepository;
         this.relRepository = relRepository;
+        this.transactionManager = transactionManager;
     }
 
     public List<AccountDto> listAccounts(String keyword, String status) {
@@ -91,15 +100,26 @@ public class DiscordAccountService {
         for (DiscordAccount a : accounts) {
             boolean tokenValid = true;
             
-            // 检测 USER 账号的 token 有效性
+            // 检测 USER 账号的 token 有效性（仅对401错误标记为过期，其他错误保留为有效）
             if (a.getAccountType() == DiscordAccount.AccountType.USER
                     && a.getToken() != null && !a.getToken().isBlank()) {
                 try {
                     userClient.getMe(a.getToken());
                     tokenValid = true;
+                } catch (DiscordUserClient.DiscordUserApiException e) {
+                    // 只有401才是真正的token过期
+                    if (e.statusCode == 401) {
+                        tokenValid = false;
+                        log.warn("账号 [{}] token 已失效(401)", a.getName());
+                    } else {
+                        // 其他HTTP错误(429限流、5xx等)不视为过期，保持有效
+                        log.warn("账号 [{}] token 验证失败(状态码={})，保留有效状态", a.getName(), e.statusCode);
+                        tokenValid = true;
+                    }
                 } catch (Exception e) {
-                    tokenValid = false;
-                    log.warn("账号 [{}] token 已失效", a.getName());
+                    // 网络异常等非HTTP错误，不视为token过期
+                    log.warn("账号 [{}] token 验证异常({})，保留有效状态: {}", a.getName(), e.getClass().getSimpleName(), e.getMessage());
+                    tokenValid = true;
                 }
             }
             tokenValidMap.put(a.getId(), tokenValid);
@@ -337,6 +357,11 @@ public class DiscordAccountService {
         String username = req.username() == null ? "" : req.username().trim();
         String email = req.email() == null ? "" : req.email().trim();
         String token = req.token().trim();
+        
+        // Token 格式校验：不应包含竖线分隔符（说明用户粘贴了完整文本而非纯 token）
+        if (token.contains("|")) {
+            throw new IllegalArgumentException("Token 格式错误：检测到完整文本格式，请使用粘贴框解析后保存，或只输入纯 Token 值");
+        }
 
         Optional<DiscordAccount> existOpt = accountRepository.findByDiscordId(discordId);
         Long currentMerchant = SecurityUtils.currentMerchantId();
@@ -371,11 +396,70 @@ public class DiscordAccountService {
             account.setMerchantId(merchantId);
         }
 
+        // 导入时立即验证 token 有效性
+        boolean tokenValid = false;
+        String validationMsg = null;
+        try {
+            JsonNode me = userClient.getMe(token);
+            tokenValid = true;
+            // 用 API 返回的信息补全账号
+            if (me.path("id").asText(null) != null) account.setDiscordId(me.path("id").asText());
+            String returnedUsername = me.path("username").asText(null);
+            if (returnedUsername != null && !returnedUsername.isBlank()) {
+                account.setDiscordName(returnedUsername);
+                if (username.isBlank()) {
+                    account.setName(returnedUsername);
+                }
+            }
+            String avatarHash = me.path("avatar").asText(null);
+            if (avatarHash != null && !avatarHash.isBlank() && account.getDiscordId() != null) {
+                String ext = avatarHash.startsWith("a_") ? "gif" : "png";
+                account.setAvatarUrl("https://cdn.discordapp.com/avatars/"
+                        + account.getDiscordId() + "/" + avatarHash + "." + ext);
+            }
+            log.info("账号 [{}] token 验证成功", username.isBlank() ? account.getName() : username);
+        } catch (DiscordUserClient.DiscordUserApiException e) {
+            if (e.statusCode == 401) {
+                // token 真的失效了
+                tokenValid = false;
+                validationMsg = "Token 已失效 (401)";
+                log.warn("账号 [{}] token 验证失败: {}", username.isBlank() ? account.getName() : username, validationMsg);
+            } else {
+                // 其他错误（网络问题等），保存账号但记录错误
+                tokenValid = false;
+                validationMsg = "Token 验证失败 (状态码=" + e.statusCode + ")，请稍后验证";
+                log.warn("账号 [{}] token 验证失败: 状态码={}", username.isBlank() ? account.getName() : username, e.statusCode);
+            }
+            account.setLastError(validationMsg);
+        } catch (Exception e) {
+            tokenValid = false;
+            validationMsg = "Token 验证异常: " + e.getMessage();
+            log.warn("账号 [{}] token 验证异常: {}", username.isBlank() ? account.getName() : username, e.getMessage());
+            account.setLastError(validationMsg);
+        }
+
         account = accountRepository.save(account);
         botManager.startAccount(account.getId());
+        // USER 账号：首次同步好友关系和 DM 频道，确保消息轮询能立即工作
+        if (account.getAccountType() == DiscordAccount.AccountType.USER && account.getToken() != null) {
+            try {
+                syncService.syncOne(account.getId());
+                log.info("账号 [{}](id={}) 首次同步好友关系完成", account.getName(), account.getId());
+            } catch (Exception syncErr) {
+                log.warn("账号 [{}](id={}) 首次同步好友失败: {}", account.getName(), account.getId(), syncErr.getMessage());
+                account.setLastError("首次同步好友失败: " + syncErr.getMessage());
+                accountRepository.save(account);
+            }
+        }
         AccountDto dto = AccountDto.from(account, botManager.isConnected(account.getId()), botManager.isConnecting(account.getId()));
-        log.info("账号{}成功: discordId={} id={}", created ? "新增" : "更新", discordId, account.getId());
-        String message = created ? "新增成功" : "更新成功（ID已存在）";
+        
+        String message;
+        if (created) {
+            message = tokenValid ? "新增成功" : "新增成功（" + validationMsg + "）";
+        } else {
+            message = tokenValid ? "更新成功（ID已存在）" : "更新成功（ID已存在，" + validationMsg + "）";
+        }
+        log.info("账号{}成功: discordId={} id={} tokenValid={}", created ? "新增" : "更新", discordId, account.getId(), tokenValid);
         return new UpsertResponse(dto, created, message);
     }
 
@@ -596,43 +680,87 @@ public class DiscordAccountService {
         }
     }
 
-    @Transactional
     public void deleteAccount(Long id) {
         DiscordAccount account = accountRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("账号不存在"));
         SecurityUtils.checkMerchantAccess(account.getMerchantId());
+        String accountName = account.getName();
+        
+        // 1. 先停掉机器人/同步
         botManager.stopAccount(id);
-
-        // 1. 删除关联的服务器及其成员、抓取进度数据
-        List<GuildServer> guildServers = guildServerRepository.findByDiscordAccountId(id);
-        for (GuildServer guild : guildServers) {
-            Long guildServerId = guild.getId();
-            fetchProgressRepository.deleteByGuildServerId(guildServerId);
-            guildMemberRepository.deleteByGuildServerId(guildServerId);
-        }
-        guildServerRepository.deleteByDiscordAccountId(id);
-        log.info("已删除账号[id={}]关联的 {} 个服务器及其成员数据", id, guildServers.size());
-
-        // 2. 移除 Agent 关联
-        List<Agent> relatedAgents = agentRepository.findByDiscordAccountsContaining(account);
-        for (Agent agent : relatedAgents) {
-            agent.getDiscordAccounts().remove(account);
-            agentRepository.save(agent);
+        
+        // 2. 将账号标记为 INACTIVE，让轮询器停止处理该账号，防止死锁
+        account.setStatus(DiscordAccount.AccountStatus.INACTIVE);
+        accountRepository.save(account);
+        accountRepository.flush(); // 强制刷新持久化，确保状态变更立即生效
+        log.info("账号[id={}]已标记为INACTIVE，停止轮询和同步", id);
+        
+        // 等待轮询器完成当前周期（最多2秒）
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
 
-        // 3. 删除会话和消息
-        List<com.discordadmin.entity.Conversation> convs = conversationRepository.findByDiscordAccount(account);
-        for (com.discordadmin.entity.Conversation conv : convs) {
-            messageRepository.deleteByConversation(conv);
+        // 3. 使用编程式事务 + 死锁重试执行删除
+        TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
+        
+        for (int attempt = 1; attempt <= MAX_DELETE_RETRIES; attempt++) {
+            try {
+                txTemplate.execute(status -> {
+                    // 3a. 删除关联的服务器及其成员、抓取进度数据
+                    List<GuildServer> guildServers = guildServerRepository.findByDiscordAccountId(id);
+                    for (GuildServer guild : guildServers) {
+                        Long guildServerId = guild.getId();
+                        fetchProgressRepository.deleteByGuildServerId(guildServerId);
+                        guildMemberRepository.deleteByGuildServerId(guildServerId);
+                    }
+                    guildServerRepository.deleteByDiscordAccountId(id);
+                    log.info("已删除账号[id={}]关联的 {} 个服务器及其成员数据", id, guildServers.size());
+
+                    // 3b. 移除 Agent 关联
+                    DiscordAccount acc = accountRepository.findById(id).orElse(null);
+                    if (acc != null) {
+                        List<Agent> relatedAgents = agentRepository.findByDiscordAccountsContaining(acc);
+                        for (Agent agent : relatedAgents) {
+                            agent.getDiscordAccounts().remove(acc);
+                            agentRepository.save(agent);
+                        }
+
+                        // 3c. 删除会话和消息
+                        List<com.discordadmin.entity.Conversation> convs = conversationRepository.findByDiscordAccount(acc);
+                        for (com.discordadmin.entity.Conversation conv : convs) {
+                            messageRepository.deleteByConversation(conv);
+                        }
+                        conversationRepository.deleteByDiscordAccount(acc);
+
+                        // 3d. 删除好友记录
+                        friendRepository.deleteByDiscordAccount(acc);
+
+                        // 3e. 删除账号
+                        accountRepository.delete(acc);
+                    }
+                    return null;
+                });
+                
+                log.info("账号[id={}, name={}]及其关联数据已硬删除", id, accountName);
+                return; // 成功，退出重试循环
+                
+            } catch (DeadlockLoserDataAccessException | CannotAcquireLockException e) {
+                if (attempt >= MAX_DELETE_RETRIES) {
+                    log.error("删除账号[id={}]死锁重试{}次后仍失败", id, MAX_DELETE_RETRIES, e);
+                    throw e;
+                }
+                long waitMs = 500L * attempt;
+                log.warn("删除账号[id={}]遇到死锁，第{}次重试（等待{}ms）", id, attempt, waitMs);
+                try {
+                    Thread.sleep(waitMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException("删除账号被中断", ie);
+                }
+            }
         }
-        conversationRepository.deleteByDiscordAccount(account);
-
-        // 4. 删除好友记录
-        friendRepository.deleteByDiscordAccount(account);
-
-        // 5. 删除账号
-        accountRepository.delete(account);
-        log.info("账号[id={}, name={}]及其关联数据已硬删除", id, account.getName());
     }
 
     public AccountDto connect(Long id) {

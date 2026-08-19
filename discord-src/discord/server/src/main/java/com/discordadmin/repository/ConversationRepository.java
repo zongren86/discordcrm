@@ -113,4 +113,13 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
 
     /** 按商户ID和ownerAgentId查询会话 */
     List<Conversation> findByMerchantIdAndOwnerAgentId(Long merchantId, Long ownerAgentId);
+
+    /** 按账号ID查找会话（平台管理员用） */
+    List<Conversation> findByDiscordAccount_IdOrderByLastMessageAtDesc(Long accountId);
+
+    /** 按账号ID+阶段查找会话（平台管理员用） */
+    List<Conversation> findByDiscordAccount_IdAndStageOrderByLastMessageAtDesc(Long accountId, Conversation.Stage stage);
+
+    /** 按阶段查找会话（平台管理员用） */
+    List<Conversation> findByStageOrderByLastMessageAtDesc(Conversation.Stage stage);
 }

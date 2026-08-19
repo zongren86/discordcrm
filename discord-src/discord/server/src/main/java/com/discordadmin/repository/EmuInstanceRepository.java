@@ -23,4 +23,9 @@ public interface EmuInstanceRepository extends JpaRepository<EmuInstance, Long> 
     void deleteByMerchantId(Long merchantId);
 
     void deleteByMerchantIdAndInstanceIndex(Long merchantId, Integer instanceIndex);
+
+    /**
+     * 按实例索引查找（定时检测场景使用，物理模拟器索引唯一）
+     */
+    EmuInstance findFirstByInstanceIndex(Integer instanceIndex);
 }

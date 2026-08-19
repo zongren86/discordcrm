@@ -8,12 +8,14 @@ import com.discordadmin.repository.EmuInstanceRepository;
 import com.discordadmin.security.SecurityUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -106,14 +108,35 @@ public class EmuInstanceService {
                         if (discordInstalled != null) {
                             emu.put("discordInstalled", discordInstalled);
                         }
+                        // Discord登录状态：物理数据为 true 时更新，DB 已有 true 时不覆盖
                         Object discordLoggedIn = phys.get("discordLoggedIn");
+                        Boolean dbLoggedIn = (Boolean) emu.get("discordLoggedIn");
                         if (discordLoggedIn != null) {
-                            emu.put("discordLoggedIn", discordLoggedIn);
+                            boolean physLoggedIn = Boolean.TRUE.equals(discordLoggedIn);
+                            if (physLoggedIn) {
+                                // 物理检测为 true → 强制更新
+                                emu.put("discordLoggedIn", true);
+                            } else if (dbLoggedIn != null && dbLoggedIn) {
+                                // DB 已经是 true → 保持不变
+                                emu.put("discordLoggedIn", true);
+                            }
+                            // DB 为 null 且物理为 false → 保持 null（等检测任务来确认）
+                        } else if (dbLoggedIn != null) {
+                            emu.put("discordLoggedIn", dbLoggedIn);
                         }
-                        // 合并模拟器检测到的Discord账号信息（覆盖数据库中的discordAccountId）
+                        // Discord账号：优先使用数据库中的值（已导入账号或检测到的用户名）
                         Object physDiscordAccount = phys.get("discordAccount");
-                        if (physDiscordAccount != null && !physDiscordAccount.toString().isEmpty()) {
+                        Object dbDiscordAccount = emu.get("discordAccount");
+                        Object dbDiscordAccountName = emu.get("discordAccountName");
+                        if (physDiscordAccount != null && !physDiscordAccount.toString().isEmpty()
+                                && !"未登录".equals(physDiscordAccount.toString())
+                                && (dbDiscordAccount == null || dbDiscordAccount.toString().isEmpty())
+                                && (dbDiscordAccountName == null || dbDiscordAccountName.toString().isEmpty())) {
+                            // 数据库没有值，物理检测到账号 → 补充显示
                             emu.put("discordAccount", physDiscordAccount.toString());
+                        } else if (dbDiscordAccount != null && !dbDiscordAccount.toString().isEmpty()) {
+                            // 数据库有账号 → 保持不变（优先）
+                            emu.put("discordAccount", dbDiscordAccount.toString());
                         }
                         Object physDiscordActualUser = phys.get("discordActualUser");
                         if (physDiscordActualUser != null) {
@@ -164,6 +187,11 @@ public class EmuInstanceService {
                         break;
                     }
                 }
+                
+                // 调试日志：输出每个模拟器的合并结果
+                log.info("模拟器 #{} 合并结果: discordLoggedIn={}, discordAccount={}, discordInstalled={}",
+                        emu.get("index"), emu.get("discordLoggedIn"), 
+                        emu.get("discordAccount"), emu.get("discordInstalled"));
             }
         }
         
@@ -1172,13 +1200,22 @@ public class EmuInstanceService {
         item.put("discordLoggedIn", instance.getDiscordLoggedIn());
         item.put("discordOnHome", instance.getDiscordOnHome());
         
-        // 查询Discord账号名称
+        // Discord账号显示逻辑：
+        // 1. 如果有关联的已导入账号，显示那个账号的名字
+        // 2. 如果没有关联账号，但检测到了用户名，显示检测到的用户名
+        String displayAccount = null;
         if (instance.getDiscordAccountId() != null) {
             DiscordAccount account = discordAccountRepository.findById(instance.getDiscordAccountId()).orElse(null);
-            item.put("discordAccount", account != null ? account.getName() : instance.getDiscordAccountId().toString());
-        } else {
-            item.put("discordAccount", null);
+            displayAccount = account != null ? account.getName() : null;
         }
+        // 如果没有关联账号，但检测到了用户名，显示检测到的用户名
+        if (displayAccount == null && instance.getDiscordAccountName() != null 
+                && !instance.getDiscordAccountName().isEmpty()) {
+            displayAccount = instance.getDiscordAccountName();
+        }
+        item.put("discordAccount", displayAccount);
+        item.put("discordAccountName", instance.getDiscordAccountName());
+        item.put("discordAccountId", instance.getDiscordAccountId());
         
         item.put("autoRunning", instance.getAutoRunning());
         item.put("addedCount", instance.getAddedCount());
@@ -1375,19 +1412,20 @@ public class EmuInstanceService {
                     updated = true;
 
                     if (loggedIn) {
-                        // 2c. 获取登录用户名
+                        // 2c. 获取登录用户名，只存储用户名不创建占位账号
                         String username = discordService.getLoggedInUser(mumuIndex);
                         if (username != null && !username.isEmpty()) {
-                            // 查找或创建 DiscordAccount 记录
-                            DiscordAccount account = discordAccountRepository.findByName(username)
-                                    .orElseGet(() -> {
-                                        DiscordAccount newAcc = new DiscordAccount();
-                                        newAcc.setName(username);
-                                        newAcc.setCreatedAt(Instant.now());
-                                        return discordAccountRepository.save(newAcc);
-                                    });
-                            inst.setDiscordAccountId(account.getId());
-                            log.info("模拟器 #{} Discord账号已更新: {}", index, username);
+                            inst.setDiscordAccountName(username);
+                            // 查找已导入的账号（只匹配，不创建）
+                            DiscordAccount account = discordAccountRepository.findByName(username).orElse(null);
+                            if (account != null) {
+                                inst.setDiscordAccountId(account.getId());
+                                log.info("模拟器 #{} Discord账号已匹配: {} -> 账号ID={}", index, username, account.getId());
+                            } else {
+                                // 未导入的账号，只记录用户名用于显示
+                                inst.setDiscordAccountId(null);
+                                log.info("模拟器 #{} Discord账号未导入: {}（仅显示，不创建记录）", index, username);
+                            }
                         }
                         // 清除之前的错误
                         if (inst.getLastError() != null && inst.getLastError().contains("Discord")) {
@@ -1412,6 +1450,161 @@ public class EmuInstanceService {
             }
         } catch (Exception e) {
             log.warn("检查模拟器 #{} Discord状态失败: {}", index, e.getMessage());
+        }
+    }
+
+    /**
+     * 定时检测所有运行中模拟器的 Discord 登录状态
+     * 每 30 秒运行一次，确保后台回写 Discord 账号信息
+     */
+    @Scheduled(fixedRate = 30000)
+    public void scheduledCheckDiscordStatus() {
+        try {
+            // 获取物理模拟器列表
+            List<Map<String, Object>> physicalList = null;
+            try {
+                physicalList = mumuClientService.getAllEmulatorsWithError();
+            } catch (Exception e) {
+                log.info("定时检测: 无法获取物理模拟器列表: {}", e.getMessage());
+                return;
+            }
+            
+            if (physicalList == null || physicalList.isEmpty()) {
+                log.info("定时检测: 物理模拟器列表为空");
+                return;
+            }
+            
+            // 从物理列表中筛选运行中的模拟器
+            List<Map<String, Object>> runningPhysicals = new ArrayList<>();
+            for (Map<String, Object> phys : physicalList) {
+                Object status = phys.get("status");
+                if ("running".equalsIgnoreCase(String.valueOf(status))) {
+                    runningPhysicals.add(phys);
+                }
+            }
+            
+            if (runningPhysicals.isEmpty()) {
+                log.info("定时检测: 无运行中的物理模拟器");
+                return;
+            }
+            
+            log.info("定时检测: 物理运行中的模拟器数量={}", runningPhysicals.size());
+            
+            int checked = 0;
+            for (Map<String, Object> phys : runningPhysicals) {
+                Object idxObj = phys.get("index");
+                if (!(idxObj instanceof Number)) continue;
+                int mumuIndex = ((Number) idxObj).intValue();
+                int instanceIndex = mumuIndex + 1;
+                
+                // 查找对应的数据库实例
+                EmuInstance inst = instanceRepository.findFirstByInstanceIndex(instanceIndex);
+                if (inst == null) {
+                    log.debug("定时检测: 模拟器 #{} 无对应数据库实例，跳过", instanceIndex);
+                    continue;
+                }
+                
+                try {
+                    checkAndUpdateDiscordStatusForInstance(inst, phys);
+                    checked++;
+                } catch (Exception e) {
+                    log.warn("定时检测模拟器 #{} Discord 状态失败: {}", instanceIndex, e.getMessage());
+                }
+            }
+            log.info("定时检测完成: 已检测 {} 个运行中模拟器的 Discord 状态", checked);
+        } catch (Exception e) {
+            log.error("定时检测 Discord 状态异常", e);
+        }
+    }
+
+    /**
+     * 无安全上下文版本 - 直接对指定实例检查并回写 Discord 状态
+     * 用于定时任务、批量检测等场景
+     * @param inst 数据库实例
+     * @param physData 物理模拟器数据（来自 getAllEmulatorsWithError）
+     */
+    private void checkAndUpdateDiscordStatusForInstance(EmuInstance inst, Map<String, Object> physData) {
+        int index = inst.getInstanceIndex();
+        int mumuIndex = index - 1;
+        boolean updated = false;
+
+        // 1. 从传入的物理数据检查 Discord 是否安装
+        boolean discordInstalled = false;
+        if (physData != null) {
+            Object installedObj = physData.get("discordInstalled");
+            discordInstalled = Boolean.TRUE.equals(installedObj) ||
+                    "true".equalsIgnoreCase(String.valueOf(installedObj));
+        }
+        if (discordInstalled != Boolean.TRUE.equals(inst.getDiscordInstalled())) {
+            inst.setDiscordInstalled(discordInstalled);
+            updated = true;
+        }
+
+        // 2. 如果已安装 Discord，检测登录状态
+        if (discordInstalled) {
+            // 2a. 确认 Discord 在前台
+            boolean isForeground = discordService.isDiscordForeground(mumuIndex);
+            
+            if (!isForeground) {
+                // 不在前台 → 自动打开 Discord 并等待
+                log.debug("模拟器 #{} Discord不在前台，尝试打开...", index);
+                try {
+                    discordService.launchDiscord(mumuIndex);
+                    Thread.sleep(2000);
+                    isForeground = discordService.isDiscordForeground(mumuIndex);
+                } catch (Exception e) {
+                    log.debug("模拟器 #{} 打开 Discord 失败: {}", index, e.getMessage());
+                }
+            }
+
+            if (isForeground) {
+                // 2b. 检测是否已登录
+                boolean loggedIn = discordService.isDiscordLoggedIn(mumuIndex);
+                if (loggedIn != Boolean.TRUE.equals(inst.getDiscordLoggedIn())) {
+                    inst.setDiscordLoggedIn(loggedIn);
+                    updated = true;
+                }
+
+                if (loggedIn) {
+                    // 2c. 获取登录用户名，只存储用户名不创建占位账号
+                    String username = discordService.getLoggedInUser(mumuIndex);
+                    if (username != null && !username.isEmpty()) {
+                        inst.setDiscordAccountName(username);
+                        // 查找已导入的账号（只匹配，不创建）
+                        DiscordAccount account = discordAccountRepository.findByName(username).orElse(null);
+                        if (account != null) {
+                            if (inst.getDiscordAccountId() == null || !inst.getDiscordAccountId().equals(account.getId())) {
+                                inst.setDiscordAccountId(account.getId());
+                                updated = true;
+                            }
+                        } else {
+                            // 未导入的账号，清除accountId只记录用户名
+                            if (inst.getDiscordAccountId() != null) {
+                                inst.setDiscordAccountId(null);
+                                updated = true;
+                            }
+                        }
+                        // 清除之前的错误
+                        if (inst.getLastError() != null && inst.getLastError().contains("Discord")) {
+                            inst.setLastError(null);
+                            updated = true;
+                        }
+                    }
+                } else if (inst.getDiscordLoggedIn() != null && inst.getDiscordLoggedIn()) {
+                    // 之前已登录现在未登录
+                    inst.setDiscordAccountId(null);
+                    inst.setDiscordLoggedIn(false);
+                    updated = true;
+                }
+            }
+        }
+
+        if (updated) {
+            inst.setUpdatedAt(Instant.now());
+            instanceRepository.save(inst);
+            log.info("模拟器 #{} Discord状态已定时更新: installed={}, loggedIn={}, account={}",
+                    index, inst.getDiscordInstalled(), inst.getDiscordLoggedIn(),
+                    inst.getDiscordAccountId() != null ? "已绑定" : "无");
         }
     }
 

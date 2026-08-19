@@ -64,6 +64,9 @@ public class EmuInstance {
     @Column(name = "discord_account_id")
     private Long discordAccountId;
 
+    @Column(name = "discord_account_name", length = 128)
+    private String discordAccountName;
+
     @Column(name = "auto_running")
     private Boolean autoRunning = false;
 

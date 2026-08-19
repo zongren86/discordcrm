@@ -171,7 +171,6 @@
           :rows="3"
           placeholder="点击此处后粘贴（Ctrl/⌘+V），将自动解析到下方字段"
           @paste="onPasteAccountText"
-          @change="parsePasteText"
         />
         <div style="margin: 8px 0 0; font-size:12px; color: var(--color-text-3);">
           解析后会自动填写下方字段。相同 ID 再次保存会<strong>更新已有账号</strong>，不存在则新增。
@@ -189,7 +188,7 @@
           <el-input v-model="botDialog.form.email" placeholder="邮箱（选填）" />
         </el-form-item>
         <el-form-item label="Token" required>
-          <el-input v-model="botDialog.form.token" type="password" show-password placeholder="请输入 Token" />
+          <el-input v-model="botDialog.form.token" type="password" show-password placeholder="请输入 Token" @input="onTokenInput" />
         </el-form-item>
         <el-form-item label="所属商户">
           <el-select v-model="botDialog.form.merchantId" placeholder="请选择商户" filterable clearable style="width:100%;" :loading="merchantsLoading" :disabled="merchantDisabled">
@@ -296,8 +295,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Upload, Refresh, Edit, Delete, Search, OfficeBuilding, Download, Key } from '@element-plus/icons-vue'
 import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountRelationships, listMerchants, refreshAccountToken } from '@/api'
 import { useAuthStore } from '@/stores/auth'
+import { useAccountsStore } from '@/stores/accounts'
 
 const auth = useAuthStore()
+const accountsStore = useAccountsStore()
 
 /** 平台管理员才可以选择/切换商户；商户身份用户默认填自己的 merchantId 并禁用 */
 const isPlatformAdmin = computed(() => auth.agent?.role === 'PLATFORM_ADMIN')
@@ -328,6 +329,8 @@ async function fetchAccounts() {
     if (filters.status) params.status = filters.status
     const res = await listAccounts(params)
     allAccounts.value = Array.isArray(res) ? res : (res?.data || [])
+    // 同步到 Pinia 全局 store，供其他页面（如消息中心）使用
+    accountsStore.accounts = [...allAccounts.value]
   } catch (e) {
     allAccounts.value = []
   } finally {
@@ -447,23 +450,17 @@ function resetBotDialog() {
   botDialog.saving = false
 }
 
-/** 粘贴后自动解析 用户名|邮箱|ID|Token */
+/** 粘贴事件：从剪贴板获取文本并解析 */
 function onPasteAccountText(e) {
   let text = ''
   try {
     text = (e.clipboardData || window.clipboardData).getData('text') || ''
   } catch (err) { text = '' }
-  if (text) botDialog.pasteText = text
-  parsePasteText()
-}
-
-function parsePasteText() {
-  const raw = (botDialog.pasteText || '').trim()
-  if (!raw) return
-  // 取首行，兼容多行粘贴场景
+  if (!text) return
+  // 直接用剪贴板文本解析，不依赖 pasteText 的 v-model 更新
+  const raw = text.trim()
   const firstLine = raw.split(/\r?\n/).map(l => l.trim()).find(l => l) || raw
   const parts = firstLine.split(/[|｜\t]/).map(s => s.trim())
-  // 按顺序取 用户名 邮箱 ID Token；超过4段且含空格时做简单回退
   const [username, email, discordId, ...rest] = parts
   const token = rest.length > 0 ? rest.join('|') : ''
   if (username) botDialog.form.nickname = username
@@ -471,13 +468,39 @@ function parsePasteText() {
   if (discordId) botDialog.form.discordId = discordId
   if (token) botDialog.form.token = token
   if (username && !botDialog.form.accountType) botDialog.form.accountType = 'USER'
+  // 清空 pasteText 输入框，防止再次触发解析
+  botDialog.pasteText = ''
   // 校验
-  if (!botDialog.form.discordId) {
+  if (!discordId) {
     ElMessage.warning('未解析到 Discord ID，请检查格式：用户名|邮箱|ID|Token')
-  } else if (!botDialog.form.token) {
+  } else if (!token) {
     ElMessage.warning('未解析到 Token，请检查格式')
   } else {
     ElMessage.success('解析成功，请确认字段后保存')
+  }
+}
+
+/** 手动输入解析（用户可能通过拖拽等方式填入文本） */
+function parsePasteText() {
+  const raw = (botDialog.pasteText || '').trim()
+  if (!raw) return
+  const firstLine = raw.split(/\r?\n/).map(l => l.trim()).find(l => l) || raw
+  const parts = firstLine.split(/[|｜\t]/).map(s => s.trim())
+  const [username, email, discordId, ...rest] = parts
+  const token = rest.length > 0 ? rest.join('|') : ''
+  if (username) botDialog.form.nickname = username
+  if (email) botDialog.form.email = email
+  if (discordId) botDialog.form.discordId = discordId
+  if (token) botDialog.form.token = token
+  if (username && !botDialog.form.accountType) botDialog.form.accountType = 'USER'
+  // 解析成功后清空粘贴文本
+  botDialog.pasteText = ''
+  if (!discordId) {
+    ElMessage.warning('未解析到 Discord ID')
+  } else if (!token) {
+    ElMessage.warning('未解析到 Token')
+  } else {
+    ElMessage.success('解析成功')
   }
 }
 
@@ -679,13 +702,20 @@ function exportFailedAccounts() {
 async function removeAccount(acc) {
   try {
     const dispName = acc.name || acc.discordName || acc.nickname || acc.username
-    await ElMessageBox.confirm(`确定要删除账号「${dispName}」吗？此操作将删除关联数据。`, '提示', {
-      type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消'
+    await ElMessageBox.confirm(`确定要删除账号「${dispName}」吗？此操作将删除关联数据，不可恢复。`, '提示', {
+      type: 'warning', confirmButtonText: '确认删除', cancelButtonText: '取消'
     })
     await deleteAccount(acc.id)
-    ElMessage.success('已删除')
+    ElMessage.success('删除成功')
+    // 强制刷新列表，确保获取最新数据
     await fetchAccounts()
-  } catch (e) {}
+  } catch (e) {
+    // 如果是用户取消操作，不显示错误
+    if (e !== 'cancel' && e !== 'close') {
+      console.error('删除账号失败:', e)
+      // 错误已在 http.js 拦截器中处理
+    }
+  }
 }
 
 onMounted(() => {

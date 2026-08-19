@@ -194,4 +194,8 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     /** 取会话里 discordMessageId 最大的一条（即最新的消息）；用于轮询增量时判断 Discord 返回的消息里是否已进入"已入库"范围 */
     @Query("SELECT MAX(m.discordMessageId) FROM Message m WHERE m.conversation = :conversation AND m.discordMessageId IS NOT NULL")
     Optional<String> findMaxDiscordMessageIdByConversation(@Param("conversation") Conversation conversation);
+
+    /** 获取会话中所有已存在的discordMessageId列表，用于内存去重（避免逐条DB查询） */
+    @Query("SELECT m.discordMessageId FROM Message m WHERE m.conversation.id = :convId AND m.discordMessageId IS NOT NULL")
+    List<String> findDiscordMessageIdsByConversation(@Param("convId") Long convId);
 }

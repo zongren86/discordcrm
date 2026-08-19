@@ -15,7 +15,10 @@
           <el-select v-model="selectedAccountId" size="small" placeholder="账号" clearable class="filter-select">
             <el-option :value="null" label="全部账号" />
             <el-option v-for="acc in accountOptionsForFilter" :key="acc.id" :value="acc.id"
-              :label="acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id)" />
+              :label="acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id)">
+              {{ acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id) }}
+              <span v-if="!acc._hasConversations" style="color:#999;font-size:12px;margin-left:4px;">(无消息)</span>
+            </el-option>
           </el-select>
 
           <el-select v-model="selectedStage" size="small" placeholder="漏斗" clearable class="filter-select">
@@ -1087,13 +1090,16 @@ const filteredConversations = computed(() => {
   })
 })
 
-// 账号筛选下拉框：只显示当前会话列表中存在的账号
+// 账号筛选下拉框：显示所有账号，无消息的账号标记
 const accountOptionsForFilter = computed(() => {
   const convAccountIds = new Set()
   for (const c of conversations.conversations) {
     if (c.discordAccountId) convAccountIds.add(c.discordAccountId)
   }
-  return accounts.accounts.filter(a => convAccountIds.has(a.id))
+  return accounts.accounts.map(a => ({
+    ...a,
+    _hasConversations: convAccountIds.has(a.id)
+  }))
 })
 
 function setDateRange(type) {
@@ -2890,16 +2896,21 @@ async function onAISettingsUpdated(event) {
 }
 
 onMounted(async () => {
-  if (accounts.accounts.length === 0) {
-    try { await accounts.fetchAccounts() } catch (e) {}
-  }
-  if (conversations.conversations.length === 0) {
-    try { await conversations.fetchConversations() } catch (e) {}
-  }
+  try { await accounts.fetchAccounts() } catch (e) {}
+  try { await conversations.fetchConversations() } catch (e) {}
   pollTimer = setInterval(pollCurrentMessages, 1000)
   convPollTimer = setInterval(pollConversations, 2000)
   // 监听AI配置更新事件
   window.addEventListener('ai-settings-updated', onAISettingsUpdated)
+})
+
+// 监听账号变化，自动刷新会话列表和消息
+watch(() => accounts.accounts.length, async (newLen, oldLen) => {
+  if (newLen !== oldLen) {
+    // 账号数量变化，重新拉取账号（确保最新）和会话
+    await accounts.fetchAccounts()
+    await conversations.fetchConversations(true)
+  }
 })
 
 onUnmounted(() => {

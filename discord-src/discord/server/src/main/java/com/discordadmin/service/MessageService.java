@@ -2,7 +2,9 @@ package com.discordadmin.service;
 
 import com.discordadmin.discord.DiscordBotManager;
 import com.discordadmin.discord.DiscordUserClient;
+import com.discordadmin.dto.ConversationDtos;
 import com.discordadmin.dto.ConversationDtos.ConversationDto;
+import com.discordadmin.dto.MessageDtos;
 import com.discordadmin.dto.MessageDtos.MessageDto;
 import com.discordadmin.entity.Conversation;
 import com.discordadmin.entity.DiscordAccount;
@@ -472,6 +474,37 @@ public class MessageService {
             if (message.getTranslatedContent() == null) {
                 message.setTranslatedContent(message.getContent());
             }
+        }
+    }
+
+    /** 异步翻译消息（供轮询器在事务提交后调用，不阻塞主流程） */
+    @Async
+    public void translateMessageAsync(Long messageId, String targetLanguage) {
+        try {
+            Message message = messageRepository.findById(messageId).orElse(null);
+            if (message == null) return;
+            // 已经有翻译内容（不是原文占位）则不重复翻译
+            if (message.getTranslatedContent() != null
+                    && !message.getTranslatedContent().equals(message.getContent())) {
+                return;
+            }
+            log.info("异步翻译消息 msgId={}, contentLen={}", messageId,
+                    message.getContent() != null ? message.getContent().length() : 0);
+            Long merchantId = message.getMerchantId();
+            if (merchantId == null && message.getConversation() != null) {
+                merchantId = message.getConversation().getMerchantId();
+            }
+            String translated = translationServiceFactory.translate(
+                    message.getContent(), targetLanguage, merchantId)
+                    .orElse(message.getContent());
+            message.setTranslatedContent(translated);
+            messageRepository.save(message);
+            log.info("异步翻译完成 msgId={}", messageId);
+            // 推送更新给前端
+            MessageDtos.MessageDto dto = MessageDtos.MessageDto.from(message);
+            messagingTemplate.convertAndSend("/topic/messages", dto);
+        } catch (Exception e) {
+            log.warn("异步翻译失败 msgId={}: {}", messageId, e.getMessage());
         }
     }
 

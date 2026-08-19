@@ -29,6 +29,7 @@ public class DiscordUserClient {
           + "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
     private final HttpClient http;
+    private final HttpClient pollHttp;  // 轮询专用，短超时
     private final ObjectMapper mapper = new ObjectMapper();
 
     public DiscordUserClient(
@@ -36,20 +37,25 @@ public class DiscordUserClient {
             @Value("${discord.proxy.port:0}") int proxyPort) {
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(15));
+        HttpClient.Builder pollBuilder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5));
         try {
             SSLContext ctx = SSLContext.getInstance("TLS");
             ctx.init(null, null, null);
             builder.sslContext(ctx);
+            pollBuilder.sslContext(ctx);
         } catch (Exception e) {
             log.warn("自定义 SSLContext 初始化失败，使用默认: {}", e.getMessage());
         }
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));
+            pollBuilder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));
             log.info("DiscordUserClient 使用代理: {}:{}", proxyHost, proxyPort);
         } else {
             log.info("DiscordUserClient 直连（未配置代理）");
         }
         this.http = builder.build();
+        this.pollHttp = pollBuilder.build();
     }
 
     public JsonNode getMe(String token) throws Exception {
@@ -284,7 +290,23 @@ public class DiscordUserClient {
     }
 
     public JsonNode listMessages(String token, String channelId, int limit) throws Exception {
-        return request(token, "GET", "/channels/" + channelId + "/messages?limit=" + Math.min(limit, 100), null);
+        return pollRequest(token, "/channels/" + channelId + "/messages?limit=" + Math.min(limit, 100));
+    }
+
+    /**
+     * 增量拉取：获取指定消息ID之后的新消息。
+     * 用于轮询场景，只拉取上次处理位置之后的新消息，避免重复拉取全量数据。
+     * 使用短超时（5s）和快速重试，防止线程池被阻塞。
+     *
+     * @param afterMsgId 上次已处理的最新消息ID（Discord snowflake ID）
+     * @param limit 最大消息数（最多100）
+     */
+    public JsonNode listMessagesAfter(String token, String channelId, String afterMsgId, int limit) throws Exception {
+        if (afterMsgId == null || afterMsgId.isBlank()) {
+            return listMessages(token, channelId, limit);
+        }
+        String path = "/channels/" + channelId + "/messages?after=" + afterMsgId + "&limit=" + Math.min(limit, 100);
+        return pollRequest(token, path);
     }
 
     /**
@@ -293,7 +315,51 @@ public class DiscordUserClient {
      */
     public JsonNode listMessagesBefore(String token, String channelId, String beforeMsgId, int limit) throws Exception {
         String path = "/channels/" + channelId + "/messages?limit=" + Math.min(limit, 100) + "&before=" + beforeMsgId;
-        return request(token, "GET", path, null);
+        return pollRequest(token, path);
+    }
+
+    /**
+     * 轮询专用请求：短超时（5s）、快速重试（500ms），防止阻塞轮询线程池。
+     * 仅用于消息拉取等对实时性要求高的场景。
+     */
+    private JsonNode pollRequest(String token, String path) throws Exception {
+        HttpRequest.Builder b = HttpRequest.newBuilder()
+                .uri(URI.create(BASE + path))
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", token)
+                .header("User-Agent", UA)
+                .header("Accept", "application/json");
+        b.method("GET", HttpRequest.BodyPublishers.noBody());
+
+        Exception lastException = null;
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                HttpResponse<String> resp = pollHttp.send(b.build(), HttpResponse.BodyHandlers.ofString());
+                int code = resp.statusCode();
+                if (code == 200 || code == 201) {
+                    return mapper.readTree(resp.body());
+                }
+                if (code == 429) {
+                    String retryAfter = resp.headers().firstValue("Retry-After").orElse("3");
+                    Thread.sleep(Long.parseLong(retryAfter) * 500L);  // 轮询用更短的等待
+                    continue;
+                }
+                // 4xx 错误（非429）不可重试
+                throw new DiscordUserApiException(code, resp.body());
+            } catch (DiscordUserApiException e) {
+                throw e;  // 业务错误直接抛出
+            } catch (Exception e) {
+                lastException = e;
+                if (attempt < 1) {
+                    Thread.sleep(500L);  // 轮询用500ms快速重试
+                }
+            }
+        }
+        log.warn("轮询请求失败: path={}, err={}", path,
+                lastException != null ? lastException.getMessage() : "unknown");
+        throw new RuntimeException("轮询API调用失败: " + path + " - "
+                + (lastException != null ? lastException.getClass().getSimpleName() + ": " + lastException.getMessage() : "timeout"),
+                lastException);
     }
 
     /**
@@ -323,9 +389,10 @@ public class DiscordUserClient {
      * 列出当前 USER 账号的所有 DM 频道（GET /users/@me/channels）。
      * 返回 JsonNode 数组，每个元素含 {id, type, recipients:[{id, username, global_name, avatar}]}。
      * 用于同步 DM 频道为 Conversation，使消息轮询器能拉取到好友私信。
+     * 使用短超时（5s）和快速重试，防止阻塞轮询主流程。
      */
     public JsonNode listDmChannels(String token) throws Exception {
-        return request(token, "GET", "/users/@me/channels", null);
+        return pollRequest(token, "/users/@me/channels");
     }
 
     /**

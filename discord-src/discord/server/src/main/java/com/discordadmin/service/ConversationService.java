@@ -489,9 +489,9 @@ public class ConversationService {
 
         String role = SecurityUtils.currentRole();
 
-        // 平台管理员：不返回会话（消息中心不授权）
+        // 平台管理员：可见所有会话
         if ("PLATFORM_ADMIN".equals(role)) {
-            return List.of();
+            return convs;
         }
 
         // 商户管理员：可见本商户的全部（已在queryConversations中按merchantId过滤）
@@ -509,9 +509,21 @@ public class ConversationService {
         boolean isPlatform = SecurityUtils.isPlatformAdmin();
         boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(SecurityUtils.currentRole());
 
-        // 平台管理员：不返回会话（消息中心不授权）
+        // 平台管理员：查看所有商户的会话（不按merchantId过滤）
         if (isPlatform) {
-            return List.of();
+            Long currentAgentId = SecurityUtils.currentAgentId();
+            if (accountId != null) {
+                if (stage != null && !stage.isBlank()) {
+                    Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
+                    return conversationRepository.findByDiscordAccount_IdAndStageOrderByLastMessageAtDesc(accountId, stageEnum);
+                }
+                return conversationRepository.findByDiscordAccount_IdOrderByLastMessageAtDesc(accountId);
+            }
+            if (stage != null && !stage.isBlank()) {
+                Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
+                return conversationRepository.findByStageOrderByLastMessageAtDesc(stageEnum);
+            }
+            return conversationRepository.findAllByOrderByLastMessageAtDesc();
         }
 
         Long currentAgentId = SecurityUtils.currentAgentId();
