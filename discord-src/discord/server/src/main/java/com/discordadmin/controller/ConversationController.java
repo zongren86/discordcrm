@@ -80,6 +80,12 @@ public class ConversationController {
                 request.audioDuration(), request.audioFileName(), getCurrentUsername());
     }
 
+    @PostMapping("/{id}/messages/gif")
+    public MessageDto sendGifMessage(@PathVariable Long id,
+                                     @RequestBody SendGifRequest request) {
+        return conversationService.sendGifMessage(id, request.gifUrl(), request.title());
+    }
+
     @PutMapping("/{id}/status")
     public ConversationDto updateStatus(@PathVariable Long id, @RequestBody UpdateStatusRequest request) {
         return conversationService.updateStatus(id, request.status());
@@ -237,4 +243,5 @@ public class ConversationController {
     public record ReactionRequest(String emoji, Boolean remove) {}
     public record TransferRequest(Long agentId, String reason) {}
     public record DetectLanguageRequest(String text) {}
+    public record SendGifRequest(String gifUrl, String title) {}
 }

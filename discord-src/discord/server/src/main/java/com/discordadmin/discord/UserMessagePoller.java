@@ -54,6 +54,9 @@ public class UserMessagePoller {
     /** 已处理的消息ID缓存（防止并发轮询重复处理），key=convId:msgId */
     private final Map<String, Boolean> processedMsgIds = new ConcurrentHashMap<>();
 
+    /** 正在轮询的会话集合（防止并发轮询同一个会话） */
+    private final Map<Long, Boolean> pollingSessions = new ConcurrentHashMap<>();
+
     /** 上次同步DM频道的时间戳（每个账号独立记录） */
     private final Map<Long, Long> lastSyncDmTimeByAccount = new ConcurrentHashMap<>();
 
@@ -78,8 +81,9 @@ public class UserMessagePoller {
     // 任务超时10秒（匹配HTTP 8s + 重试+缓冲）
     private static final long TASK_TIMEOUT_SECONDS = 10;
 
-    // 每轮最多提交的会话数（减小批次以提高轮询频率）
-    private static final int MAX_BATCH_SIZE = 30;
+    // 每轮最多提交的会话数（适中批次以提高轮询频率）
+    // 10个会话/批，每1秒执行一次，如果有100个会话，每个会话约10秒轮询一次
+    private static final int MAX_BATCH_SIZE = 10;
 
     public UserMessagePoller(DiscordAccountRepository accountRepository,
                               ConversationRepository conversationRepository,
@@ -284,32 +288,43 @@ public class UserMessagePoller {
      * @return 新增的消息数量
      */
     public int pollOneConversationInTx(Long accountId, Long conversationId) {
-        // Phase 1: 在短事务中加载数据（加载后立即释放连接）
-        LoadedConversationData data = transactionTemplate.execute(status -> {
-            DiscordAccount account = accountRepository.findById(accountId).orElse(null);
-            Conversation conv = conversationRepository.findById(conversationId).orElse(null);
-            if (account == null || conv == null) {
-                return null;
-            }
-            // 直接从Repository加载完整的DiscordUser（避免懒加载代理问题）
-            DiscordUser user = null;
-            if (conv.getDiscordUser() != null && conv.getDiscordUser().getId() != null) {
-                user = discordUserRepository.findById(conv.getDiscordUser().getId()).orElse(null);
-            }
-            String channelId = conv.getChannelId();
-            String lastMsgId = conv.getLastDiscordMessageId();
-            Long convId = conv.getId();
-            
-            return new LoadedConversationData(account, conv, user, channelId, lastMsgId, convId);
-        });
-
-        if (data == null) {
-            log.warn("轮询失败: account={}, conv={}", accountId, conversationId);
+        // 检查会话是否正在被轮询（防止并发轮询导致消息丢失或lastDiscordMessageId被覆盖）
+        if (pollingSessions.putIfAbsent(conversationId, Boolean.TRUE) != null) {
+            log.debug("会话 [convId={}] 正在被轮询，跳过本次轮询", conversationId);
             return 0;
         }
 
-        // Phase 2: HTTP调用（此时DB连接已释放）
-        return pollOneConversation(data);
+        try {
+            // Phase 1: 在短事务中加载数据（加载后立即释放连接）
+            LoadedConversationData data = transactionTemplate.execute(status -> {
+                DiscordAccount account = accountRepository.findById(accountId).orElse(null);
+                Conversation conv = conversationRepository.findById(conversationId).orElse(null);
+                if (account == null || conv == null) {
+                    return null;
+                }
+                // 直接从Repository加载完整的DiscordUser（避免懒加载代理问题）
+                DiscordUser user = null;
+                if (conv.getDiscordUser() != null && conv.getDiscordUser().getId() != null) {
+                    user = discordUserRepository.findById(conv.getDiscordUser().getId()).orElse(null);
+                }
+                String channelId = conv.getChannelId();
+                String lastMsgId = conv.getLastDiscordMessageId();
+                Long convId = conv.getId();
+                
+                return new LoadedConversationData(account, conv, user, channelId, lastMsgId, convId);
+            });
+
+            if (data == null) {
+                log.warn("轮询失败: account={}, conv={}", accountId, conversationId);
+                return 0;
+            }
+
+            // Phase 2: HTTP调用（此时DB连接已释放）
+            return pollOneConversation(data);
+        } finally {
+            // 释放会话级别锁
+            pollingSessions.remove(conversationId);
+        }
     }
 
     /**
@@ -429,12 +444,9 @@ public class UserMessagePoller {
         final int PAGE_SIZE = 20;
         final int MAX_INITIAL_PAGES = 2;
 
-        // 内存缓存更新为最新值（DB可能滞后）
-        String cacheKey = account.getId() + ":" + channelId;
-        String cachedId = lastMessageIdByChannel.get(cacheKey);
-        if (cachedId != null && !cachedId.isBlank()) {
-            lastKnownMsgId = cachedId;
-        }
+        // 注意：不再使用 lastMessageIdByChannel 缓存
+        // 因为缓存可能比数据库中的 lastDiscordMessageId 更新，导致增量拉取跳过消息
+        // 直接使用数据库中读取的 lastKnownMsgId
 
         // 构建增量拉取请求（HTTP调用，不在DB事务内）
         JsonNode pageMessages;
@@ -498,19 +510,18 @@ public class UserMessagePoller {
         int totalNew = 0;
         int totalPages = 1;
         String pageOldestId = null;
+        // 保存第一页的最新消息ID（Discord返回倒序，index 0是最新的）
+        // 注意：不要在翻页后覆盖这个值，因为翻页后pageMessages会变成更旧的页面
+        String newestId = null;
+        if (pageMessages.size() > 0) {
+            newestId = pageMessages.get(0).path("id").asText();
+        }
 
         // 处理第一页
         {
             ProcessResult pr = processFetchedMessages(account, conv, pageMessages, existingMsgIdSet);
             totalNew += pr.newCount;
             pageOldestId = pr.oldestMsgId;
-        }
-
-        // 更新缓存的最新消息ID（Discord返回倒序，index 0是最新的）
-        String newestId = null;
-        if (pageMessages.size() > 0) {
-            newestId = pageMessages.get(0).path("id").asText();
-            lastMessageIdByChannel.put(cacheKey, newestId);
         }
 
         // 历史回填翻页逻辑（仅首次拉取时需要，增量模式跳过）
@@ -535,13 +546,16 @@ public class UserMessagePoller {
                 totalPages++;
                 if (pr.newCount == 0) break;
                 pageOldestId = pr.oldestMsgId;
+                // 注意：这里不更新pageMessages用于newestId提取，因为newestId已在第一页提取
                 pageMessages = olderPage;
             }
         }
 
         // 会话更新 + lastDiscordMessageId持久化（在独立事务中执行）
         final int finalTotalNew = totalNew;
-        final String finalNewestId = newestId;
+        // 关键点：只有当实际保存了新消息时，才更新lastDiscordMessageId
+        // 如果保存失败（finalTotalNew=0），不应该推进游标，否则失败的消息会被永久跳过
+        final String finalNewestId = (totalNew > 0) ? newestId : null;
         final long elapsedMs = System.currentTimeMillis() - convStart;
 
         transactionTemplate.execute(status -> {
@@ -588,9 +602,10 @@ public class UserMessagePoller {
         String convKey = conv.getId() + ":";
 
         // ===== Phase 1: 解析所有消息，构建实体（无数据库操作） =====
-        record ParsedMessage(Message entity, boolean isOutbound, String content, Instant discordCreatedAt, boolean isVoice) {}
+        record ParsedMessage(Message entity, boolean isOutbound, String content, Instant discordCreatedAt, boolean isVoice, String processedKey) {}
         List<ParsedMessage> parsedList = new ArrayList<>();
         String oldestId = null;
+        List<String> processedKeys = new ArrayList<>(); // 记录已添加的processedKeys，用于失败时清理
 
         for (int i = 0; i < messages.size(); i++) {
             JsonNode msgNode = messages.get(i);
@@ -598,13 +613,15 @@ public class UserMessagePoller {
             if (msgId == null) continue;
             if (i == messages.size() - 1) oldestId = msgId;
 
-            // 内存去重
+            // 内存去重（从数据库加载的已保存消息ID）
             if (existingMsgIdSet.contains(msgId)) continue;
 
-            // 并发去重
+            // 并发去重 - 只在确认处理后才添加
             String processedKey = convKey + msgId;
             if (processedMsgIds.containsKey(processedKey)) continue;
+            // 先标记为正在处理，防止并发
             processedMsgIds.put(processedKey, Boolean.TRUE);
+            processedKeys.add(processedKey);
 
             JsonNode author = msgNode.path("author");
             String authorId = author.path("id").asText(null);
@@ -688,8 +705,7 @@ public class UserMessagePoller {
             msgEntity.setCreatedAt(discordCreatedAt);
             msgEntity.setTranslatedContent(content);
 
-            parsedList.add(new ParsedMessage(msgEntity, isOutbound, content, discordCreatedAt, "voice".equals(resolvedMessageType)));
-            existingMsgIdSet.add(msgId);
+            parsedList.add(new ParsedMessage(msgEntity, isOutbound, content, discordCreatedAt, "voice".equals(resolvedMessageType), processedKey));
         }
 
         if (parsedList.isEmpty()) {
@@ -697,14 +713,29 @@ public class UserMessagePoller {
         }
 
         // ===== Phase 2: 批量保存（单事务，共享一个数据库连接） =====
-        List<Message> savedList = transactionTemplate.execute(status -> {
-            List<Message> result = new ArrayList<>();
-            for (ParsedMessage pm : parsedList) {
-                Message saved = messageRepository.save(pm.entity());
-                result.add(saved);
+        // 关键点：先添加到processedMsgIds防止并发，保存成功后再添加到existingMsgIdSet
+        // 如果保存失败，必须清理processedMsgIds中的标记，否则消息会被永久跳过
+        List<Message> savedList;
+        try {
+            savedList = transactionTemplate.execute(status -> {
+                List<Message> result = new ArrayList<>();
+                for (ParsedMessage pm : parsedList) {
+                    Message saved = messageRepository.save(pm.entity());
+                    result.add(saved);
+                    // 保存成功后才添加到existingMsgIdSet
+                    existingMsgIdSet.add(pm.entity().getDiscordMessageId());
+                }
+                return result;
+            });
+        } catch (Exception e) {
+            // 保存失败，清理processedMsgIds中的标记，让下次轮询可以重试
+            log.warn("消息批量保存失败，清理处理标记: conv={}, error={}", conv.getId(), e.getMessage());
+            for (String key : processedKeys) {
+                processedMsgIds.remove(key);
             }
-            return result;
-        });
+            // 清理existingMsgIdSet中已添加的ID（如果有的话）
+            return new ProcessResult(0, oldestId);
+        }
 
         // ===== Phase 3: 先推送前端（立即展示原文），再异步触发翻译/ASR =====
         int newCount = 0;

@@ -64,6 +64,10 @@ public class Message {
     @Column(name = "message_type", length = 16)
     private String messageType;
 
+    /** GIF 消息的 URL（上传到 Discord 后的 CDN 链接或原始 URL） */
+    @Column(name = "gif_url", length = 2048)
+    private String gifUrl;
+
     @Column(name = "audio_url", length = 512)
     private String audioUrl;
 

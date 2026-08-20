@@ -29,15 +29,29 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.discordadmin.asr.SpeechRecognitionService;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class MessageService {
 
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(MessageService.class);
+
+    // GIF/媒体文件发送相关常量
+    private static final List<String> DIRECT_MEDIA_EXTENSIONS = List.of(".gif", ".webm", ".mp4", ".mov", ".webp", ".png", ".jpg", ".jpeg");
+    private static final List<String> GIF_SHARE_DOMAINS = List.of("klipy.com", "tenor.com", "giphy.com", "imgur.com", "futuri.io");
+    private static final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .followRedirects(HttpClient.Redirect.NORMAL)
+            .build();
 
     @Autowired @Lazy
     private MessageService self;
@@ -1059,6 +1073,287 @@ public class MessageService {
         String url = atts.get(0).path("url").asText(null);
         if (url != null) return url;
         return atts.get(0).path("proxy_url").asText(null);
+    }
+
+    // ==================== GIF 发送相关方法 ====================
+
+    /**
+     * 发送 GIF 消息（智能处理：直接URL发送 or 下载后上传）
+     * 确保对方 Discord 客户端能正常显示动画
+     */
+    @Transactional
+    public Message sendGifMessage(Long conversationId, String gifUrl, String title) {
+        if (gifUrl == null || gifUrl.isBlank()) {
+            throw new IllegalArgumentException("GIF URL 不能为空");
+        }
+
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+
+        DiscordAccount account = discordAccountRepository.findById(
+                        conversation.getDiscordAccount().getId())
+                .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
+
+        String discordMessageId;
+        String discordAttachmentUrl;
+        String sentContent;
+
+        // 判断 URL 类型：直接媒体URL 还是 分享链接
+        if (isDirectMediaUrl(gifUrl)) {
+            // 直接URL：直接发送，Discord 会自动 embedding 显示
+            log.info("发送直接媒体URL: {}", gifUrl);
+            try {
+                discordMessageId = discordUserClient.sendMessage(
+                        account.getToken(), conversation.getChannelId(), gifUrl);
+                discordAttachmentUrl = gifUrl;
+                sentContent = gifUrl;
+            } catch (Exception e) {
+                log.warn("直接发送URL失败，尝试下载上传: {}", e.getMessage());
+                // 降级：下载后上传
+                var result = downloadAndUploadGif(account, conversation, gifUrl, title);
+                discordMessageId = result.messageId();
+                discordAttachmentUrl = result.attachmentUrl();
+                sentContent = result.sentContent();
+            }
+        } else {
+            // 分享链接：下载后作为附件上传
+            log.info("下载并上传GIF: {}", gifUrl);
+            var result = downloadAndUploadGif(account, conversation, gifUrl, title);
+            discordMessageId = result.messageId();
+            discordAttachmentUrl = result.attachmentUrl();
+            sentContent = result.sentContent();
+        }
+
+        // 保存消息记录
+        Message message = new Message();
+        message.setConversation(conversation);
+        message.setDirection(Message.Direction.OUTBOUND);
+        message.setSenderName(account.getName());
+        message.setContent("[GIF] " + (title != null ? title : gifUrl));
+        message.setMessageType("gif");
+        message.setGifUrl(discordAttachmentUrl);
+        Instant now = Instant.now();
+        message.setDiscordCreatedAt(now);
+        message.setCreatedAt(now);
+        if (discordMessageId != null) {
+            message.setDiscordMessageId(discordMessageId);
+        }
+
+        Message saved = messageRepository.save(message);
+
+        // 推送 WebSocket 消息
+        messagingTemplate.convertAndSend("/topic/messages", Map.of(
+                "type", "message",
+                "conversationId", conversationId,
+                "messageId", saved.getId(),
+                "data", saved
+        ));
+
+        log.info("GIF 消息发送成功: conversationId={}, gifUrl={}, discordMessageId={}",
+                conversationId, gifUrl, discordMessageId);
+
+        return saved;
+    }
+
+    /**
+     * 判断 URL 是否为直接媒体链接（Discord 可直接 embedding）
+     */
+    public boolean isDirectMediaUrl(String url) {
+        if (url == null || url.isBlank()) return false;
+        String lowerUrl = url.toLowerCase();
+
+        // 检查是否以媒体扩展名结尾（忽略查询参数）
+        for (String ext : DIRECT_MEDIA_EXTENSIONS) {
+            int queryIdx = lowerUrl.indexOf('?');
+            String pathPart = queryIdx > 0 ? lowerUrl.substring(0, queryIdx) : lowerUrl;
+            if (pathPart.endsWith(ext)) {
+                return true;
+            }
+        }
+
+        // 检查是否是已知的分享域名
+        for (String domain : GIF_SHARE_DOMAINS) {
+            if (lowerUrl.contains(domain)) {
+                return false; // 分享链接需要下载
+            }
+        }
+
+        // 检查是否包含其他常见图片CDN特征
+        if (lowerUrl.contains("cdn.discordapp.com") ||
+                lowerUrl.contains("media.discordapp.net") ||
+                lowerUrl.contains("i.imgur.com") ||
+                lowerUrl.contains("cdn.tenor.com") ||
+                lowerUrl.contains("media.giphy.com")) {
+            return true;
+        }
+
+        // 默认为分享链接，需要下载
+        return false;
+    }
+
+    /**
+     * 下载 GIF 文件并上传到 Discord
+     */
+    private GifSendResult downloadAndUploadGif(DiscordAccount account, Conversation conversation,
+                                                 String gifUrl, String title) {
+        try {
+            // 1. 下载 GIF 文件
+            byte[] gifData = downloadGifFile(gifUrl);
+            if (gifData == null || gifData.length == 0) {
+                throw new IllegalStateException("GIF 文件下载失败");
+            }
+
+            // 2. 确定文件名和 MIME 类型
+            String fileName = determineFileName(gifUrl, title);
+            String mimeType = determineMimeType(gifUrl, gifData);
+
+            // 3. 上传到 Discord
+            JsonNode resp = discordUserClient.sendMessageWithFile(
+                    account.getToken(),
+                    conversation.getChannelId(),
+                    gifUrl, // content 保留原始 URL
+                    fileName,
+                    gifData,
+                    mimeType,
+                    null,
+                    null
+            );
+
+            String messageId = resp.path("id").asText(null);
+            String attachmentUrl = extractAttachmentUrl(resp);
+
+            return new GifSendResult(messageId, attachmentUrl, gifUrl);
+
+        } catch (Exception e) {
+            log.error("GIF 下载上传失败: {}", e.getMessage(), e);
+            // 降级：直接发送 URL
+            log.warn("降级为直接发送URL");
+            try {
+                String msgId = discordUserClient.sendMessage(
+                        account.getToken(), conversation.getChannelId(), gifUrl);
+                return new GifSendResult(msgId, gifUrl, gifUrl);
+            } catch (Exception ex) {
+                throw new IllegalStateException("GIF 发送失败: " + ex.getMessage(), ex);
+            }
+        }
+    }
+
+    /**
+     * 从 URL 下载 GIF 文件
+     */
+    private byte[] downloadGifFile(String url) {
+        try {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("Accept", "image/gif, image/webp, video/webm, video/mp4, */*")
+                    .GET()
+                    .build();
+
+            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                byte[] body = response.body();
+                if (body != null && body.length > 0) {
+                    log.info("GIF 下载成功: url={}, size={}bytes", url, body.length);
+                    return body;
+                }
+            }
+
+            log.warn("GIF 下载失败: url={}, status={}", url, response.statusCode());
+            return null;
+
+        } catch (Exception e) {
+            log.error("GIF 下载异常: url={}, error={}", url, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 根据 URL 确定文件名
+     */
+    private String determineFileName(String url, String title) {
+        // 尝试从 URL 提取文件名
+        int lastSlash = Math.max(url.lastIndexOf('/'), url.lastIndexOf('\\'));
+        int queryIdx = url.indexOf('?');
+        String namePart = queryIdx > 0 ? url.substring(lastSlash + 1, queryIdx) : url.substring(lastSlash + 1);
+
+        // 验证文件名是否合法
+        if (namePart != null && !namePart.isBlank() && namePart.length() < 100) {
+            // 确保有扩展名
+            if (!namePart.contains(".")) {
+                namePart += ".gif";
+            }
+            return namePart;
+        }
+
+        // 使用标题或默认名称
+        String baseName = (title != null && !title.isBlank()) ? title : "gif";
+        // 清理文件名
+        baseName = baseName.replaceAll("[^a-zA-Z0-9_\\-\\u4e00-\\u9fa5]", "_");
+        if (baseName.length() > 50) {
+            baseName = baseName.substring(0, 50);
+        }
+        return baseName + ".gif";
+    }
+
+    /**
+     * 确定 MIME 类型
+     */
+    private String determineMimeType(String url, byte[] data) {
+        String lowerUrl = url.toLowerCase();
+
+        // 优先根据 URL 扩展名判断
+        if (lowerUrl.endsWith(".gif") || lowerUrl.contains(".gif?")) {
+            return "image/gif";
+        }
+        if (lowerUrl.endsWith(".webm") || lowerUrl.contains(".webm?")) {
+            return "video/webm";
+        }
+        if (lowerUrl.endsWith(".mp4") || lowerUrl.contains(".mp4?")) {
+            return "video/mp4";
+        }
+        if (lowerUrl.endsWith(".mov") || lowerUrl.contains(".mov?")) {
+            return "video/quicktime";
+        }
+        if (lowerUrl.endsWith(".webp") || lowerUrl.contains(".webp?")) {
+            return "image/webp";
+        }
+
+        // 根据文件头判断
+        if (data != null && data.length >= 4) {
+            // GIF: GIF87a or GIF89a
+            if (data[0] == 'G' && data[1] == 'I' && data[2] == 'F') {
+                return "image/gif";
+            }
+            // WebM: RIFF....WEBM
+            if (data[0] == 'R' && data[1] == 'I' && data[2] == 'F' && data[3] == 'F' &&
+                    data.length >= 12 && data[8] == 'W' && data[9] == 'E' && data[10] == 'B' && data[11] == 'M') {
+                return "video/webm";
+            }
+            // MP4: ftyp box
+            if (data[4] == 'f' && data[5] == 't' && data[6] == 'y' && data[7] == 'p') {
+                return "video/mp4";
+            }
+            // PNG: \x89PNG
+            if (data[0] == (byte) 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G') {
+                return "image/png";
+            }
+            // JPEG: FF D8 FF
+            if (data[0] == (byte) 0xFF && data[1] == (byte) 0xD8 && data[2] == (byte) 0xFF) {
+                return "image/jpeg";
+            }
+        }
+
+        // 默认返回 GIF
+        return "image/gif";
+    }
+
+    /**
+     * GIF 发送结果记录
+     */
+    private record GifSendResult(String messageId, String attachmentUrl, String sentContent) {
     }
 
 }

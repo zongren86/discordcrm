@@ -106,57 +106,128 @@ public class ProxyController {
                         .body("域名不在白名单中".getBytes());
             }
 
-            // 3. 构建请求 - 使用真实浏览器 User-Agent 避免被拦截
+            // 3. 构建请求 - 使用多组浏览器特征轮流使用
+            String[] userAgents = {
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15"
+            };
+            String userAgent = userAgents[(int)(System.currentTimeMillis() % userAgents.length)];
+
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(uri)
                     .timeout(Duration.ofSeconds(15))
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .header("User-Agent", userAgent)
                     .header("Accept", "image/gif,image/webp,image/apng,image/*,video/mp4,video/webm,*/*")
                     .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+                    .header("Sec-Ch-Ua", "\"Not_A Brand\";v=\"8\", \"Chromium\";v=\"120\", \"Google Chrome\";v=\"120\"")
+                    .header("Sec-Ch-Ua-Mobile", "?0")
+                    .header("Sec-Ch-Ua-Platform", "\"Windows\"")
+                    .header("Sec-Fetch-Dest", "image")
+                    .header("Sec-Fetch-Mode", "no-cors")
+                    .header("Sec-Fetch-Site", "cross-site")
                     .header("Referer", url)
                     .GET()
                     .build();
 
-            // 4. 执行请求
-            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            // 4. 执行请求（带重试机制）
+            HttpResponse<byte[]> response = null;
+            int maxRetries = 2;
+            for (int attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                    
+                    // 如果成功获取内容，立即返回
+                    int statusCode = response.statusCode();
+                    String contentType = response.headers().firstValue("Content-Type").orElse("application/octet-stream");
+                    byte[] body = response.body();
 
-            // 5. 检查是否被 Cloudflare 等拦截
-            int statusCode = response.statusCode();
-            String contentType = response.headers().firstValue("Content-Type").orElse("application/octet-stream");
-            byte[] body = response.body();
+                    // 如果是图片/GIF/视频内容，即使状态码是403，也尝试返回（有些CDN会返回内容但状态码是403）
+                    if (statusCode == 200 || statusCode == 206 || 
+                        (statusCode == 403 && isMediaContent(contentType, body))) {
+                        
+                        // 检测 Cloudflare 拦截页面
+                        if (statusCode == 403 && contentType.contains("text/html") && isCloudflareBlocked(body)) {
+                            log.warn("代理请求被 Cloudflare 拦截：{}", url);
+                            // 对于 Cloudflare 拦截，尝试用不同的 User-Agent 重试
+                            if (attempt < maxRetries - 1) {
+                                try { Thread.sleep(500); } catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                continue;
+                            }
+                            // 返回 424 让前端显示原始 URL 链接
+                            return ResponseEntity.status(424)
+                                    .header("X-Proxy-Error", "cloudflare-blocked")
+                                    .body("资源被Cloudflare防护拦截".getBytes());
+                        }
 
-            // 检测 Cloudflare 拦截页面
-            if (statusCode == 403 && contentType.contains("text/html") && isCloudflareBlocked(body)) {
-                log.warn("代理请求被 Cloudflare 拦截：{}", url);
-                // 返回 424 Failed Dependency 让前端知道需要回退
-                return ResponseEntity.status(424)
-                        .header("X-Proxy-Error", "cloudflare-blocked")
-                        .body("资源被Cloudflare防护拦截".getBytes());
+                        // 成功获取内容
+                        HttpHeaders headers = new HttpHeaders();
+                        headers.setContentType(MediaType.parseMediaType(contentType));
+                        headers.setCacheControl("public, max-age=3600");
+                        headers.set("Accept-Ranges", "none");
+
+                        log.debug("代理请求成功：{} -> {} ({} bytes)", url, contentType, body.length);
+                        return new ResponseEntity<>(body, headers, statusCode);
+                    }
+                } catch (Exception e) {
+                    log.debug("代理请求尝试 {} 失败：{} - {}", attempt + 1, url, e.getMessage());
+                    if (attempt < maxRetries - 1) {
+                        try { Thread.sleep(300); } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                }
             }
 
-            // 6. 构建响应
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.parseMediaType(contentType));
-            
-            // 设置缓存控制，减少重复请求
-            headers.setCacheControl("public, max-age=3600");
-            
-            // 对 GIF/视频禁用 Range 请求支持（避免浏览器缓存不完整）
-            headers.set("Accept-Ranges", "none");
-
-            log.debug("代理请求成功：{} -> {} ({} bytes)", url, contentType, body.length);
-
-            return new ResponseEntity<>(body, headers, statusCode);
-
-        } catch (IOException | InterruptedException e) {
-            log.error("代理请求失败：{} - {}", url, e.getMessage());
+            // 所有重试都失败了
+            log.warn("代理请求最终失败：{}", url);
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                    .body(("代理请求失败: " + e.getMessage()).getBytes());
+                    .body(("代理请求失败").getBytes());
+
         } catch (Exception e) {
             log.error("代理请求异常：{} - {}", url, e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(("请求异常: " + e.getMessage()).getBytes());
         }
+    }
+
+    /**
+     * 检查内容是否为媒体资源（即使状态码是403也可能返回有效内容）
+     */
+    private boolean isMediaContent(String contentType, byte[] body) {
+        if (contentType == null) return false;
+        String lowerContentType = contentType.toLowerCase();
+        // 检查是否为媒体类型
+        if (lowerContentType.startsWith("image/") || 
+            lowerContentType.startsWith("video/") || 
+            lowerContentType.contains("gif") ||
+            lowerContentType.contains("mp4") ||
+            lowerContentType.contains("webm")) {
+            return true;
+        }
+        // 检查内容是否为二进制（不是HTML）
+        if (body != null && body.length > 0) {
+            // 如果内容不是HTML，可能是有效的媒体资源
+            String contentPreview = new String(body, 0, Math.min(body.length, 1000));
+            if (!contentPreview.toLowerCase().contains("<html") && 
+                !contentPreview.toLowerCase().contains("<!doctype")) {
+                // 可能是有效的二进制内容
+                byte firstByte = body[0];
+                // GIF: 47 49 46 ("GIF")
+                // PNG: 89 50 4e 47
+                // JPEG: ff d8 ff
+                // MP4: 00 00 00 (with ftyp)
+                // WebM: 1a 45 df a3
+                if (firstByte == 0x47 || firstByte == 0x89 || firstByte == (byte)0xFF || 
+                    firstByte == 0x1a || firstByte == 0x00) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

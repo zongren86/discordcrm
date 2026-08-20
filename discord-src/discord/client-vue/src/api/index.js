@@ -121,6 +121,12 @@ export function sendMessage(conversationId, content, targetLanguage, extra = {})
   if (extra.audioFileName) body.audioFileName = extra.audioFileName
   return http.post('/conversations/' + conversationId + '/messages', body)
 }
+
+/** 发送 GIF 消息（智能处理：直接URL发送或下载后上传） */
+export function sendGifMessage(conversationId, gifUrl, title) {
+  return http.post('/conversations/' + conversationId + '/messages/gif', { gifUrl, title })
+}
+
 export function openConversation(accountId, discordUserId) {
   return http.post('/conversations/open-dm', {
     accountId,

@@ -15,7 +15,8 @@ public class MessageDtos {
                               String reactions, Instant editedAt, Boolean isDeleted,
                               String messageType, String audioUrl, Integer audioDuration, String audioMimeType,
                               String audioData,
-                              String asrText, String asrTranslated, String asrLanguage, String asrStatus, String asrError) {
+                              String asrText, String asrTranslated, String asrLanguage, String asrStatus, String asrError,
+                              String gifUrl) {
 
         public static MessageDto from(Message m) {
             String avatarUrl = resolveAvatarUrl(m);
@@ -46,7 +47,8 @@ public class MessageDtos {
                     m.getAsrTranslated(),
                     m.getAsrLanguage(),
                     m.getAsrStatus(),
-                    m.getAsrError()
+                    m.getAsrError(),
+                    m.getGifUrl()
             );
         }
 
@@ -79,7 +81,8 @@ public class MessageDtos {
                     m.getAsrTranslated(),
                     m.getAsrLanguage(),
                     m.getAsrStatus(),
-                    m.getAsrError()
+                    m.getAsrError(),
+                    m.getGifUrl()
             );
         }
 

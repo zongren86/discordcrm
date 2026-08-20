@@ -651,6 +651,11 @@ public class ConversationService {
                 messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName));
     }
 
+    public MessageDto sendGifMessage(Long id, String gifUrl, String title) {
+        loadOwnedConversation(id);
+        return MessageDto.from(messageService.sendGifMessage(id, gifUrl, title));
+    }
+
     public ConversationDto updateStatus(Long id, String status) {
         Conversation conversation = loadOwnedConversation(id);
         conversation.setStatus(Conversation.ConversationStatus.valueOf(status));

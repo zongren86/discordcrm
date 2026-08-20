@@ -919,7 +919,8 @@ import {
   updateMessageTemplate, deleteMessageTemplate,
   transcribeVoiceAsr, translateAsrText,
   getSupportedLanguages, getAISettingByFeature,
-  listGifFavorites, addGifFavorite, removeGifFavorite, checkGifFavorited, normalizeGifUrl as normalizeGifUrlApi
+  listGifFavorites, addGifFavorite, removeGifFavorite, checkGifFavorited, normalizeGifUrl as normalizeGifUrlApi,
+  sendGifMessage as sendGifMessageApi
 } from '@/api'
 
 const auth = useAuthStore()
@@ -1105,7 +1106,6 @@ const quickStageOptions = [
 const emojiList = ['😀','😂','🤣','😊','😍','😘','🥰','😎','🤔','😴','🤗','😇','😉','😋','🤩','😏','😒','😞','😔','😟','😕','🙁','☹️','😣','😖','😫','😩','🥺','😢','😭','😤','😠','😡','🤬','🤯','😳','🥵','🥶','😱','😨','😰','😥','😓','🤤','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐']
 const quickEmojis = ['👍','❤️','😂','🎉','🔥','💯','👍','🙏','💪','🚀','✨','😅']
 
-const gifFavorites = ref([])
 const gifHot = ref([])
 const systemStickers = ref([])
 const favoriteStickers = ref([])
@@ -1381,6 +1381,11 @@ function displayContentOf(msg) {
 function isGifMsg(msg) {
   if (!msg) return false
   
+  // 优先检查消息类型和gifUrl字段
+  if (msg.messageType === 'gif' && msg.gifUrl) {
+    return true
+  }
+  
   // 先检查附件中是否有GIF/动画视频
   const atts = parseAttachments(msg)
   if (atts.length > 0) {
@@ -1406,6 +1411,11 @@ function isGifMsg(msg) {
 
 function gifUrlOf(msg) {
   if (!msg) return ''
+  
+  // 优先使用消息的gifUrl字段（后端上传后的CDN链接）
+  if (msg.gifUrl) {
+    return normalizeGifUrl(msg.gifUrl)
+  }
   
   // 优先从附件中获取GIF/动画URL
   const atts = parseAttachments(msg)
@@ -1955,11 +1965,12 @@ async function sendGifFromFavorite(favorite) {
   if (!favorite || !conversations.currentConversationId) return
   
   try {
-    // 直接发送 URL，Discord 客户端会自动识别并展开动画
-    await sendMessage(favorite.gifUrl)
+    // 使用专门的 GIF 发送 API，后端会智能处理（直接URL或下载上传）
+    await sendGifMessageApi(conversations.currentConversationId, favorite.gifUrl, favorite.title)
     ElMessage.success('已发送')
     gifPickerVisible.value = false  // 关闭弹窗
   } catch (e) {
+    console.error('发送GIF失败:', e)
     ElMessage.error('发送失败')
   }
 }
