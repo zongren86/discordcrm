@@ -408,7 +408,33 @@
                   </div>
 
                   <!-- GIF消息渲染 -->
-                  <div v-if="!msg.isDeleted && isGifMsg(msg)" class="msg-gif-wrap">
+                  <div v-if="!msg.isDeleted && isGifMsg(msg)" class="msg-gif-wrap" @mouseenter="hoveredGifMsgId = msg.id" @mouseleave="hoveredGifMsgId = null">
+                    <!-- GIF 操作按钮（收藏/下载） -->
+                    <div v-if="hoveredGifMsgId === msg.id && !isGifFavorited(gifUrlOf(msg))" class="msg-gif-actions">
+                      <el-tooltip content="收藏" placement="top">
+                        <button class="msg-gif-btn" @click="handleFavoriteGif(msg)" title="收藏">
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                        </button>
+                      </el-tooltip>
+                      <el-tooltip content="下载" placement="top">
+                        <button class="msg-gif-btn" @click="handleDownloadGif(msg)" title="下载">
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        </button>
+                      </el-tooltip>
+                    </div>
+                    <div v-else-if="hoveredGifMsgId === msg.id && isGifFavorited(gifUrlOf(msg))" class="msg-gif-actions">
+                      <el-tooltip content="已收藏，点击取消" placement="top">
+                        <button class="msg-gif-btn favorited" @click="handleUnfavoriteGif(msg)" title="取消收藏">
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                        </button>
+                      </el-tooltip>
+                      <el-tooltip content="下载" placement="top">
+                        <button class="msg-gif-btn" @click="handleDownloadGif(msg)" title="下载">
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        </button>
+                      </el-tooltip>
+                    </div>
+                    
                     <!-- 视频格式的GIF（Discord动画常被转为MP4/WebM） -->
                     <video v-if="isVideoGif(gifUrlOf(msg))" 
                            :src="proxiedUrl(gifUrlOf(msg))" 
@@ -731,6 +757,9 @@
             <el-input v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
               :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
               resize="none" @keydown="onInputKeydown" class="msg-input" />
+            <button v-if="!isEditing && !recordedAudioData && !isRecording" class="gif-picker-btn" @click="gifPickerVisible = true" title="选择 GIF">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><text x="12" y="16" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">GIF</text></svg>
+            </button>
             <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
               :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
               @click="send">
@@ -838,6 +867,33 @@
       </template>
     </aside>
   </div>
+
+  <!-- GIF 选择器弹窗 -->
+  <el-dialog v-model="gifPickerVisible" title="选择 GIF" width="500px" :close-on-click-modal="true">
+    <div class="gif-picker">
+      <!-- Tab 切换 -->
+      <el-tabs v-model="gifPickerTab">
+        <el-tab-pane label="收藏" name="favorites">
+          <div v-if="gifFavorites.length === 0" class="gif-empty">
+            <p>暂无收藏的 GIF</p>
+            <p class="gif-empty-hint">在聊天中 hover GIF 消息，点击❤️即可收藏</p>
+          </div>
+          <div v-else class="gif-grid">
+            <div v-for="fav in gifFavorites" :key="fav.id" class="gif-item" 
+                 @click="sendGifFromFavorite(fav)">
+              <img :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'GIF'" 
+                   class="gif-thumb" @error="onGifError" />
+              <div class="gif-item-actions">
+                <button class="gif-item-btn" @click.stop="handleUnfavoriteById(fav.id)" title="取消收藏">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -862,7 +918,8 @@ import {
   listMessageTemplates, getTemplateCategories, createMessageTemplate,
   updateMessageTemplate, deleteMessageTemplate,
   transcribeVoiceAsr, translateAsrText,
-  getSupportedLanguages, getAISettingByFeature
+  getSupportedLanguages, getAISettingByFeature,
+  listGifFavorites, addGifFavorite, removeGifFavorite, checkGifFavorited, normalizeGifUrl as normalizeGifUrlApi
 } from '@/api'
 
 const auth = useAuthStore()
@@ -880,6 +937,19 @@ const pinnedOnly = ref(false)
 const dateRange = ref(null)
 const tempDateRange = ref(null)
 const dateQuick = ref('')
+
+// GIF 收藏相关
+const hoveredGifMsgId = ref(null)  // 当前鼠标悬停的 GIF 消息 ID
+const gifFavorites = ref([])  // 当前账号的 GIF 收藏列表
+const gifFavoritedUrls = ref(new Set())  // 已收藏的 GIF URL 集合
+const gifPickerVisible = ref(false)  // GIF 选择器弹窗可见性
+const gifPickerTab = ref('favorites')  // GIF 选择器当前 Tab
+
+// 当前会话对应的 Discord 账号 ID
+const currentAccountId = computed(() => {
+  if (!conversations.currentConversation) return null
+  return conversations.currentConversation.discordAccountId
+})
 const datePopoverVisible = ref(false)
 
 // 监听弹窗打开/关闭，初始化tempDateRange
@@ -1345,12 +1415,31 @@ function gifUrlOf(msg) {
       return /\.(gif|webp|mp4|webm|mov)(\?|#|$)/i.test(url) ||
              /gif|imgur|tenor|giphy/i.test(url)
     })
-    if (gifAtt) return gifAtt.url
+    if (gifAtt) return normalizeGifUrl(gifAtt.url)
   }
   
   // 兜底：使用消息内容作为URL
   if (!msg?.content) return ''
-  return msg.content.trim()
+  return normalizeGifUrl(msg.content.trim())
+}
+
+/**
+ * 规范化 GIF URL
+ * 某些 GIF 分享链接（如 tenor.com/view/xxx）需要添加 .gif 后缀才能获取实际资源
+ */
+function normalizeGifUrl(url) {
+  if (!url) return url
+  
+  try {
+    // 处理 tenor.com 分享链接：https://tenor.com/view/xxx → https://tenor.com/view/xxx.gif
+    if (/tenor\.com\/view\//i.test(url) && !/\.(gif|mp4|webm|webp)(\?|#|$)/i.test(url)) {
+      return url + '.gif'
+    }
+  } catch (e) {
+    // URL 解析失败，返回原始 URL
+  }
+  
+  return url
 }
 
 /** 需要代理的外部 GIF/动画域名（浏览器直接加载会被 CORS 阻止） */
@@ -1760,6 +1849,134 @@ function onGifError(e) {
   el.parentNode?.appendChild(fallback)
 }
 
+// ============ GIF 收藏功能 ============
+
+/** 加载当前账号的 GIF 收藏列表 */
+async function loadGifFavorites() {
+  if (!currentAccountId.value) return
+  try {
+    const res = await listGifFavorites(currentAccountId.value)
+    gifFavorites.value = res || []
+    gifFavoritedUrls.value = new Set(gifFavorites.value.map(f => f.gifUrl))
+  } catch (e) {
+    console.error('加载 GIF 收藏失败:', e)
+  }
+}
+
+/** 检查 GIF 是否已收藏 */
+function isGifFavorited(url) {
+  if (!url) return false
+  // 使用规范化后的 URL 进行比较
+  const normalized = normalizeGifUrlLocal(url)
+  return gifFavoritedUrls.value.has(normalized) || gifFavoritedUrls.value.has(url)
+}
+
+/** 本地 URL 规范化（与后端逻辑一致） */
+function normalizeGifUrlLocal(url) {
+  if (!url) return url
+  // tenor.com/view/xxx → tenor.com/view/xxx.gif
+  if (/tenor\.com\/view\//i.test(url) && !/\.(gif|mp4|webm|webp)(\?|#|$)/i.test(url)) {
+    return url + '.gif'
+  }
+  return url
+}
+
+/** 收藏 GIF */
+async function handleFavoriteGif(msg) {
+  if (!currentAccountId.value) {
+    ElMessage.warning('请先选择一个账号')
+    return
+  }
+  const url = gifUrlOf(msg)
+  if (!url) return
+  
+  try {
+    const normalizedUrl = normalizeGifUrlLocal(url)
+    await addGifFavorite(currentAccountId.value, normalizedUrl, '')
+    ElMessage.success('已收藏')
+    await loadGifFavorites()
+  } catch (e) {
+    ElMessage.error('收藏失败')
+  }
+}
+
+/** 取消收藏 GIF */
+async function handleUnfavoriteGif(msg) {
+  if (!currentAccountId.value) return
+  const url = gifUrlOf(msg)
+  if (!url) return
+  
+  // 找到对应的收藏记录
+  const targetUrl = normalizeGifUrlLocal(url)
+  const favorite = gifFavorites.value.find(f => f.gifUrl === targetUrl || f.gifUrl === url)
+  if (!favorite) return
+  
+  try {
+    await removeGifFavorite(favorite.id, currentAccountId.value)
+    ElMessage.success('已取消收藏')
+    await loadGifFavorites()
+  } catch (e) {
+    ElMessage.error('取消收藏失败')
+  }
+}
+
+/** 下载 GIF */
+async function handleDownloadGif(msg) {
+  const url = gifUrlOf(msg)
+  if (!url) return
+  
+  try {
+    // 使用代理 URL 下载（绕过 CORS）
+    const proxied = proxiedUrl(url)
+    const response = await fetch(proxied)
+    const blob = await response.blob()
+    
+    // 创建下载链接
+    const downloadUrl = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = downloadUrl
+    a.download = `gif_${Date.now()}.gif`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(downloadUrl)
+    
+    ElMessage.success('下载成功')
+  } catch (e) {
+    console.error('下载失败:', e)
+    // 回退：直接在新标签页打开
+    window.open(url, '_blank')
+    ElMessage.warning('无法直接下载，已在新标签页打开')
+  }
+}
+
+/** 发送收藏的 GIF */
+async function sendGifFromFavorite(favorite) {
+  if (!favorite || !conversations.currentConversationId) return
+  
+  try {
+    // 直接发送 URL，Discord 客户端会自动识别并展开动画
+    await sendMessage(favorite.gifUrl)
+    ElMessage.success('已发送')
+    gifPickerVisible.value = false  // 关闭弹窗
+  } catch (e) {
+    ElMessage.error('发送失败')
+  }
+}
+
+/** 按 ID 取消收藏 */
+async function handleUnfavoriteById(id) {
+  if (!currentAccountId.value) return
+  
+  try {
+    await removeGifFavorite(id, currentAccountId.value)
+    ElMessage.success('已取消收藏')
+    await loadGifFavorites()
+  } catch (e) {
+    ElMessage.error('取消收藏失败')
+  }
+}
+
 async function deleteMsg(msg) {
   try {
     await ElMessageBox.confirm('确定删除这条消息？', '提示', { type: 'warning' })
@@ -2150,6 +2367,8 @@ watch(() => conversations.currentConversationId, async (newId, oldId) => {
   }
   lastCount = (conversations.currentMessages || []).length
   nextTick().then(() => autoTriggerPendingAsr())
+  // 加载当前账号的 GIF 收藏
+  await loadGifFavorites()
 })
 
 // 轮询或 WebSocket 更新消息后，自动触发未处理的语音消息 ASR
@@ -3792,6 +4011,145 @@ onUnmounted(() => {
   margin-top: 4px;
   display: flex;
   justify-content: flex-start;
+  position: relative;
+}
+
+.msg-gif-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+  padding: 4px;
+}
+
+.msg-gif-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #333;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.msg-gif-btn:hover {
+  background: #fff;
+  transform: scale(1.1);
+}
+
+.msg-gif-btn.favorited {
+  color: #f56c6c;
+  background: #fff;
+}
+
+/* GIF 选择器按钮 */
+.gif-picker-btn {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-4);
+  color: var(--color-text-2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.gif-picker-btn:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+/* GIF 选择器弹窗 */
+.gif-picker {
+  padding: 10px 0;
+}
+
+.gif-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.gif-item {
+  position: relative;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.gif-item:hover {
+  border-color: var(--color-primary);
+  transform: scale(1.02);
+}
+
+.gif-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.gif-item-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.gif-item:hover .gif-item-actions {
+  opacity: 1;
+}
+
+.gif-item-btn {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gif-item-btn:hover {
+  background: rgba(245, 108, 108, 0.9);
+}
+
+.gif-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--color-text-3);
+}
+
+.gif-empty p {
+  margin: 8px 0;
+}
+
+.gif-empty-hint {
+  font-size: 12px;
+  color: var(--color-text-4);
 }
 
 .msg-gif-img {

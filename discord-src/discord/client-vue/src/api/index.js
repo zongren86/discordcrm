@@ -515,3 +515,20 @@ export function batchLinkAccountNumbers(userId, range) {
 export function unlinkAccountNumber(userId, accountNumberId) {
   return http.delete(`/users/${userId}/account-numbers/${accountNumberId}`)
 }
+
+// === GIF 收藏 ===
+export function listGifFavorites(accountId) {
+  return http.get('/gif-favorites', { params: { accountId } })
+}
+export function addGifFavorite(accountId, gifUrl, title) {
+  return http.post('/gif-favorites', { accountId, gifUrl, title })
+}
+export function removeGifFavorite(id, accountId) {
+  return http.delete(`/gif-favorites/${id}`, { params: { accountId } })
+}
+export function checkGifFavorited(accountId, gifUrl) {
+  return http.get('/gif-favorites/check', { params: { accountId, gifUrl } })
+}
+export function normalizeGifUrl(url) {
+  return http.get('/gif-favorites/normalize-url', { params: { url } })
+}
