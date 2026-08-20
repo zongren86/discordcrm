@@ -480,9 +480,9 @@ public class ConversationService {
 
     /**
      * 权限过滤会话：
-     * - 平台管理员：不返回会话（消息中心不授权给平台管理员）
-     * - 商户管理员：可见本商户的全部
-     * - 普通用户：仅可见 ownerAgentId = 当前用户ID 的会话
+     * - 平台管理员：可见所有会话
+     * - 商户管理员：可见商户下所有会话
+     * - 普通用户：可见 ownerAgentId = 当前用户ID 的会话 + 分配账号下的会话
      */
     private List<Conversation> filterByAgentAccess(List<Conversation> convs, Long currentAgentId) {
         if (convs.isEmpty()) return convs;
@@ -494,24 +494,30 @@ public class ConversationService {
             return convs;
         }
 
-        // 商户管理员：可见本商户的全部（已在queryConversations中按merchantId过滤）
+        // 商户管理员：可见商户下所有会话
         if ("MERCHANT_ADMIN".equals(role)) {
             return convs;
         }
 
-        // 普通用户：仅可见 ownerAgentId = currentAgentId 的会话
+        // 普通用户：可见 ownerAgentId = currentAgentId 的会话 + 分配账号下的会话
+        if (currentAgentId == null) {
+            return List.of();
+        }
+
+        Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
         return convs.stream()
-                .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
+                .filter(c -> currentAgentId.equals(c.getOwnerAgentId())
+                        || (c.getDiscordAccount() != null && assignedAccountIds.contains(c.getDiscordAccount().getId())))
                 .toList();
     }
 
     private List<Conversation> queryConversations(Long accountId, String stage, Long merchantId) {
         boolean isPlatform = SecurityUtils.isPlatformAdmin();
         boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(SecurityUtils.currentRole());
+        Long currentAgentId = SecurityUtils.currentAgentId();
 
         // 平台管理员：查看所有商户的会话（不按merchantId过滤）
         if (isPlatform) {
-            Long currentAgentId = SecurityUtils.currentAgentId();
             if (accountId != null) {
                 if (stage != null && !stage.isBlank()) {
                     Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
@@ -526,51 +532,52 @@ public class ConversationService {
             return conversationRepository.findAllByOrderByLastMessageAtDesc();
         }
 
-        Long currentAgentId = SecurityUtils.currentAgentId();
-
-        // 商户管理员：按merchantId过滤
+        // 商户管理员：查看商户下所有会话（不按ownerAgentId过滤）
         if (isMerchantAdmin) {
-            Long effectiveMerchantId = merchantId;
             if (accountId != null && stage != null && !stage.isBlank()) {
                 Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
                 return conversationRepository.findByMerchantIdAndDiscordAccount_IdAndStageOrderByLastMessageAtDesc(
-                        effectiveMerchantId, accountId, stageEnum);
+                        merchantId, accountId, stageEnum);
             } else if (accountId != null) {
-                return conversationRepository.findByMerchantIdAndDiscordAccount_IdOrderByLastMessageAtDesc(effectiveMerchantId, accountId);
+                return conversationRepository.findByMerchantIdAndDiscordAccount_IdOrderByLastMessageAtDesc(merchantId, accountId);
             } else if (stage != null && !stage.isBlank()) {
                 Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
-                return conversationRepository.findByMerchantIdAndStageOrderByLastMessageAtDesc(effectiveMerchantId, stageEnum);
+                return conversationRepository.findByMerchantIdAndStageOrderByLastMessageAtDesc(merchantId, stageEnum);
             } else {
-                return conversationRepository.findByMerchantIdOrderByPinnedAndLastMessageAtDesc(effectiveMerchantId);
+                return conversationRepository.findByMerchantIdOrderByPinnedAndLastMessageAtDesc(merchantId);
             }
         }
 
-        // 普通用户：按merchantId和ownerAgentId过滤
-        Long effectiveMerchantId = merchantId;
-        if (accountId != null && stage != null && !stage.isBlank()) {
-            Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
-            List<Conversation> convs = conversationRepository.findByMerchantIdAndDiscordAccount_IdAndStageOrderByLastMessageAtDesc(
-                    effectiveMerchantId, accountId, stageEnum);
-            return convs.stream()
-                    .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
-                    .toList();
-        } else if (accountId != null) {
-            List<Conversation> convs = conversationRepository.findByMerchantIdAndDiscordAccount_IdOrderByLastMessageAtDesc(effectiveMerchantId, accountId);
-            return convs.stream()
-                    .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
-                    .toList();
-        } else if (stage != null && !stage.isBlank()) {
-            Conversation.Stage stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
-            List<Conversation> convs = conversationRepository.findByMerchantIdAndStageOrderByLastMessageAtDesc(effectiveMerchantId, stageEnum);
-            return convs.stream()
-                    .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
-                    .toList();
-        } else {
-            List<Conversation> convs = conversationRepository.findByMerchantIdOrderByPinnedAndLastMessageAtDesc(effectiveMerchantId);
-            return convs.stream()
-                    .filter(c -> currentAgentId != null && currentAgentId.equals(c.getOwnerAgentId()))
-                    .toList();
+        // 普通用户：按merchantId和分配账号过滤（ownerAgentId=自己的 + 分配账号下的）
+        if (currentAgentId != null) {
+            Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
+            if (assignedAccountIds.isEmpty()) {
+                return List.of();
+            }
+            List<Long> accountIdList = new ArrayList<>(assignedAccountIds);
+
+            // 如果指定了accountId但不是分配的账号，返回空
+            if (accountId != null && !assignedAccountIds.contains(accountId)) {
+                return List.of();
+            }
+
+            Conversation.Stage stageEnum = null;
+            if (stage != null && !stage.isBlank()) {
+                stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
+            }
+
+            // 如果指定了accountId，用单账号查询；否则用账号列表查询
+            if (accountId != null) {
+                return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
+                        merchantId, List.of(accountId), stageEnum, currentAgentId);
+            } else {
+                return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
+                        merchantId, accountIdList, stageEnum, currentAgentId);
+            }
         }
+
+        // Fallback
+        return List.of();
     }
 
     public Conversation loadOwnedConversation(Long id) {
@@ -586,16 +593,26 @@ public class ConversationService {
             throw new AccessDeniedException("无权访问该会话");
         }
 
-        // 商户管理员：可访问本商户所有会话
+        // 商户管理员：可访问商户下所有会话
         if ("MERCHANT_ADMIN".equals(role)) {
             return conversation;
         }
 
-        // 普通用户：仅能访问 ownerAgentId = 当前用户ID 的会话
-        if (conversation.getOwnerAgentId() == null || !currentAgentId.equals(conversation.getOwnerAgentId())) {
-            throw new AccessDeniedException("无权访问该会话");
+        // 普通用户：可访问 ownerAgentId = 当前用户ID 的会话 或 ownerAgentId为空且在分配账号下的会话
+        if (currentAgentId != null) {
+            // 检查ownerAgentId
+            if (currentAgentId.equals(conversation.getOwnerAgentId())) {
+                return conversation;
+            }
+            // 检查是否是未分配的会话且在分配账号下
+            Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
+            if (conversation.getOwnerAgentId() == null
+                    && conversation.getDiscordAccount() != null
+                    && assignedAccountIds.contains(conversation.getDiscordAccount().getId())) {
+                return conversation;
+            }
         }
-        return conversation;
+        throw new AccessDeniedException("无权访问该会话");
     }
 
     public List<MessageDto> listMessages(Long id) {
@@ -663,8 +680,21 @@ public class ConversationService {
         return ConversationDto.from(saved, unreadCount);
     }
 
+    /** 平台管理员专用：加载会话（绕过普通权限限制） */
+    private Conversation loadConversationForAdmin(Long id) {
+        Conversation conversation = conversationRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        SecurityUtils.checkMerchantAccess(conversation.getMerchantId());
+        return conversation;
+    }
+
     public ConversationDto transferConversation(Long id, Long agentId, String reason) {
-        Conversation conversation = loadOwnedConversation(id);
+        Conversation conversation;
+        if ("PLATFORM_ADMIN".equals(SecurityUtils.currentRole())) {
+            conversation = loadConversationForAdmin(id);
+        } else {
+            conversation = loadOwnedConversation(id);
+        }
         Agent targetAgent = agentRepository.findById(agentId)
                 .orElseThrow(() -> new IllegalArgumentException("目标客服不存在"));
 
@@ -677,18 +707,9 @@ public class ConversationService {
             }
         }
 
-        String oldAgent = conversation.getAssignedAgent() != null
-                ? conversation.getAssignedAgent().getDisplayName()
-                : "未分配";
-        String newAgent = targetAgent.getDisplayName();
         conversation.setAssignedAgent(targetAgent);
         // 转移时更新ownerAgentId，使新归属用户可见
         conversation.setOwnerAgentId(targetAgent.getId());
-
-        String remark = conversation.getRemark() != null ? conversation.getRemark() : "";
-        String transferNote = String.format("[转移记录: %s → %s, 原因: %s] ",
-                oldAgent, newAgent, reason != null ? reason : "未说明");
-        conversation.setRemark(transferNote + remark);
 
         Conversation saved = conversationRepository.save(conversation);
         int unreadCount = messageRepository.countUnreadByConversationId(saved.getId());
@@ -830,5 +851,45 @@ public class ConversationService {
             }
         }
         return updatedCount;
+    }
+
+    /** 获取当前用户有权限的账号ID列表（用于权限过滤） */
+    private Set<Long> getAssignedAccountIds(Long currentAgentId) {
+        Set<Long> assignedAccountIds = new HashSet<>();
+
+        Optional<Agent> agentOpt = agentRepository.findById(currentAgentId);
+        if (agentOpt.isEmpty()) {
+            return assignedAccountIds;
+        }
+
+        Agent agent = agentOpt.get();
+
+        // 1. 直接关联的账号（agent_discord_accounts）
+        assignedAccountIds.addAll(
+                agent.getDiscordAccounts().stream()
+                        .map(DiscordAccount::getId)
+                        .collect(Collectors.toSet()));
+
+        // 2. 通过编号链路关联的账号（AgentAccountNumberRel → DiscordAccountNumber → DiscordAccount）
+        List<Long> assignedNumberIds = agentAccountNumberRelRepository.findAccountNumberIdsByAgentId(currentAgentId);
+        if (!assignedNumberIds.isEmpty()) {
+            List<DiscordAccountNumber> numbers = discordAccountNumberRepository.findByIdIn(assignedNumberIds);
+            for (DiscordAccountNumber num : numbers) {
+                if (num.getDiscordAccountId() != null) {
+                    assignedAccountIds.add(num.getDiscordAccountId());
+                }
+            }
+        }
+
+        return assignedAccountIds;
+    }
+
+    /** 过滤会话：ownerAgentId=自己的 + 分配账号下的 */
+    private List<Conversation> filterByOwnerOrAssignedAccounts(List<Conversation> convs,
+                                                                 Long currentAgentId, Set<Long> assignedAccountIds) {
+        return convs.stream()
+                .filter(c -> currentAgentId.equals(c.getOwnerAgentId())
+                        || (c.getDiscordAccount() != null && assignedAccountIds.contains(c.getDiscordAccount().getId())))
+                .toList();
     }
 }

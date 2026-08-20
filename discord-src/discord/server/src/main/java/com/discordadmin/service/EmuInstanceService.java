@@ -29,6 +29,7 @@ public class EmuInstanceService {
     private final ApkManagementService apkManagementService;
     private final DiscordAccountRepository discordAccountRepository;
     private final DiscordService discordService;
+    private final com.discordadmin.repository.GuildMemberRepository guildMemberRepository;
 
     @Value("${emulator.local-mode:false}")
     private boolean localMode;
@@ -38,13 +39,15 @@ public class EmuInstanceService {
                                CloudWebSocketService webSocketService,
                                ApkManagementService apkManagementService,
                                DiscordAccountRepository discordAccountRepository,
-                               DiscordService discordService) {
+                               DiscordService discordService,
+                               com.discordadmin.repository.GuildMemberRepository guildMemberRepository) {
         this.instanceRepository = instanceRepository;
         this.mumuClientService = mumuClientService;
         this.webSocketService = webSocketService;
         this.apkManagementService = apkManagementService;
         this.discordAccountRepository = discordAccountRepository;
         this.discordService = discordService;
+        this.guildMemberRepository = guildMemberRepository;
     }
 
     private Long resolveMerchantId() {
@@ -192,6 +195,25 @@ public class EmuInstanceService {
                 log.info("模拟器 #{} 合并结果: discordLoggedIn={}, discordAccount={}, discordInstalled={}",
                         emu.get("index"), emu.get("discordLoggedIn"), 
                         emu.get("discordAccount"), emu.get("discordInstalled"));
+            }
+        }
+        
+        // 为每个模拟器添加按模拟器维度的好友添加统计
+        for (Map<String, Object> emu : result) {
+            int emuIndex = ((Number) emu.get("index")).intValue();
+            try {
+                int assignedCount = (int) guildMemberRepository.countAssigningByEmulatorIndex(emuIndex);
+                int successCount = (int) guildMemberRepository.countSuccessByEmulatorIndex(emuIndex);
+                int failedCount = (int) guildMemberRepository.countFailedByEmulatorIndex(emuIndex);
+                emu.put("assignedCount", assignedCount);
+                emu.put("successCount", successCount);
+                emu.put("failedCount", failedCount);
+                // addedCount 保留历史字段，显示本模拟器已处理的总数
+                emu.put("addedCount", assignedCount + successCount + failedCount);
+            } catch (Exception e) {
+                emu.put("assignedCount", 0);
+                emu.put("successCount", 0);
+                emu.put("failedCount", 0);
             }
         }
         
@@ -925,7 +947,7 @@ public class EmuInstanceService {
      * 启动自动加好友
      */
     @Transactional
-    public Map<String, Object> startAutoAdd(int index) {
+    public Map<String, Object> startAutoAdd(int index, Long serverId) {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
 
@@ -952,6 +974,10 @@ public class EmuInstanceService {
             throw new RuntimeException("Discord未在首页，请先跳转到首页");
         }
 
+        // 如果前端传了serverId，保存到实例中，供AutoAddService使用
+        if (serverId != null) {
+            instance.setGuildServerId(serverId);
+        }
         instance.setAutoRunning(true);
         instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());

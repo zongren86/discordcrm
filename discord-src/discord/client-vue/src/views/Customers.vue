@@ -18,6 +18,10 @@
       <div class="filter-bar">
         <el-input v-model="filters.keyword" size="default" placeholder="搜索昵称/ID/备注" :prefix-icon="Search"
           clearable style="width: 240px" @clear="loadData" @keyup.enter="loadData" />
+        <el-select v-model="filters.accountId" size="default" placeholder="Discord账号" clearable filterable style="width: 180px" @change="loadData">
+          <el-option :value="0" label="全部账号" />
+          <el-option v-for="a in accountOptions" :key="a.id" :value="a.id" :label="a.name || ('账号 ' + a.id)" />
+        </el-select>
         <el-select v-model="filters.stage" size="default" placeholder="销售阶段" clearable style="width: 160px" @change="loadData">
           <el-option v-for="s in stageOptions" :key="s.value" :value="s.value" :label="s.label" />
         </el-select>
@@ -66,6 +70,11 @@
               {{ stageLabel(row.stage) }}
             </el-tag>
             <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Discord账号" width="150">
+          <template #default="{ row }">
+            <span>{{ row.discordAccountName || '-' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="标签" min-width="160">
@@ -143,6 +152,7 @@ import {
 import { useRouter } from 'vue-router'
 import {
   listCustomers as listCustomersApi,
+  listCustomerAccounts,
   batchTags, batchStage as batchStageApi, exportCustomers,
   batchSendMessage
 } from '@/api'
@@ -151,7 +161,8 @@ const router = useRouter()
 
 const loading = ref(false)
 const customers = ref([])
-const filters = ref({ keyword: '', stage: '', tag: '' })
+const accountOptions = ref([])
+const filters = ref({ keyword: '', stage: '', tag: '', accountId: 0 })
 const selectedIds = ref([])
 const selectedStage = ref('')
 const batchDialogVisible = ref(false)
@@ -172,6 +183,10 @@ const filteredCustomers = computed(() => {
   let list = customers.value
   if (filters.value.stage) {
     list = list.filter(c => c.stage === filters.value.stage)
+  }
+  // accountId为0或null表示"全部账号"，不进行前端过滤
+  if (filters.value.accountId && filters.value.accountId !== 0) {
+    list = list.filter(c => c.discordAccountId === filters.value.accountId)
   }
   if (filters.value.tag) {
     list = list.filter(c => {
@@ -224,12 +239,23 @@ async function loadData() {
     if (filters.value.keyword) params.keyword = filters.value.keyword
     if (filters.value.stage) params.stage = filters.value.stage
     if (filters.value.tag) params.tag = filters.value.tag
+    // accountId为0表示"全部账号"，不传递给后端（不传即返回所有）
+    if (filters.value.accountId && filters.value.accountId !== 0) params.accountId = filters.value.accountId
     const res = await listCustomersApi(params)
     customers.value = Array.isArray(res) ? res : (res?.data || [])
   } catch (e) {
     ElMessage.error('加载客户列表失败')
   } finally {
     loading.value = false
+  }
+}
+
+async function loadAccountOptions() {
+  try {
+    const res = await listCustomerAccounts()
+    accountOptions.value = Array.isArray(res) ? res : (res?.data || [])
+  } catch (e) {
+    console.warn('加载账号列表失败', e)
   }
 }
 
@@ -306,7 +332,10 @@ function openConversation(row) {
   }
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadData()
+  loadAccountOptions()
+})
 </script>
 
 <style scoped>
@@ -326,8 +355,8 @@ onMounted(loadData)
   justify-content: space-between;
   align-items: center;
 }
-.page-title { margin: 0; font-size: 18px; font-weight: 700; color: var(--color-text); }
-.page-desc { margin: 4px 0 0; font-size: 12px; color: var(--color-text-2); }
+.page-title { margin: 0; font-size: 14px; font-weight: 700; color: var(--color-text); }
+.page-desc { margin: 4px 0 0; font-size: 14px; color: var(--color-text-2); }
 .header-actions { display: flex; gap: 8px; }
 
 .page-body {
@@ -354,19 +383,19 @@ onMounted(loadData)
   background: var(--color-bg-2);
   border: 1px solid var(--color-primary);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--color-text);
 }
 
 .cust-cell { display: flex; align-items: center; gap: 10px; }
 .cust-avatar { flex-shrink: 0; }
 .cust-meta { min-width: 0; }
-.cust-name { font-size: 13px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
-.cust-sub { font-size: 11px; color: var(--color-text-3); margin-top: 2px; font-family: "JetBrains Mono", monospace; }
+.cust-name { font-size: 14px; font-weight: 600; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.cust-sub { font-size: 14px; color: var(--color-text-3); margin-top: 2px; font-family: "JetBrains Mono", monospace; }
 
-.stage-tag-sm { font-size: 11px; }
+.stage-tag-sm { font-size: 14px; }
 .tag-item { margin-right: 4px; margin-bottom: 2px; }
-.text-muted { color: var(--color-text-3); font-size: 12px; }
+.text-muted { color: var(--color-text-3); font-size: 14px; }
 .remark-text { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; }
 
 :deep(.el-table) {

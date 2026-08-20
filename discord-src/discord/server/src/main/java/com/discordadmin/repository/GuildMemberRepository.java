@@ -190,4 +190,35 @@ public interface GuildMemberRepository extends JpaRepository<GuildMember, Long>,
            "SELECT m2.userId FROM GuildMember m2 GROUP BY m2.userId HAVING COUNT(DISTINCT m2.guildServerId) > 1" +
            ")")
     long countCrossServerDuplicates();
+
+    // ========== 按模拟器统计 ==========
+
+    /**
+     * 按模拟器索引和好友状态统计数量
+     */
+    long countByEmulatorIndexAndFriendStatus(Integer emulatorIndex, Integer friendStatus);
+
+    /**
+     * 按模拟器索引统计所有有状态的成员（已分配+成功+失败）
+     */
+    @Query("SELECT COUNT(m) FROM GuildMember m WHERE m.emulatorIndex = :emulatorIndex AND m.friendStatus IN (1, 2, 3)")
+    long countAssignedByEmulatorIndex(@Param("emulatorIndex") Integer emulatorIndex);
+
+    /**
+     * 按模拟器索引统计添加成功的数量
+     */
+    @Query("SELECT COUNT(m) FROM GuildMember m WHERE m.emulatorIndex = :emulatorIndex AND m.friendStatus = 2")
+    long countSuccessByEmulatorIndex(@Param("emulatorIndex") Integer emulatorIndex);
+
+    /**
+     * 按模拟器索引统计添加失败的数量
+     */
+    @Query("SELECT COUNT(m) FROM GuildMember m WHERE m.emulatorIndex = :emulatorIndex AND m.friendStatus = 3")
+    long countFailedByEmulatorIndex(@Param("emulatorIndex") Integer emulatorIndex);
+
+    /**
+     * 按模拟器索引统计已分配（不含成功/失败）的数量
+     */
+    @Query("SELECT COUNT(m) FROM GuildMember m WHERE m.emulatorIndex = :emulatorIndex AND m.friendStatus = 1")
+    long countAssigningByEmulatorIndex(@Param("emulatorIndex") Integer emulatorIndex);
 }

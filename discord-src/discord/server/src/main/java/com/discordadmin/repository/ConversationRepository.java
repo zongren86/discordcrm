@@ -108,6 +108,10 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
     @Query("SELECT c FROM Conversation c JOIN c.discordUser u WHERE u.discordUserId = :friendDiscordUserId AND c.discordAccount.id = :accountId")
     List<Conversation> findByDiscordUserAndDiscordAccount(@Param("friendDiscordUserId") String friendDiscordUserId, @Param("accountId") Long accountId);
 
+    /** 批量按多个好友Discord用户ID+账号ID查找会话（优化性能，避免N+1查询） */
+    @Query("SELECT c FROM Conversation c JOIN c.discordUser u WHERE u.discordUserId IN :friendDiscordUserIds AND c.discordAccount.id IN :accountIds")
+    List<Conversation> findByDiscordUserIdsInAndAccountIdsIn(@Param("friendDiscordUserIds") List<String> friendDiscordUserIds, @Param("accountIds") List<Long> accountIds);
+
     /** 按ownerAgentId查询会话（普通用户权限控制） */
     List<Conversation> findByOwnerAgentId(Long ownerAgentId);
 
@@ -122,4 +126,31 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
 
     /** 按阶段查找会话（平台管理员用） */
     List<Conversation> findByStageOrderByLastMessageAtDesc(Conversation.Stage stage);
+
+    /** 按账号ID列表查找会话（普通用户权限过滤用） */
+    List<Conversation> findByDiscordAccount_IdInOrderByLastMessageAtDesc(List<Long> accountIds);
+
+    /** 按商户ID+账号ID列表查找会话（普通用户权限过滤用） */
+    List<Conversation> findByMerchantIdAndDiscordAccount_IdInOrderByLastMessageAtDesc(Long merchantId, List<Long> accountIds);
+
+    /** 按商户ID+账号ID列表+阶段查找会话（普通用户权限过滤用） */
+    List<Conversation> findByMerchantIdAndDiscordAccount_IdInAndStageOrderByLastMessageAtDesc(Long merchantId, List<Long> accountIds, Conversation.Stage stage);
+
+    /** 普通用户权限过滤：ownerAgentId=自己的 或 ownerAgentId为空且账号在分配列表中的会话 */
+    @Query("SELECT c FROM Conversation c WHERE (c.merchantId = :merchantId OR (c.merchantId IS NULL AND :merchantId IS NULL)) " +
+            "AND (c.ownerAgentId = :agentId OR (c.ownerAgentId IS NULL AND c.discordAccount.id IN :accountIds)) " +
+            "ORDER BY c.pinned DESC, c.lastMessageAt DESC")
+    List<Conversation> findByMerchantIdAndAccountIds(@Param("merchantId") Long merchantId,
+                                                     @Param("accountIds") List<Long> accountIds,
+                                                     @Param("agentId") Long agentId);
+
+    /** 普通用户权限过滤：ownerAgentId=自己的 或 ownerAgentId为空且账号在分配列表中的会话（带阶段过滤） */
+    @Query("SELECT c FROM Conversation c WHERE (c.merchantId = :merchantId OR (c.merchantId IS NULL AND :merchantId IS NULL)) " +
+            "AND (c.ownerAgentId = :agentId OR (c.ownerAgentId IS NULL AND c.discordAccount.id IN :accountIds)) " +
+            "AND (:stage IS NULL OR c.stage = :stage) " +
+            "ORDER BY c.pinned DESC, c.lastMessageAt DESC")
+    List<Conversation> findByMerchantIdAndAccountIdsAndStage(@Param("merchantId") Long merchantId,
+                                                             @Param("accountIds") List<Long> accountIds,
+                                                             @Param("stage") Conversation.Stage stage,
+                                                             @Param("agentId") Long agentId);
 }

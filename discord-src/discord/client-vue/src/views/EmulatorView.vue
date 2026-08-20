@@ -248,56 +248,6 @@
               </div>
             </div>
           </el-card>
-
-          <!-- 服务器成员列表 -->
-          <el-card v-if="selectedServerId" class="panel" shadow="hover" style="margin-top: 8px">
-            <template #header>
-              <div class="panel-header">
-                <el-icon><User /></el-icon>
-                <span>服务器成员 - {{ currentServerName }}</span>
-                <div style="margin-left: auto; display: flex; gap: 8px; align-items: center;">
-                  <el-select v-model="friendPoolFilter" size="small" style="width: 100px" @change="loadFriendPool">
-                    <el-option label="全部" value="" />
-                    <el-option label="待添加" value="PENDING" />
-                    <el-option label="已分配" value="ASSIGNED" />
-                    <el-option label="成功" value="SUCCESS" />
-                    <el-option label="失败" value="FAILED" />
-                  </el-select>
-                  <el-button size="small" @click="refreshFriendPool">刷新</el-button>
-                </div>
-              </div>
-            </template>
-            <div class="panel-body">
-              <div v-if="friendPoolLoading" class="loading-hint">加载中...</div>
-              <el-table v-else-if="friendPool.length > 0" :data="friendPool" size="small" style="width: 100%" max-height="200">
-                <el-table-column prop="username" label="用户名" width="120" show-overflow-tooltip />
-                <el-table-column prop="displayName" label="显示名" width="120" show-overflow-tooltip />
-                <el-table-column label="状态" width="80">
-                  <template #default="{ row }">
-                    <el-tag :type="getFriendStatusType(row.friendStatus)" size="small">
-                      {{ row.statusText || getFriendStatusText(row.friendStatus) }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="添加账号" width="120">
-                  <template #default="{ row }">
-                    <span v-if="row.discordAccountName && row.discordAccountName !== '-'" style="color: #409eff">{{ row.discordAccountName }}</span>
-                    <span v-else style="color: #909399">-</span>
-                  </template>
-                </el-table-column>
-                <el-table-column label="添加结果说明" min-width="150">
-                  <template #default="{ row }">
-                    <span v-if="row.friendStatus === 2" style="color: #67c23a">-</span>
-                    <span v-else-if="row.friendStatus === 3 && row.lastError" style="color: #f56c6c; font-size: 12px">{{ row.lastError }}</span>
-                    <span v-else style="color: #909399">-</span>
-                  </template>
-                </el-table-column>
-              </el-table>
-              <div v-else class="empty-hint">
-                {{ friendPoolFilter ? '当前筛选条件下暂无成员' : '暂无成员数据，请先同步好友' }}
-              </div>
-            </div>
-          </el-card>
         </el-col>
       </el-row>
 
@@ -426,24 +376,24 @@
             <span v-else style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="下次添加时间" width="90">
+        <el-table-column label="下次添加时间" width="110">
           <template #default="{ row }">
-            <span v-if="row.nextAddAt && row.autoRunning" style="color: #409eff; font-size: 12px">{{ formatCountdown(row.nextAddAt) }}</span>
-            <span v-else-if="row.nextAddAt" style="font-size: 12px">{{ formatCountdown(row.nextAddAt) }}</span>
+            <span v-if="row.nextAddAt && row.autoRunning" style="color: #409eff; font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
+            <span v-else-if="row.nextAddAt" style="font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
             <span v-else style="color: #909399; font-size: 12px">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="加好友状态" width="140">
+        <el-table-column label="加好友状态" width="200">
           <template #default="{ row }">
             <div class="friend-status-cell">
               <div v-if="row.autoRunning" style="color: #67c23a">
-                运行中·添加 {{ row.addedCount || 0 }}
+                运行中
               </div>
-              <template v-else>
-                <div class="fs-row">已分配: {{ row.addedCount || 0 }}</div>
-                <div class="fs-row fs-success" v-if="row.lastFriendResult === 'SUCCESS'">成功</div>
-                <div class="fs-row fs-failed" v-else-if="row.lastFriendResult === 'FAILED'">失败</div>
-              </template>
+              <div class="fs-stats">
+                <span class="fs-tag fs-assigned">已分配: {{ row.assignedCount || 0 }}</span>
+                <span class="fs-tag fs-success">成功: {{ row.successCount || 0 }}</span>
+                <span class="fs-tag fs-failed">失败: {{ row.failedCount || 0 }}</span>
+              </div>
             </div>
           </template>
         </el-table-column>
@@ -590,6 +540,10 @@ const backendAvailable = ref(false)
 const emulators = ref([])
 const targetCount = ref(3)
 const emuLoading = ref(false)
+
+// 实时倒计时更新
+const now = ref(Date.now())
+let countdownTimer = null
 
 // 全屏加载遮罩状态
 const globalLoading = ref({ show: false, text: '' })
@@ -786,7 +740,17 @@ friendApi.interceptors.request.use(config => {
   return config
 })
 
-const sortedEmulators = computed(() => [...emulators.value].sort((a, b) => a.index - b.index))
+const sortedEmulators = computed(() => {
+  const collator = new Intl.Collator('zh', { numeric: true, sensitivity: 'base' })
+  return [...emulators.value].sort((a, b) => {
+    const nameA = a.name || ''
+    const nameB = b.name || ''
+    const cmp = collator.compare(nameA, nameB)
+    if (cmp !== 0) return cmp
+    // fallback: sort by index
+    return (a.index || 0) - (b.index || 0)
+  })
+})
 
 function handleSelectionChange(selection) {
   selectedEmulators.value = selection.map(item => item.index)
@@ -896,10 +860,15 @@ onMounted(async () => {
     checkPhysicalStatus()
   }
   startHealthCheck()
+  // 启动每秒更新的倒计时定时器
+  countdownTimer = setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
 })
 
 onUnmounted(() => {
   if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null }
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
   stopFriendPoolPolling()
 })
 
@@ -1414,8 +1383,11 @@ async function stopAutoAll() {
 async function startAuto(index) {
   autoStartingEmulators.value.add(index)
   try {
-    await friendApi.post(`/autoadd/${index}/start`)
-    ElMessage.success(`模拟器 #${index} 已开始自动加好友`)
+    // 传递选中的服务器ID，让模拟器使用指定服务器的好友号池
+    const body = selectedServerId.value ? { serverId: selectedServerId.value } : {}
+    await friendApi.post(`/autoadd/${index}/start`, body)
+    const serverHint = selectedServerId.value ? `（服务器ID: ${selectedServerId.value}）` : ''
+    ElMessage.success(`模拟器 #${index} 已开始自动加好友${serverHint}`)
     await fetchEmulators()
   } catch (e) {
     ElMessage.error('启动失败: ' + (e.response?.data?.message || e.message))
@@ -1623,11 +1595,13 @@ function statusTagType(status) {
 
 function formatCountdown(timestamp) {
   if (!timestamp || timestamp <= 0) return '-'
-  const diff = Math.max(0, Math.floor((timestamp - Date.now()) / 1000))
-  if (diff <= 0) return '即将'
-  if (diff < 60) return `${diff}秒后`
-  if (diff < 3600) return `${Math.floor(diff / 60)}分${diff % 60}秒`
-  return `${Math.floor(diff / 3600)}小时后`
+  const diff = Math.max(0, Math.floor((timestamp - now.value) / 1000))
+  if (diff <= 0) return '00:00:00'
+  const h = Math.floor(diff / 3600)
+  const m = Math.floor((diff % 3600) / 60)
+  const s = diff % 60
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${pad(h)}:${pad(m)}:${pad(s)}`
 }
 </script>
 
@@ -1984,13 +1958,38 @@ function formatCountdown(timestamp) {
   font-size: 12px;
   line-height: 1.6;
 }
+.fs-stats {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.fs-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.fs-assigned {
+  background: #ecf5ff;
+  color: #409eff;
+  border: 1px solid #d9ecff;
+}
+.fs-success {
+  background: #f0f9eb;
+  color: #67c23a;
+  border: 1px solid #e1f3d8;
+}
+.fs-failed {
+  background: #fef0f0;
+  color: #f56c6c;
+  border: 1px solid #fde2e2;
+}
 .fs-row {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fs-success { color: #67c23a; }
-.fs-failed { color: #f56c6c; }
 .fs-pending { color: #909399; }
 
 /* 模拟器详情 */

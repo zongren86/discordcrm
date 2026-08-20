@@ -1,11 +1,16 @@
 package com.discordadmin.controller;
 
+import com.discordadmin.entity.Agent;
 import com.discordadmin.entity.Conversation;
 import com.discordadmin.entity.DiscordAccount;
+import com.discordadmin.entity.DiscordAccountNumber;
 import com.discordadmin.entity.Friend;
 import com.discordadmin.entity.GuildMember;
 import com.discordadmin.entity.GuildServer;
+import com.discordadmin.repository.AgentAccountNumberRelRepository;
+import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.ConversationRepository;
+import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.FriendRepository;
 import com.discordadmin.repository.GuildMemberRepository;
@@ -20,6 +25,7 @@ import org.springframework.web.bind.annotation.*;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/guild-members")
@@ -32,17 +38,26 @@ public class GuildMembersController {
     private final DiscordAccountRepository discordAccountRepository;
     private final FriendRepository friendRepository;
     private final ConversationRepository conversationRepository;
+    private final AgentRepository agentRepository;
+    private final AgentAccountNumberRelRepository relRepository;
+    private final DiscordAccountNumberRepository accountNumberRepository;
 
     public GuildMembersController(GuildMemberRepository guildMemberRepository,
                                   GuildServerRepository guildServerRepository,
                                   DiscordAccountRepository discordAccountRepository,
                                   FriendRepository friendRepository,
-                                  ConversationRepository conversationRepository) {
+                                  ConversationRepository conversationRepository,
+                                  AgentRepository agentRepository,
+                                  AgentAccountNumberRelRepository relRepository,
+                                  DiscordAccountNumberRepository accountNumberRepository) {
         this.guildMemberRepository = guildMemberRepository;
         this.guildServerRepository = guildServerRepository;
         this.discordAccountRepository = discordAccountRepository;
         this.friendRepository = friendRepository;
         this.conversationRepository = conversationRepository;
+        this.agentRepository = agentRepository;
+        this.relRepository = relRepository;
+        this.accountNumberRepository = accountNumberRepository;
     }
 
     @GetMapping
@@ -60,6 +75,8 @@ public class GuildMembersController {
             @RequestParam(defaultValue = "20") int size) {
 
         Long merchantId = SecurityUtils.currentMerchantId();
+        String role = SecurityUtils.currentRole();
+        Long currentAgentId = SecurityUtils.currentAgentId();
 
         List<GuildMember> members = queryMembers(guildServerId, keyword);
 
@@ -75,6 +92,9 @@ public class GuildMembersController {
 
         List<MemberDTO> dtos = buildDTOs(members, serverMap, accountMap, friendMap, conversationMap);
 
+        // 权限过滤：普通用户只能看到自己名下会话的成员
+        dtos = filterDtosByAgentAccess(dtos, conversationMap, currentAgentId, role);
+
         dtos = applyFilters(dtos, discordStatus, friendStatus, fetchDateFrom, fetchDateTo, passDateFrom, passDateTo);
 
         return paginate(dtos, page, size);
@@ -83,8 +103,24 @@ public class GuildMembersController {
     @GetMapping("/servers")
     public List<Map<String, Object>> listServers() {
         Long merchantId = SecurityUtils.currentMerchantId();
+        String role = SecurityUtils.currentRole();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
         List<GuildServer> servers;
-        if (merchantId != null) {
+
+        // 普通用户：只能看到分配给自己账号的服务器
+        if (!"PLATFORM_ADMIN".equals(role) && !"MERCHANT_ADMIN".equals(role) && currentAgentId != null) {
+            Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
+            if (assignedAccountIds.isEmpty()) {
+                return List.of();
+            }
+            List<Long> accountIdList = new ArrayList<>(assignedAccountIds);
+            if (merchantId != null) {
+                servers = guildServerRepository.findByMerchantIdAndDiscordAccountIdIn(merchantId, accountIdList);
+            } else {
+                servers = guildServerRepository.findByDiscordAccountIdIn(accountIdList);
+            }
+        } else if (merchantId != null) {
             servers = guildServerRepository.findByMerchantId(merchantId);
         } else {
             servers = guildServerRepository.findAll();
@@ -100,8 +136,19 @@ public class GuildMembersController {
     @GetMapping("/accounts")
     public List<Map<String, Object>> listAccounts() {
         Long merchantId = SecurityUtils.currentMerchantId();
+        String role = SecurityUtils.currentRole();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
         List<DiscordAccount> accounts;
-        if (merchantId != null) {
+
+        // 普通用户：只能看到自己分配的账号
+        if (!"PLATFORM_ADMIN".equals(role) && !"MERCHANT_ADMIN".equals(role) && currentAgentId != null) {
+            Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
+            if (assignedAccountIds.isEmpty()) {
+                return List.of();
+            }
+            accounts = discordAccountRepository.findAllById(new ArrayList<>(assignedAccountIds));
+        } else if (merchantId != null) {
             accounts = discordAccountRepository.findByMerchantId(merchantId);
         } else {
             accounts = discordAccountRepository.findAll();
@@ -111,7 +158,42 @@ public class GuildMembersController {
             map.put("id", a.getId());
             map.put("name", a.getName());
             return map;
-        }).collect(Collectors.toList());
+        }).sorted(Comparator.comparing(m -> (String) m.getOrDefault("name", "")))
+          .collect(Collectors.toList());
+    }
+
+    /**
+     * 权限过滤：普通用户只能看到自己名下会话的成员 或 分配账号下的成员
+     */
+    private List<MemberDTO> filterDtosByAgentAccess(List<MemberDTO> dtos,
+                                                     Map<String, Map<Long, Conversation>> conversationMap,
+                                                     Long currentAgentId, String role) {
+        if (dtos.isEmpty()) return dtos;
+
+        // 平台管理员和商户管理员可见全部
+        if ("PLATFORM_ADMIN".equals(role) || "MERCHANT_ADMIN".equals(role)) {
+            return dtos;
+        }
+
+        // 普通用户：只有对应会话的 ownerAgentId = currentAgentId 或 账号在分配列表中 才可见
+        if (currentAgentId == null) return List.of();
+
+        Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
+
+        return dtos.stream()
+                .filter(d -> {
+                    // 查找该成员对应的会话
+                    Map<Long, Conversation> accountConvs = conversationMap.get(d.getUserId());
+                    if (accountConvs == null || accountConvs.isEmpty()) {
+                        // 没有会话的成员：只有待添加状态可见（未分配前不限制）
+                        return d.getFriendStatus() != null && d.getFriendStatus() <= 1;
+                    }
+                    // 检查是否有任何一个会话属于当前用户（ownerAgentId=自己 或 账号在分配列表中）
+                    return accountConvs.values().stream()
+                            .anyMatch(c -> currentAgentId.equals(c.getOwnerAgentId())
+                                    || (c.getDiscordAccount() != null && assignedAccountIds.contains(c.getDiscordAccount().getId())));
+                })
+                .collect(Collectors.toList());
     }
 
     private List<GuildMember> queryMembers(Long guildServerId, String keyword) {
@@ -245,30 +327,51 @@ public class GuildMembersController {
                                                                          Map<Long, GuildServer> serverMap) {
         Map<String, Map<Long, Conversation>> conversationMap = new HashMap<>();
 
-        Set<String> seenPairs = new HashSet<>();
-        Map<String, Long> userIdAccountPairs = new LinkedHashMap<>();
+        // 收集所有需要查询的用户ID和账号ID
+        Set<String> userIdsToQuery = new HashSet<>();
+        Set<Long> accountIdsToQuery = new HashSet<>();
+
         for (GuildMember m : members) {
             Friend friend = friendMap.get(m.getId());
             if (friend != null && friend.getStatus() == Friend.FriendStatus.ACCEPTED && m.getUserId() != null) {
                 GuildServer server = serverMap.get(m.getGuildServerId());
                 if (server != null && server.getDiscordAccountId() != null) {
-                    String pairKey = m.getUserId() + "|" + server.getDiscordAccountId();
-                    if (seenPairs.add(pairKey)) {
-                        userIdAccountPairs.put(m.getUserId(), server.getDiscordAccountId());
-                    }
+                    userIdsToQuery.add(m.getUserId());
+                    accountIdsToQuery.add(server.getDiscordAccountId());
                 }
             }
         }
 
-        for (Map.Entry<String, Long> entry : userIdAccountPairs.entrySet()) {
+        if (userIdsToQuery.isEmpty() || accountIdsToQuery.isEmpty()) {
+            return conversationMap;
+        }
+
+        // 批量查询所有匹配的会话
+        List<Conversation> allConvs = conversationRepository.findByDiscordUserIdsInAndAccountIdsIn(
+                new ArrayList<>(userIdsToQuery), new ArrayList<>(accountIdsToQuery));
+
+        // 按userId和accountId分组，取每组最后一条消息的会话
+        Map<String, List<Conversation>> convsByUserId = allConvs.stream()
+                .filter(c -> c.getDiscordUser() != null && c.getDiscordAccount() != null)
+                .collect(Collectors.groupingBy(c -> c.getDiscordUser().getDiscordUserId()));
+
+        for (Map.Entry<String, List<Conversation>> entry : convsByUserId.entrySet()) {
             String userId = entry.getKey();
-            Long accountId = entry.getValue();
-            List<Conversation> convs = conversationRepository.findByDiscordUserAndDiscordAccount(userId, accountId);
-            if (!convs.isEmpty()) {
+            Map<Long, Conversation> accountConvMap = new HashMap<>();
+
+            // 按accountId分组，每组取最后消息时间最大的
+            Map<Long, List<Conversation>> byAccount = entry.getValue().stream()
+                    .collect(Collectors.groupingBy(c -> c.getDiscordAccount().getId()));
+
+            for (Map.Entry<Long, List<Conversation>> accEntry : byAccount.entrySet()) {
+                List<Conversation> convs = accEntry.getValue();
                 convs.sort(Comparator.comparing(Conversation::getLastMessageAt,
                         Comparator.nullsLast(Comparator.reverseOrder())));
-                conversationMap.computeIfAbsent(userId, k -> new HashMap<>())
-                        .put(accountId, convs.get(0));
+                accountConvMap.put(accEntry.getKey(), convs.get(0));
+            }
+
+            if (!accountConvMap.isEmpty()) {
+                conversationMap.put(userId, accountConvMap);
             }
         }
 
@@ -419,5 +522,36 @@ public class GuildMembersController {
         int totalPages;
         int currentPage;
         int size;
+    }
+
+    /** 获取当前用户有权限的账号ID列表（用于权限过滤） */
+    private Set<Long> getAssignedAccountIds(Long currentAgentId) {
+        Set<Long> assignedAccountIds = new HashSet<>();
+
+        Optional<Agent> agentOpt = agentRepository.findById(currentAgentId);
+        if (agentOpt.isEmpty()) {
+            return assignedAccountIds;
+        }
+
+        Agent agent = agentOpt.get();
+
+        // 1. 直接关联的账号（agent_discord_accounts）
+        assignedAccountIds.addAll(
+                agent.getDiscordAccounts().stream()
+                        .map(DiscordAccount::getId)
+                        .collect(Collectors.toSet()));
+
+        // 2. 通过编号链路关联的账号（AgentAccountNumberRel → DiscordAccountNumber → DiscordAccount）
+        List<Long> assignedNumberIds = relRepository.findAccountNumberIdsByAgentId(currentAgentId);
+        if (!assignedNumberIds.isEmpty()) {
+            List<DiscordAccountNumber> numbers = accountNumberRepository.findByIdIn(assignedNumberIds);
+            for (DiscordAccountNumber num : numbers) {
+                if (num.getDiscordAccountId() != null) {
+                    assignedAccountIds.add(num.getDiscordAccountId());
+                }
+            }
+        }
+
+        return assignedAccountIds;
     }
 }

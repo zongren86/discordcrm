@@ -265,8 +265,13 @@ public class EmuManagementController {
      * 启动自动加好友
      */
     @PostMapping("/autoadd/{index}/start")
-    public Map<String, Object> startAutoAdd(@PathVariable int index) {
-        return instanceService.startAutoAdd(index);
+    public Map<String, Object> startAutoAdd(@PathVariable int index,
+                                             @RequestBody(required = false) Map<String, Object> body) {
+        Long serverId = null;
+        if (body != null && body.get("serverId") != null) {
+            serverId = Long.valueOf(body.get("serverId").toString());
+        }
+        return instanceService.startAutoAdd(index, serverId);
     }
 
     /**

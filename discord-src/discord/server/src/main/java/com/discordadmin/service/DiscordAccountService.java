@@ -6,6 +6,7 @@ import com.discordadmin.dto.DiscordAccountDtos.*;
 import com.discordadmin.entity.Agent;
 import com.discordadmin.entity.AgentAccountNumberRel;
 import com.discordadmin.entity.DiscordAccount;
+import com.discordadmin.entity.DiscordAccountNumber;
 import com.discordadmin.entity.GuildServer;
 import com.discordadmin.repository.AgentAccountNumberRelRepository;
 import com.discordadmin.repository.AgentRepository;
@@ -32,9 +33,11 @@ import org.springframework.dao.TransientDataAccessResourceException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -91,8 +94,10 @@ public class DiscordAccountService {
     public List<AccountDto> listAccounts(String keyword, String status) {
         Long merchantId = SecurityUtils.currentMerchantId();
         boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
+        boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(SecurityUtils.currentRole());
+        Long currentAgentId = SecurityUtils.currentAgentId();
 
-        List<DiscordAccount> accounts = queryAccounts(keyword, status, merchantId, isPlatformAdmin);
+        List<DiscordAccount> accounts = queryAccounts(keyword, status, merchantId, isPlatformAdmin, isMerchantAdmin, currentAgentId);
 
         boolean changed = false;
         Map<Long, Boolean> tokenValidMap = new HashMap<>();
@@ -195,10 +200,12 @@ public class DiscordAccountService {
     }
 
     private List<DiscordAccount> queryAccounts(String keyword, String status,
-                                                Long merchantId, boolean isPlatformAdmin) {
+                                                Long merchantId, boolean isPlatformAdmin,
+                                                boolean isMerchantAdmin, Long currentAgentId) {
         boolean hasKeyword = keyword != null && !keyword.isBlank();
         boolean hasStatus = status != null && !status.isBlank();
 
+        // 平台管理员：查看全部
         if (isPlatformAdmin) {
             if (hasKeyword && hasStatus) {
                 return accountRepository.searchWithAgentsAllByKeywordAndStatus(
@@ -214,37 +221,66 @@ public class DiscordAccountService {
             return accountRepository.findAllWithAgents();
         }
 
-        // Non-platform admin: see own merchant's accounts + null merchantId accounts
-        // Split OR queries into two separate queries to enable index usage
-        List<DiscordAccount> result = new ArrayList<>();
-        DiscordAccount.AccountStatus statusEnum = hasStatus
-                ? DiscordAccount.AccountStatus.valueOf(status.toUpperCase()) : null;
-        String kw = hasKeyword ? keyword.trim() : null;
-
-        // Query 1: accounts with matching merchantId
-        if (hasKeyword && hasStatus) {
-            result.addAll(accountRepository.searchWithAgentsByMerchantIdAndKeywordAndStatus(
-                    merchantId, kw, statusEnum));
-        } else if (hasKeyword) {
-            result.addAll(accountRepository.searchWithAgentsByMerchantId(merchantId, kw));
-        } else if (hasStatus) {
-            result.addAll(accountRepository.findWithAgentsByMerchantIdAndStatus(merchantId, statusEnum));
-        } else {
-            result.addAll(accountRepository.findWithAgentsByMerchantId(merchantId));
+        // 商户管理员：查看商户下所有账号
+        if (isMerchantAdmin) {
+            if (hasKeyword && hasStatus) {
+                return accountRepository.searchWithAgentsByMerchantIdAndKeywordAndStatus(
+                        merchantId, keyword.trim(), DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
+            }
+            if (hasKeyword) {
+                return accountRepository.searchWithAgentsByMerchantId(merchantId, keyword.trim());
+            }
+            if (hasStatus) {
+                return accountRepository.findWithAgentsByMerchantIdAndStatus(
+                        merchantId, DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
+            }
+            return accountRepository.findWithAgentsByMerchantId(merchantId);
         }
 
-        // Query 2: accounts with null merchantId
-        if (hasKeyword && hasStatus) {
-            result.addAll(accountRepository.searchWithAgentsByNullMerchantIdAndKeywordAndStatus(kw, statusEnum));
-        } else if (hasKeyword) {
-            result.addAll(accountRepository.searchWithAgentsByNullMerchantId(kw));
-        } else if (hasStatus) {
-            result.addAll(accountRepository.findWithAgentsByNullMerchantIdAndStatus(statusEnum));
-        } else {
-            result.addAll(accountRepository.findWithAgentsByNullMerchantId());
+        // 普通用户：只能看到分配给自己的账号
+        if (currentAgentId != null) {
+            Optional<Agent> agentOpt = agentRepository.findById(currentAgentId);
+            if (agentOpt.isPresent()) {
+                // 1. 直接关联的账号（agent_discord_accounts）
+                Set<Long> assignedAccountIds = new HashSet<>(
+                        agentOpt.get().getDiscordAccounts().stream()
+                                .map(DiscordAccount::getId)
+                                .collect(Collectors.toSet()));
+
+                // 2. 通过编号链路关联的账号（AgentAccountNumberRel → DiscordAccountNumber → DiscordAccount）
+                List<Long> assignedNumberIds = relRepository.findAccountNumberIdsByAgentId(currentAgentId);
+                if (!assignedNumberIds.isEmpty()) {
+                    List<DiscordAccountNumber> numbers = accountNumberRepository.findByIdIn(assignedNumberIds);
+                    for (DiscordAccountNumber num : numbers) {
+                        if (num.getDiscordAccountId() != null) {
+                            assignedAccountIds.add(num.getDiscordAccountId());
+                        }
+                    }
+                }
+
+                if (assignedAccountIds.isEmpty()) {
+                    return new ArrayList<>();
+                }
+                List<DiscordAccount> result = accountRepository.findAllWithAgentsByIdIn(assignedAccountIds);
+                if (hasKeyword) {
+                    String kw = keyword.trim().toLowerCase();
+                    result = result.stream()
+                            .filter(a -> a.getName() != null && a.getName().toLowerCase().contains(kw))
+                            .collect(Collectors.toList());
+                }
+                if (hasStatus) {
+                    DiscordAccount.AccountStatus statusEnum = DiscordAccount.AccountStatus.valueOf(status.toUpperCase());
+                    result = result.stream()
+                            .filter(a -> statusEnum.equals(a.getStatus()))
+                            .collect(Collectors.toList());
+                }
+                return result;
+            }
+            return new ArrayList<>();
         }
 
-        return result;
+        // Fallback: 如果无法获取当前用户ID，返回空列表
+        return new ArrayList<>();
     }
 
     private AccountDto buildAccountDto(DiscordAccount a, boolean tokenValid,
@@ -866,10 +902,42 @@ public class DiscordAccountService {
                             null, null, null),
                     "Token 刷新成功");
 
+        } catch (DiscordUserClient.DiscordUserApiException e) {
+            log.error("账号 [{}] Token 刷新失败(Discord API错误): {}", account.getName(), e.getMessage());
+            // 根据错误码和内容给出中文提示
+            String errorMsg = resolveRefreshTokenError(e);
+            throw new IllegalStateException(errorMsg, e);
         } catch (Exception e) {
             log.error("账号 [{}] Token 刷新失败: {}", account.getName(), e.getMessage());
             throw new IllegalStateException("Token 刷新失败: " + e.getMessage(), e);
         }
+    }
+
+    private String resolveRefreshTokenError(DiscordUserClient.DiscordUserApiException e) {
+        int code = e.statusCode;
+        String body = e.rawBody != null ? e.rawBody : "";
+
+        if (code == 400) {
+            if (body.contains("captcha")) {
+                return "Token刷新失败：账号被Discord安全系统限制，需要人工完成验证码验证。请在Discord客户端手动登录该账号后重试。";
+            }
+            if (body.contains("email") || body.contains("password")) {
+                return "Token刷新失败：邮箱或密码错误，请检查后重试。";
+            }
+            return "Token刷新失败：请求参数错误(400) - " + truncate(body, 100);
+        } else if (code == 401) {
+            if (body.contains("invalid")) {
+                return "Token刷新失败：邮箱或密码错误。";
+            }
+            return "Token刷新失败：认证失败(401)，请检查账号信息。";
+        } else if (code == 403) {
+            return "Token刷新失败：访问被拒绝(403)，账号可能被限制或封禁。";
+        } else if (code == 429) {
+            return "Token刷新失败：请求过于频繁(429)，请稍后再试。";
+        } else if (code >= 500) {
+            return "Token刷新失败：Discord服务器错误(" + code + ")，请稍后重试。";
+        }
+        return "Token刷新失败：Discord API " + code + " - " + truncate(body, 100);
     }
 
     public BatchImportResponse batchImport(BatchImportRequest request) {

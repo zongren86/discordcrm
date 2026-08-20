@@ -647,11 +647,13 @@ import {
   Loading, CircleCheck, Warning, Close, Monitor, Connection, User, Search,
   CopyDocument, InfoFilled, Timer, Refresh, VideoPause
 } from '@element-plus/icons-vue'
+import { useAuthStore } from '@/stores/auth'
 import { useAccountsStore } from '@/stores/accounts'
 import { useGuildServersStore } from '@/stores/guildServers'
 
 const accounts = useAccountsStore()
 const guildServers = useGuildServersStore()
+const auth = useAuthStore()
 
 const filters = reactive({
   discordAccountId: null
@@ -1384,6 +1386,14 @@ onMounted(async () => {
   if (accounts.accounts.length === 0) {
     try { await accounts.fetchAccounts() } catch (e) {}
   }
+
+  // 普通用户自动选择第一个分配的账号
+  if (auth.agent?.role && auth.agent.role !== 'PLATFORM_ADMIN' && auth.agent.role !== 'MERCHANT_ADMIN') {
+    if (accounts.accounts.length > 0 && !filters.discordAccountId) {
+      filters.discordAccountId = accounts.accounts[0].id
+    }
+  }
+
   await loadServers()
   
   // 恢复所有正在进行的采集任务

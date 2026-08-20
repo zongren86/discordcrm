@@ -7,6 +7,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, Long> {
     Optional<DiscordAccount> findByToken(String token);
@@ -118,6 +119,10 @@ public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, 
     /** 带 JOIN FETCH agents 的查询 - 平台管理员无筛选查询 */
     @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents")
     List<DiscordAccount> findAllWithAgents();
+
+    /** 带 JOIN FETCH agents 的查询 - 按ID批量查询 */
+    @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.id IN :ids")
+    List<DiscordAccount> findAllWithAgentsByIdIn(@Param("ids") Set<Long> ids);
 
     /** 带 JOIN FETCH agents 的查询 - 平台管理员按状态查询 */
     @Query("SELECT DISTINCT a FROM DiscordAccount a LEFT JOIN FETCH a.agents WHERE a.status = :status")

@@ -1,7 +1,7 @@
 <template>
-  <div class="dashboard-layout">
+  <div class="dashboard-layout" :class="{ 'sidebar-collapsed': theme.sidebarCollapsed }">
     <!-- 左侧菜单 -->
-    <aside class="sidebar">
+    <aside class="sidebar" :class="{ collapsed: theme.sidebarCollapsed }">
       <div class="sidebar-header">
         <div class="brand">
           <div class="brand-icon">
@@ -9,10 +9,15 @@
               <path d="M19.27 5.33C17.94 4.71 16.5 4.26 15 4a.09.09 0 00-.07.03c-.18.33-.39.76-.53 1.09a16.09 16.09 0 00-4.8 0c-.14-.34-.35-.76-.54-1.09-.01-.02-.04-.03-.07-.03-1.5.26-2.93.71-4.27 1.33-.01 0-.02.01-.03.02-2.72 4.07-3.47 8.03-3.1 11.95 0 .02.01.04.03.05 1.8 1.32 3.53 2.12 5.24 2.65.03.01.06 0 .07-.02.4-.55.76-1.13 1.07-1.74.02-.04 0-.08-.04-.09-.57-.22-1.11-.48-1.64-.78-.04-.02-.04-.08-.01-.11.11-.08.22-.17.33-.25.02-.02.05-.02.07-.01 3.44 1.57 7.15 1.57 10.55 0 .02-.01.05-.01.07.01.11.09.22.17.33.26.04.03.04.09-.01.11-.52.31-1.07.56-1.64.78-.04.01-.05.06-.04.09.32.61.68 1.19 1.07 1.74.03.01.06.02.09.01 1.72-.53 3.45-1.33 5.25-2.65.02-.01.03-.03.03-.05.44-4.53-.73-8.46-3.1-11.95-.01-.01-.02-.02-.04-.02z"/>
             </svg>
           </div>
-          <div class="brand-text">
+          <div v-if="!theme.sidebarCollapsed" class="brand-text">
             <div class="brand-name">Discord CRM</div>
-            <div class="brand-sub">管理后台</div>
           </div>
+          <!-- 折叠时显示的展开按钮 -->
+          <el-tooltip v-if="theme.sidebarCollapsed" content="展开菜单" placement="right">
+            <el-button class="sidebar-toggle-btn" circle size="small" @click="theme.toggleSidebar()">
+              <el-icon><Expand /></el-icon>
+            </el-button>
+          </el-tooltip>
         </div>
       </div>
 
@@ -23,6 +28,8 @@
         v-model:openeds="openeds"
         :router="true"
         @select="handleSelect"
+        :collapse="theme.sidebarCollapsed"
+        :collapse-transition="false"
       >
         <!-- 动态菜单渲染 -->
         <template v-for="item in menuTree" :key="item.path || item.code">
@@ -81,7 +88,7 @@
       </el-menu>
 
       <div class="sidebar-footer">
-        <div class="user-info">
+        <div v-if="!theme.sidebarCollapsed" class="user-info">
           <el-avatar
             :size="36"
             class="user-avatar"
@@ -99,17 +106,54 @@
             </el-button>
           </el-tooltip>
         </div>
+        <div v-else class="user-info-collapsed">
+          <el-avatar
+            :size="36"
+            class="user-avatar"
+            :style="avatarStyle"
+          >
+            {{ agentInitial }}
+          </el-avatar>
+        </div>
       </div>
     </aside>
 
     <!-- 主工作区 -->
-    <main class="main-area">
-      <router-view v-slot="{ Component }">
-        <transition name="page" mode="out-in">
-          <component :is="Component" />
-        </transition>
-      </router-view>
-    </main>
+    <div class="main-wrapper">
+      <!-- 顶栏 -->
+      <header class="top-bar">
+        <div class="top-bar-left">
+          <!-- 菜单展开/收起按钮 -->
+          <el-tooltip :content="theme.sidebarCollapsed ? '展开菜单' : '收起菜单'" placement="bottom">
+            <el-button circle size="small" class="top-bar-btn" @click="theme.toggleSidebar()">
+              <el-icon><Fold v-if="!theme.sidebarCollapsed" /><Expand v-else /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </div>
+        <div class="top-bar-right">
+          <!-- 深色模式切换 -->
+          <el-tooltip :content="theme.isDark ? '浅色模式' : '深色模式'" placement="bottom">
+            <el-button circle size="small" class="top-bar-btn" @click="theme.toggleTheme()">
+              <el-icon><Sunny v-if="theme.isDark" /><Moon v-else /></el-icon>
+            </el-button>
+          </el-tooltip>
+          <!-- 全屏切换 -->
+          <el-tooltip :content="theme.isFullscreen ? '退出全屏' : '全屏'" placement="bottom">
+            <el-button circle size="small" class="top-bar-btn" @click="theme.toggleFullscreen()">
+              <el-icon><FullScreen /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </div>
+      </header>
+
+      <main class="main-area">
+        <router-view v-slot="{ Component }">
+          <transition name="page" mode="out-in">
+            <component :is="Component" />
+          </transition>
+        </router-view>
+      </main>
+    </div>
   </div>
 </template>
 
@@ -119,12 +163,14 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ChatDotRound, User, UserFilled, OfficeBuilding, DataAnalysis, SwitchButton, Shop, Setting,
-  Lock, Document, Bell, Cpu, Monitor, Grid, Menu, Tools, Key, Tickets
+  Lock, Document, Bell, Cpu, Monitor, Grid, Menu, Tools, Key, Tickets,
+  Fold, Expand, Sunny, Moon, Aim, FullScreen
 } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
 import { useAccountsStore } from '@/stores/accounts'
 import { useGuildServersStore } from '@/stores/guildServers'
+import { useThemeStore } from '@/stores/theme'
 import { stopWebSocket } from '@/services/websocket'
 import { api } from '@/api'
 
@@ -134,6 +180,7 @@ const auth = useAuthStore()
 const accounts = useAccountsStore()
 const conversations = useConversationsStore()
 const guildServers = useGuildServersStore()
+const theme = useThemeStore()
 
 // 菜单加载状态
 const menuLoading = ref(false)
@@ -196,7 +243,6 @@ async function loadMenuTree() {
       menuTree.value = []
     }
   } catch (e) {
-    // API 不可用时提示用户
     ElMessage.error('服务器繁忙，请稍后再试')
     menuTree.value = []
   } finally {
@@ -217,15 +263,17 @@ const defaultRoute = computed(() => {
     }
     return null
   }
-  // 优先查找消息中心
   const chatPath = findFirstPath(menuTree.value.filter(item => item.code === 'chat'))
   if (chatPath) return chatPath
-  // 否则查找第一个有路径的菜单项
   return findFirstPath(menuTree.value) || '/stats'
 })
 
 const totalUnread = computed(() =>
   conversations.conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0)
+)
+
+const friendCount = computed(() =>
+  conversations.conversations.length
 )
 
 const prospectCount = computed(() =>
@@ -243,8 +291,6 @@ function updateFavicon() {
   canvas.height = size
   const ctx = canvas.getContext('2d')
 
-  // 先绘制base64的D-CRM图标（简化版：深色圆形+字母）
-  // 绘制渐变背景
   const gradient = ctx.createLinearGradient(0, 0, size, size)
   gradient.addColorStop(0, '#5865F2')
   gradient.addColorStop(1, '#EB459E')
@@ -253,54 +299,42 @@ function updateFavicon() {
   ctx.arc(size / 2, size / 2, size / 2 - 4, 0, Math.PI * 2)
   ctx.fill()
 
-  // 绘制D字母
   ctx.fillStyle = '#fff'
   ctx.font = 'bold 36px Arial'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText('D', size / 2, size / 2)
 
-  // 根据状态绘制徽章
   if (totalUnread.value > 0) {
-    // 右上角绘制红色圆形徽章
     const badgeSize = 28
     const badgeX = size - 4
     const badgeY = 4
-
     ctx.fillStyle = '#ED4245'
     ctx.beginPath()
     ctx.arc(badgeX, badgeY, badgeSize / 2, 0, Math.PI * 2)
     ctx.fill()
-
-    // 绘制数字
     ctx.fillStyle = '#fff'
     ctx.font = 'bold 18px Arial'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     const displayNum = totalUnread.value > 99 ? '99+' : totalUnread.value.toString()
-    // 数字较多时缩小字号
     if (totalUnread.value > 99) {
       ctx.font = 'bold 12px Arial'
     }
     ctx.fillText(displayNum, badgeX, badgeY)
   } else if (prospectCount.value > 0) {
-    // 右上角绘制红点
     const dotSize = 16
     const dotX = size - 2
     const dotY = 2
-
     ctx.fillStyle = '#ED4245'
     ctx.beginPath()
     ctx.arc(dotX, dotY, dotSize / 2, 0, Math.PI * 2)
     ctx.fill()
-
-    // 白色边框
     ctx.strokeStyle = '#fff'
     ctx.lineWidth = 2
     ctx.stroke()
   }
 
-  // 更新favicon
   const link = document.querySelector("link[rel~='icon']")
   if (!link) {
     const newLink = document.createElement('link')
@@ -313,7 +347,6 @@ function updateFavicon() {
 }
 
 function updateTitle() {
-  // 标签页标题保持简洁
   document.title = baseTitle
 }
 
@@ -324,7 +357,6 @@ watch([totalUnread, prospectCount], () => {
 
 onBeforeUnmount(() => {
   document.title = baseTitle
-  // 恢复原始favicon
   const link = document.querySelector("link[rel~='icon']")
   if (link) {
     link.href = baseFaviconUrl
@@ -366,18 +398,15 @@ async function handleLogout() {
       type: 'warning'
     })
     
-    // 1. 停止 WebSocket 连接
     try {
       stopWebSocket()
     } catch (e) {}
     
-    // 2. 清理所有 store 状态
     auth.logout()
     conversations.reset()
     accounts.$reset()
     guildServers.$reset()
     
-    // 3. 使用 nextTick 确保状态已更新，然后跳转
     await nextTick()
     router.push('/login')
   } catch (e) {
@@ -388,15 +417,12 @@ async function handleLogout() {
 }
 
 onMounted(async () => {
-  // 加载菜单树
   await loadMenuTree()
   
-  // 设置默认路由：优先消息中心，否则第一个有权限的菜单
   if (route.path === '/' || route.path === '/login') {
     router.push(defaultRoute.value)
   }
   
-  // 拉取基础数据
   try {
     await Promise.allSettled([
       accounts.fetchAccounts(),
@@ -412,6 +438,7 @@ onMounted(async () => {
   height: 100%;
   display: flex;
   background: var(--color-bg);
+  overflow: hidden;
 }
 
 /* 侧边栏 */
@@ -422,10 +449,16 @@ onMounted(async () => {
   border-right: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
+  transition: width 0.2s ease;
+  overflow: hidden;
+}
+
+.sidebar.collapsed {
+  width: 64px;
 }
 
 .sidebar-header {
-  padding: 20px 16px 16px;
+  padding: 16px 16px;
   border-bottom: 1px solid var(--color-border);
 }
 
@@ -433,6 +466,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 12px;
+  position: relative;
 }
 
 .brand-icon {
@@ -444,6 +478,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .brand-name {
@@ -453,10 +488,8 @@ onMounted(async () => {
   line-height: 1.2;
 }
 
-.brand-sub {
-  font-size: var(--font-xs);
-  color: var(--color-text-3);
-  margin-top: 2px;
+.sidebar-toggle-btn {
+  margin-left: auto;
 }
 
 .sidebar-menu {
@@ -465,7 +498,7 @@ onMounted(async () => {
   overflow-y: auto;
 }
 
-/* 菜单项布局 — 字体由 global.css 控制 */
+/* 菜单项布局 */
 .sidebar-menu :deep(.el-menu-item) {
   height: 46px;
   border-radius: 8px;
@@ -476,7 +509,6 @@ onMounted(async () => {
   padding: 0 14px !important;
 }
 
-/* 二级菜单项：缩进 + 更轻颜色 */
 .sidebar-menu :deep(.el-sub-menu .el-menu-item) {
   height: 38px;
   margin-left: 8px;
@@ -511,7 +543,6 @@ onMounted(async () => {
   background: var(--color-primary);
 }
 
-/* 图标尺寸 — 不在字体规范范围内，保留独立控制 */
 .sidebar-menu :deep(.el-menu-item .el-icon) {
   font-size: 18px;
 }
@@ -526,7 +557,6 @@ onMounted(async () => {
   gap: 6px;
 }
 
-/* 子菜单标题布局 — 字体由 global.css 控制 */
 .sidebar-menu :deep(.el-sub-menu__title) {
   height: 46px;
   border-radius: 8px;
@@ -546,6 +576,16 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
+.friend-count-tag {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--color-text-3, #8a919f);
+  background: var(--color-bg-hover, #2b2d31);
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
 /* 底部用户信息 */
 .sidebar-footer {
   border-top: 1px solid var(--color-border);
@@ -556,6 +596,11 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.user-info-collapsed {
+  display: flex;
+  justify-content: center;
 }
 
 .user-avatar {
@@ -588,6 +633,41 @@ onMounted(async () => {
 }
 
 /* 主内容区 */
+.main-wrapper {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.top-bar {
+  height: 48px;
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  flex-shrink: 0;
+}
+
+.top-bar-left,
+.top-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-bar-btn {
+  color: var(--color-text-2);
+}
+
+.top-bar-btn:hover {
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
 .main-area {
   flex: 1;
   min-width: 0;

@@ -5,7 +5,7 @@
       <div class="panel-header">
         <div class="panel-title-row">
           <h3>消息中心</h3>
-          <el-tag size="small" effect="dark" class="count-tag">{{ filteredConversations.length }}</el-tag>
+          <el-tag size="small" effect="dark" class="friend-count-tag">好友{{ totalFriendCount }}</el-tag>
         </div>
 
         <el-input v-model="convSearch" size="default" placeholder="搜索用户名、昵称、备注、标签、消息"
@@ -86,41 +86,36 @@
               <div v-for="c in getPinnedConversations()" :key="'pinned-' + c.id"
                 :class="['conv-item', 'pinned-item', { active: c.id === conversations.currentConversationId }]"
                 @click="selectConversation(c)">
-                <div v-if="c.associatedUserName" class="conv-associated-name" :title="c.associatedUserName">
-                  <span v-for="(line, i) in splitAgentName(c.associatedUserName)" :key="i">{{ line }}</span>
-                </div>
-                <div class="conv-avatar-wrap">
+                <!-- 左列：头像 -->
+                <div class="conv-col-left">
                   <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
                     {{ initialOf(c) }}
                   </el-avatar>
-                  <!-- 未读消息红点/数字（右上角） -->
                   <span v-if="c.stage === 'PROSPECT' && !c.lastMessageAt" class="unread-dot"></span>
                   <span v-else-if="c.unreadCount > 0" class="unread-badge">
                     {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
                   </span>
-                  <!-- Discord在线状态圆点（右下角） -->
                   <span class="conv-presence-dot"
                         :class="presenceClass(c)"
                         :title="presenceTitle(c)"></span>
                 </div>
-                <div class="conv-main">
-                  <div class="conv-line-1">
+                <!-- 中列：名称 + 阶段标签/时间 -->
+                <div class="conv-col-middle">
+                  <div class="conv-row-1">
                     <el-icon class="pin-icon" :size="12"><Top /></el-icon>
-                    <span class="conv-name">{{ truncateText(c.remark || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
-                    <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-mini">
+                    <span class="conv-name">{{ truncateText(c.remark || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 14) }}</span>
+                  </div>
+                  <div class="conv-row-2">
+                    <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-inline">
                       {{ stageLabel(c.stage) }}
                     </el-tag>
-                  </div>
-                  <div class="conv-line-2 conv-line-grid">
-                    <span class="conv-nickname" :title="'@' + (c.username || c.globalName || '')">
-                      @{{ c.username || c.globalName || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}
-                    </span>
+                    <el-tooltip :content="formatFullTime(getConversationTime(c))">
+                      <span class="conv-time-inline">{{ formatTimeForConv(getConversationTime(c)) }}</span>
+                    </el-tooltip>
                   </div>
                 </div>
-                <div class="conv-actions">
-                  <el-tooltip :content="formatFullTime(getConversationTime(c))">
-                    <span class="conv-time">{{ formatTimeForConv(getConversationTime(c)) }}</span>
-                  </el-tooltip>
+                <!-- 右列：置顶操作 -->
+                <div class="conv-col-right">
                   <el-tooltip content="取消置顶">
                     <el-button type="warning" size="small" circle @click.stop="togglePin(c)">
                       <el-icon><Top /></el-icon>
@@ -137,40 +132,35 @@
               <div v-for="c in getNormalConversations()" :key="'normal-' + c.id"
                 :class="['conv-item', { active: c.id === conversations.currentConversationId }]"
                 @click="selectConversation(c)">
-                <div v-if="c.associatedUserName" class="conv-associated-name" :title="c.associatedUserName">
-                  <span v-for="(line, i) in splitAgentName(c.associatedUserName)" :key="i">{{ line }}</span>
-                </div>
-                <div class="conv-avatar-wrap">
+                <!-- 左列：头像 -->
+                <div class="conv-col-left">
                   <el-avatar :size="44" :src="getAvatar(c)" class="conv-avatar">
                     {{ initialOf(c) }}
                   </el-avatar>
-                  <!-- 未读消息红点/数字（右上角） -->
                   <span v-if="c.stage === 'PROSPECT' && !c.lastMessageAt" class="unread-dot"></span>
                   <span v-else-if="c.unreadCount > 0" class="unread-badge">
                     {{ c.unreadCount > 99 ? '99+' : c.unreadCount }}
                   </span>
-                  <!-- Discord在线状态圆点（右下角） -->
                   <span class="conv-presence-dot"
                         :class="presenceClass(c)"
                         :title="presenceTitle(c)"></span>
                 </div>
-                <div class="conv-main">
-                  <div class="conv-line-1">
-                    <span class="conv-name">{{ truncateText(c.remark || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 8) }}</span>
-                    <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-mini">
+                <!-- 中列：名称 + 阶段标签/时间 -->
+                <div class="conv-col-middle">
+                  <div class="conv-row-1">
+                    <span class="conv-name">{{ truncateText(c.remark || c.username || ('用户' + (c.friendDiscordUserId || c.discordUserId)), 14) }}</span>
+                  </div>
+                  <div class="conv-row-2">
+                    <el-tag v-if="c.stage" :type="stageTagType(c.stage)" size="small" effect="light" class="stage-tag-inline">
                       {{ stageLabel(c.stage) }}
                     </el-tag>
-                  </div>
-                  <div class="conv-line-2 conv-line-grid">
-                    <span class="conv-nickname" :title="'@' + (c.username || c.globalName || '')">
-                      @{{ c.username || c.globalName || ('用户' + (c.friendDiscordUserId || c.discordUserId)) }}
-                    </span>
+                    <el-tooltip :content="formatFullTime(getConversationTime(c))">
+                      <span class="conv-time-inline">{{ formatTimeForConv(getConversationTime(c)) }}</span>
+                    </el-tooltip>
                   </div>
                 </div>
-                <div class="conv-actions">
-                  <el-tooltip :content="formatFullTime(getConversationTime(c))">
-                    <span class="conv-time">{{ formatTimeForConv(getConversationTime(c)) }}</span>
-                  </el-tooltip>
+                <!-- 右列：置顶操作 -->
+                <div class="conv-col-right">
                   <el-tooltip content="置顶">
                     <el-button :type="c.pinned ? 'warning' : 'default'" size="small" circle
                       @click.stop="togglePin(c)">
@@ -314,23 +304,11 @@
             </el-avatar>
             <div class="chat-header-meta">
               <div class="chat-header-name">
-                <el-tag v-if="conversations.currentConversation.stage"
-                  :type="stageTagType(conversations.currentConversation.stage)" size="small" effect="light" class="header-stage-tag">
-                  {{ stageLabel(conversations.currentConversation.stage) }}
-                </el-tag>
                 <span class="customer-name">{{ conversations.currentConversation.remark || conversations.currentConversation.username || '客户' }}</span>
-              </div>
-              <div class="chat-header-sub">
-                @{{ conversations.currentConversation.username || '-' }}
-                <span class="divider">·</span>
-                ID: {{ conversations.currentConversation.friendDiscordUserId || conversations.currentConversation.discordUserId }}
               </div>
             </div>
           </div>
           <div class="chat-header-actions">
-            <el-select v-model="currentStage" size="small" placeholder="阶段" class="stage-select" @change="onStageChange">
-              <el-option v-for="s in stageOptions" :key="s.value" :value="s.value" :label="s.label" />
-            </el-select>
             <el-button size="small" circle :type="conversations.currentConversation.pinned ? 'warning' : 'default'" @click="togglePin">
               <el-icon><Top /></el-icon>
             </el-button>
@@ -371,9 +349,10 @@
                   <span v-if="msg.editedAt" class="msg-edited">(已编辑)</span>
                 </div>
                 <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted }]">
-                  <div v-if="parseAttachments(msg).length" class="msg-attachments">
-                    <div v-for="att in parseAttachments(msg)" :key="att.url" class="attachment-item">
-                      <img v-if="isImage(att.filename)" :src="att.url" class="attachment-image" />
+                  <!-- 非GIF附件区域（排除GIF，由专门的GIF区域渲染） -->
+                  <div v-if="nonGifAttachments(msg).length" class="msg-attachments">
+                    <div v-for="att in nonGifAttachments(msg)" :key="att.url" class="attachment-item">
+                      <img v-if="isImage(att.filename)" :src="proxiedUrl(att.url)" class="attachment-image" @error="onGifError" />
                       <a v-else :href="att.url" target="_blank" class="attachment-file">
                         <el-icon><Document /></el-icon>
                         <span>{{ att.filename }}</span>
@@ -428,7 +407,23 @@
                     </div>
                   </div>
 
-                  <div v-if="!msg.isDeleted && !isVoiceMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
+                  <!-- GIF消息渲染 -->
+                  <div v-if="!msg.isDeleted && isGifMsg(msg)" class="msg-gif-wrap">
+                    <!-- 视频格式的GIF（Discord动画常被转为MP4/WebM） -->
+                    <video v-if="isVideoGif(gifUrlOf(msg))" 
+                           :src="proxiedUrl(gifUrlOf(msg))" 
+                           class="msg-gif-img" 
+                           autoplay loop muted playsinline
+                           @error="onGifError"></video>
+                    <!-- 普通GIF/图片 -->
+                    <img v-else :src="proxiedUrl(gifUrlOf(msg))" class="msg-gif-img" @error="onGifError" />
+                    <!-- GIF加载失败时显示原始URL文本作为回退 -->
+                    <div v-if="!msg.isDeleted && msg.content && /^https?:\/\//i.test(msg.content)" class="msg-gif-fallback-text">
+                      <a :href="msg.content" target="_blank" rel="noopener noreferrer">{{ msg.content }}</a>
+                    </div>
+                  </div>
+
+                  <div v-if="!msg.isDeleted && !isVoiceMsg(msg) && !isGifMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
                   <div v-else-if="msg.isDeleted" class="msg-deleted-tip">[消息已删除]</div>
 
                   <div v-if="parseReactions(msg).length" class="msg-reactions">
@@ -1056,6 +1051,9 @@ const tagList = computed(() => {
   return userProfile.value.tags.split(',').map(t => t.trim()).filter(Boolean)
 })
 
+// 好友总数（未经过滤的会话总数）
+const totalFriendCount = computed(() => conversations.conversations.length)
+
 const filteredConversations = computed(() => {
   let list = conversations.conversations
   // 默认过滤掉流失客户，除非用户明确选择了流失阶段
@@ -1091,16 +1089,38 @@ const filteredConversations = computed(() => {
   })
 })
 
-// 账号筛选下拉框：显示所有账号，无消息的账号标记
+// 账号筛选下拉框：显示所有当前用户能看到的会话中的账号（包括转移的账号），按名称升序排序
 const accountOptionsForFilter = computed(() => {
-  const convAccountIds = new Set()
+  // 从会话列表中收集所有账号
+  const accountMap = new Map()
   for (const c of conversations.conversations) {
-    if (c.discordAccountId) convAccountIds.add(c.discordAccountId)
+    if (c.discordAccountId) {
+      const name = c.discordAccountName || c.discordAccount?.name || c.accountName || `账号#${c.discordAccountId}`
+      if (!accountMap.has(c.discordAccountId)) {
+        accountMap.set(c.discordAccountId, {
+          id: c.discordAccountId,
+          name: name,
+          discordName: name,
+          _hasConversations: true
+        })
+      }
+    }
   }
-  return accounts.accounts.map(a => ({
-    ...a,
-    _hasConversations: convAccountIds.has(a.id)
-  }))
+  
+  // 补充 accounts.accounts 中有但会话中没有的账号（兼容）
+  for (const a of accounts.accounts) {
+    if (!accountMap.has(a.id)) {
+      accountMap.set(a.id, {
+        id: a.id,
+        name: a.name || a.nickname || a.discordName || `账号#${a.id}`,
+        discordName: a.discordName || '',
+        _hasConversations: false
+      })
+    }
+  }
+  
+  return Array.from(accountMap.values())
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 })
 
 function setDateRange(type) {
@@ -1283,8 +1303,87 @@ function senderNameOf(msg) {
 
 function displayContentOf(msg) {
   if (msg?.messageType === 'voice') return ''
+  if (isGifMsg(msg)) return ''
   if (msg.direction === 'OUTBOUND') return msg.translatedContent || msg.content || ''
   return msg.translatedContent || msg.content || ''
+}
+
+function isGifMsg(msg) {
+  if (!msg) return false
+  
+  // 先检查附件中是否有GIF/动画视频
+  const atts = parseAttachments(msg)
+  if (atts.length > 0) {
+    const hasGifInAttachment = atts.some(a => {
+      const url = a?.url || ''
+      return /\.(gif|webp|mp4|webm|mov)(\?|#|$)/i.test(url) ||
+             /gif|imgur|tenor|giphy|klipy/i.test(url)
+    })
+    if (hasGifInAttachment) return true
+  }
+  
+  // 再检查消息内容是否是GIF/动画视频URL
+  if (!msg?.content) return false
+  const content = msg.content.trim()
+  // 消息是纯URL且指向GIF/图片/视频站点
+  if (/^https?:\/\/\S+$/.test(content)) {
+    // Discord GIF 代理或常见GIF/视频域名
+    return /(gif|imgur|tenor|giphy|klipy|cdn\.)/i.test(content) ||
+      /\.(gif|webp|mp4|webm|png|jpg|jpeg)(\?|#|$)/i.test(content)
+  }
+  return false
+}
+
+function gifUrlOf(msg) {
+  if (!msg) return ''
+  
+  // 优先从附件中获取GIF/动画URL
+  const atts = parseAttachments(msg)
+  if (atts.length > 0) {
+    const gifAtt = atts.find(a => {
+      const url = a?.url || ''
+      return /\.(gif|webp|mp4|webm|mov)(\?|#|$)/i.test(url) ||
+             /gif|imgur|tenor|giphy/i.test(url)
+    })
+    if (gifAtt) return gifAtt.url
+  }
+  
+  // 兜底：使用消息内容作为URL
+  if (!msg?.content) return ''
+  return msg.content.trim()
+}
+
+/** 需要代理的外部 GIF/动画域名（浏览器直接加载会被 CORS 阻止） */
+const EXTERNAL_GIF_DOMAINS = [
+  'klipy.com', 'tenor.com', 'giphy.com', 'imgur.com',
+  'futuri.io', 'gyazo.com', '4cdn.org', 'redd.it',
+  'twitter.com', 'twimg.com', 'instagram.com'
+]
+
+/** 检查URL是否需要通过后端代理加载 */
+function needsProxy(url) {
+  if (!url) return false
+  try {
+    const hostname = new URL(url).hostname.toLowerCase()
+    return EXTERNAL_GIF_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))
+  } catch {
+    return false
+  }
+}
+
+/** 将外部 GIF URL 转为后端代理 URL，绕过浏览器 CORS 限制 */
+function proxiedUrl(url) {
+  if (!url) return ''
+  if (needsProxy(url)) {
+    return '/api/proxy/fetch?url=' + encodeURIComponent(url)
+  }
+  return url
+}
+
+/** 检查URL是否为视频格式（Discord动画GIF常被转为MP4/WebM） */
+function isVideoGif(url) {
+  if (!url) return false
+  return /\.(mp4|webm|mov)(\?|#|$)/i.test(url)
 }
 
 function isVoiceMsg(msg) {
@@ -1317,6 +1416,8 @@ function canTranslateInbound(msg) {
   if (msg.direction !== 'INBOUND') return false
   // 语音消息: 占位文本「[语音消息]」不提供翻译操作（要翻译文字的话走语音转文字后再翻）
   if (isVoiceMsg(msg)) return false
+  // GIF消息跳过翻译
+  if (isGifMsg(msg)) return false
   if (msg.translatedContent && msg.translatedContent !== msg.content) return false
   if (msg.userTranslated) return false
   return !containsChinese(msg.content || '')
@@ -1481,11 +1582,28 @@ function insertEmoji(e) {
 }
 
 function parseAttachments(msg) {
-  if (!msg.attachments) return []
-  if (Array.isArray(msg.attachments)) return msg.attachments
-  if (typeof msg.attachments === 'string') {
-    try { return JSON.parse(msg.attachments) } catch (e) { return [] }
+  if (!msg.attachments && !msg.attachmentsJson) return []
+  const raw = msg.attachments || msg.attachmentsJson
+  if (!raw) return []
+  
+  // 如果是数组格式（已解析的JSON）
+  if (Array.isArray(raw)) return raw
+  
+  // 如果是JSON字符串
+  if (typeof raw === 'string' && raw.trim().startsWith('[')) {
+    try { return JSON.parse(raw) } catch (e) { /* ignore */ }
   }
+  
+  // 逗号分隔的URL字符串 - 转换为附件对象数组
+  if (typeof raw === 'string') {
+    return raw.split(',').map(url => {
+      const trimmed = url.trim()
+      if (!trimmed) return null
+      const filename = trimmed.split('/').pop() || 'attachment'
+      return { url: trimmed, filename }
+    }).filter(Boolean)
+  }
+  
   return []
 }
 
@@ -1504,6 +1622,16 @@ function parseReactions(msg) {
 function isImage(filename) {
   if (!filename) return false
   return /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(filename)
+}
+
+function isGifAttachment(att) {
+  if (!att?.url) return false
+  const url = att.url
+  return /\.(gif|webp|mp4|webm|mov)(\?|#|$)/i.test(url) || /gif|imgur|tenor|giphy/i.test(url)
+}
+
+function nonGifAttachments(msg) {
+  return parseAttachments(msg).filter(a => !isGifAttachment(a))
 }
 
 function toggleAttachment() {
@@ -1591,6 +1719,45 @@ function copyMsg(msg) {
   navigator.clipboard?.writeText(msg.content || '').then(() => {
     ElMessage.success('已复制')
   }).catch(() => ElMessage.info('复制失败'))
+}
+
+function onGifError(e) {
+  const el = e.target
+  if (!el || el.dataset.errorShown) return
+  el.dataset.errorShown = '1'
+  el.style.display = 'none'
+  
+  // 从代理URL中提取原始URL
+  let originalUrl = el.src || ''
+  if (originalUrl.includes('/api/proxy/fetch?url=')) {
+    try {
+      const urlObj = new URL(originalUrl, window.location.origin)
+      originalUrl = urlObj.searchParams.get('url') || originalUrl
+    } catch { /* keep original */ }
+  }
+  
+  const fallback = document.createElement('div')
+  fallback.className = 'gif-fallback'
+  
+  // 显示原始链接作为回退
+  if (originalUrl) {
+    const failText = document.createElement('span')
+    failText.className = 'gif-fail-text'
+    failText.textContent = '[GIF加载失败]'
+    fallback.appendChild(failText)
+    
+    const link = document.createElement('a')
+    link.href = originalUrl
+    link.textContent = originalUrl
+    link.target = '_blank'
+    link.rel = 'noopener noreferrer'
+    link.className = 'gif-fallback-link'
+    fallback.appendChild(link)
+  } else {
+    fallback.textContent = '[GIF加载失败]'
+  }
+  
+  el.parentNode?.appendChild(fallback)
 }
 
 async function deleteMsg(msg) {
@@ -2323,7 +2490,9 @@ async function submitTransfer() {
     await transferConversation(conversations.currentConversationId, transferForm.agentId, transferForm.reason)
     ElMessage.success('会话已转移')
     transferDialogVisible.value = false
-    // 动态无刷新技术：静默刷新，不显示loading
+    // 清空当前会话，回到消息中心初始状态
+    conversations.currentConversationId = null
+    // 静默刷新会话列表
     await conversations.fetchConversations({}, true)
   } catch (e) {
     ElMessage.error('转移失败')
@@ -2899,6 +3068,7 @@ async function onAISettingsUpdated(event) {
 
 onMounted(async () => {
   try { await accounts.fetchAccounts() } catch (e) {}
+
   try { await conversations.fetchConversations() } catch (e) {}
   // 优化：WebSocket已为主力通道，前端轮询仅作为兜底，降低到3秒间隔
   pollTimer = setInterval(pollCurrentMessages, 3000)
@@ -2937,8 +3107,8 @@ onUnmounted(() => {
 
 /* ==== 左侧会话列表面板 ==== */
 .conv-panel {
-  width: 300px;
-  min-width: 240px;
+  width: var(--conv-panel-width, 340px);
+  min-width: 280px;
   flex-shrink: 1;
   background: var(--color-bg-2);
   border-right: 1px solid var(--color-border);
@@ -2969,7 +3139,7 @@ onUnmounted(() => {
   color: var(--color-text);
 }
 
-.count-tag {
+.friend-count-tag {
   background: #5865F2;
   border: none;
   color: #fff;
@@ -3219,30 +3389,40 @@ onUnmounted(() => {
   padding-left: 7px;
 }
 
-.conv-avatar-wrap {
+/* === 三列布局 === */
+.conv-col-left {
   position: relative;
   flex-shrink: 0;
 }
 
-.conv-associated-name {
+.conv-col-middle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-width: 20px;
-  max-width: 20px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.15;
-  color: var(--color-text-2, #606266);
-  text-align: center;
-  gap: 1px;
-  flex-shrink: 0;
-  word-break: break-all;
+  gap: 4px;
 }
 
-.conv-associated-name span:last-child {
-  letter-spacing: -1px;
+.conv-row-1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conv-row-2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.conv-col-right {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  opacity: 1;
+  transition: opacity 0.15s ease;
 }
 
 .conv-avatar {
@@ -3296,70 +3476,10 @@ onUnmounted(() => {
   z-index: 3;
   transition: background 0.2s ease;
 }
-.conv-presence-dot.online {
-  background: #23a55a;
-}
-.conv-presence-dot.idle {
-  background: #f0b232;
-}
-.conv-presence-dot.dnd {
-  background: #f23f43;
-}
-.conv-presence-dot.offline {
-  background: #8a919f;
-}
-
-.conv-line-grid {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.conv-account-name {
-  font-size: 11px;
-  color: var(--color-text-3);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 80px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  flex-shrink: 1;
-}
-
-.conv-account-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.agent-badge {
-  position: absolute;
-  bottom: -2px;
-  left: -4px;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-pink));
-  color: #fff;
-  font-size: 9px;
-  font-weight: 600;
-  border: 2px solid var(--color-bg-2);
-  z-index: 2;
-}
-
-.conv-main {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.conv-line-1 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+.conv-presence-dot.online { background: #23a55a; }
+.conv-presence-dot.idle { background: #f0b232; }
+.conv-presence-dot.dnd { background: #f23f43; }
+.conv-presence-dot.offline { background: #8a919f; }
 
 .conv-name {
   font-size: 14px;
@@ -3370,39 +3490,21 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-.stage-tag-mini {
-  font-size: 10px;
+.pin-icon {
+  color: var(--color-warning, #e6a23c);
   flex-shrink: 0;
 }
 
-.conv-line-2 {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 3px;
+.stage-tag-inline {
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
-.conv-nickname {
+.conv-time-inline {
   font-size: 12px;
   color: var(--color-text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.conv-actions {
-  flex-shrink: 0;
-  opacity: 1;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.conv-time {
-  font-size: 11px;
-  color: var(--color-text-3);
-  white-space: nowrap;
-  margin-right: 4px;
+  margin-left: auto;
 }
 
 /* ==== 中间聊天面板 ==== */
@@ -3684,6 +3786,69 @@ onUnmounted(() => {
 .msg-content {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.msg-gif-wrap {
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-start;
+}
+
+.msg-gif-img {
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: 10px;
+  display: block;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  background: #2b2d31;
+  object-fit: contain;
+}
+
+video.msg-gif-img {
+  background: #000;
+  pointer-events: none;  /* 防止视频被点击暂停 */
+}
+
+.gif-fallback {
+  color: var(--color-text-3);
+  font-size: 12px;
+  padding: 8px 12px;
+  background: var(--color-bg-hover);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gif-fail-text {
+  color: var(--color-text-3);
+}
+
+.gif-fallback-link {
+  color: var(--color-primary);
+  text-decoration: none;
+  word-break: break-all;
+  max-width: 300px;
+  font-size: 12px;
+}
+
+.gif-fallback-link:hover {
+  text-decoration: underline;
+}
+
+.msg-gif-fallback-text {
+  margin-top: 6px;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.msg-gif-fallback-text a {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.msg-gif-fallback-text a:hover {
+  text-decoration: underline;
 }
 
 .msg-attachments {

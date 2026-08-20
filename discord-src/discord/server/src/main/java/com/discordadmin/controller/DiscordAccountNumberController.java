@@ -43,6 +43,19 @@ public class DiscordAccountNumberController {
         return accountNumberService.batchCreate(accounts);
     }
 
+    /** 按数量生成空编号（用户名和邮箱为空） */
+    @PostMapping("/generate")
+    public List<DiscordAccountNumber> generate(@RequestBody Map<String, Integer> body) {
+        Integer quantity = body.get("quantity");
+        if (quantity == null || quantity < 1) {
+            throw new IllegalArgumentException("数量必须大于0");
+        }
+        if (quantity > 500) {
+            throw new IllegalArgumentException("单次生成数量不能超过500");
+        }
+        return accountNumberService.generate(quantity);
+    }
+
     /** 绑定账号 */
     @PutMapping("/{id}/bind")
     public DiscordAccountNumber bindAccount(

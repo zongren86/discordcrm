@@ -295,8 +295,8 @@ public class AutoAddService {
 
         Long merchantId = resolveMerchantId();
         
-        // 获取第一个已添加的服务器ID
-        Long serverId = getFirstServerId(merchantId);
+        // 优先使用模拟器绑定的服务器ID，否则使用第一个绑定的服务器
+        Long serverId = getServerIdForEmulator(index, merchantId);
         
         if (serverId == null) {
             info.setAutoRunning(false);
@@ -350,12 +350,48 @@ public class AutoAddService {
         target.setUpdatedAt(Instant.now());
         memberRepository.save(target);
         
-        info.setAddedCount(countConsumed(merchantId));
+        // 按模拟器维度统计已处理的数量
+        info.setAddedCount(countByEmulator(index + 1));
 
         // 排程下一次：间隔 + 随机延迟
         info.setNextAddAt(System.currentTimeMillis()
                 + (long) dataStore.getConfig().getIntervalSeconds() * 1000 + randomDelay());
         syncToDb(index);
+    }
+    
+    /**
+     * 获取模拟器绑定的服务器ID（优先使用EmuInstance中保存的，否则使用第一个绑定的）
+     */
+    private Long getServerIdForEmulator(int index, Long merchantId) {
+        try {
+            // 从EmuInstance中获取绑定的服务器ID
+            int dbIndex = index + 1;
+            EmuInstance instance = instanceRepository
+                .findByMerchantIdAndUserIdAndInstanceIndex(merchantId, resolveUserId(), dbIndex)
+                .orElse(null);
+            if (instance != null && instance.getGuildServerId() != null) {
+                return instance.getGuildServerId();
+            }
+        } catch (Exception e) {
+            log.warn("获取模拟器绑定服务器ID失败: {}", e.getMessage());
+        }
+        // 回退：使用第一个绑定的服务器
+        return getFirstServerId(merchantId);
+    }
+    
+    /**
+     * 按模拟器索引统计已处理的数量（已分配+成功+失败）
+     */
+    private int countByEmulator(int emulatorIndex) {
+        try {
+            long assigned = memberRepository.countAssignedByEmulatorIndex(emulatorIndex);
+            long success = memberRepository.countSuccessByEmulatorIndex(emulatorIndex);
+            long failed = memberRepository.countFailedByEmulatorIndex(emulatorIndex);
+            return (int) (assigned + success + failed);
+        } catch (Exception e) {
+            log.warn("统计模拟器已处理数量失败: {}", e.getMessage());
+            return 0;
+        }
     }
     
     /**

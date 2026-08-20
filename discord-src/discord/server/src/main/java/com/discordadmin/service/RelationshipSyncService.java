@@ -13,6 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * 拉取 USER 类型账号的好友列表并入库。
@@ -26,6 +29,9 @@ import java.util.Optional;
 public class RelationshipSyncService {
 
     private static final Logger log = LoggerFactory.getLogger(RelationshipSyncService.class);
+
+    /** 防止同一账号并发同步（定时任务+手动触发可能同时执行） */
+    private final ConcurrentMap<Long, Boolean> syncingAccounts = new ConcurrentHashMap<>();
 
     private final DiscordAccountRepository accountRepository;
     private final FriendRepository friendRepository;
@@ -65,6 +71,19 @@ public class RelationshipSyncService {
      */
     @Transactional
     public int syncOne(Long accountId) {
+        // 防止并发同步同一账号
+        if (syncingAccounts.putIfAbsent(accountId, Boolean.TRUE) != null) {
+            log.info("账号[id={}] 正在同步中，跳过本次请求", accountId);
+            return 0;
+        }
+        try {
+            return doSyncOne(accountId);
+        } finally {
+            syncingAccounts.remove(accountId);
+        }
+    }
+
+    private int doSyncOne(Long accountId) {
         DiscordAccount acc = accountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("账号不存在"));
         if (acc.getAccountType() != DiscordAccount.AccountType.USER) {
@@ -185,6 +204,8 @@ public class RelationshipSyncService {
         JsonNode channels = userClient.listDmChannels(acc.getToken());
         if (channels == null || !channels.isArray()) return 0;
 
+        // 记录本次循环已处理的channelId，防止同一次同步内重复
+        Set<String> processedChannelIds = new java.util.HashSet<>();
         int count = 0;
         for (JsonNode ch : channels) {
             // type=1 是 1:1 DM，type=3 是群组 DM，这里只处理 1:1
@@ -193,6 +214,9 @@ public class RelationshipSyncService {
 
             String channelId = ch.path("id").asText(null);
             if (channelId == null) continue;
+
+            // 跳过本次已处理的channelId（同一次API返回可能有重复）
+            if (!processedChannelIds.add(channelId)) continue;
 
             JsonNode recipients = ch.path("recipients");
             if (!recipients.isArray() || recipients.size() == 0) continue;
@@ -217,6 +241,7 @@ public class RelationshipSyncService {
             user = discordUserRepository.save(user);
 
             // per-account去重：同一账号下同一频道只保留一个会话
+            // 先查本地缓存（已flush的），再查数据库
             Conversation conv = conversationRepository
                     .findByChannelIdAndDiscordAccount_Id(channelId, acc.getId())
                     .orElse(null);
@@ -232,7 +257,8 @@ public class RelationshipSyncService {
             conv.setMerchantId(acc.getMerchantId());
             String displayName = user.getGlobalName() != null ? user.getGlobalName() : user.getUsername();
             conv.setChannelName(displayName);
-            conversationRepository.save(conv);
+            // 使用saveAndFlush确保立即写入DB，防止同一事务内后续查询找不到
+            conversationRepository.saveAndFlush(conv);
             count++;
         }
         return count;

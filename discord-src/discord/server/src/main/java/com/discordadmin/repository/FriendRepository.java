@@ -23,6 +23,9 @@ public interface FriendRepository extends JpaRepository<Friend, Long> {
     /** 按商户查所有好友 */
     List<Friend> findByMerchantId(Long merchantId);
 
+    /** 按商户查所有好友，按globalName排序 */
+    List<Friend> findByMerchantIdOrderByGlobalNameAsc(Long merchantId);
+
     /** 按商户+状态查好友/请求 */
     List<Friend> findByMerchantIdAndStatus(Long merchantId, Friend.FriendStatus status);
 

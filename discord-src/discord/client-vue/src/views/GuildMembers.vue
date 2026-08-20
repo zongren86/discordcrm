@@ -243,10 +243,13 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, Refresh, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 
 const loading = ref(false)
 const tableData = ref([])
 const filterCollapsed = ref(false)
+
+const auth = useAuthStore()
 
 const serverOptions = ref([])
 const accountOptions = ref([])
@@ -372,6 +375,17 @@ onMounted(async () => {
     fetchServerOptions(),
     fetchAccountOptions()
   ])
+
+  // 普通用户自动选择第一个分配的账号
+  if (auth.agent?.role && auth.agent.role !== 'PLATFORM_ADMIN' && auth.agent.role !== 'MERCHANT_ADMIN') {
+    if (accountOptions.value.length > 0 && !filters.discordAccountId) {
+      filters.discordAccountId = accountOptions.value[0].id
+    }
+    if (serverOptions.value.length > 0 && !filters.guildServerId) {
+      filters.guildServerId = serverOptions.value[0].id
+    }
+  }
+
   fetchMembers()
 })
 </script>

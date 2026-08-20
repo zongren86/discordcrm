@@ -136,7 +136,7 @@ export const useConversationsStore = defineStore('conversations', {
       this.markAsRead(id)
     },
     async fetchMessages(convId) {
-      this.loadingMessagesMap[convId] = true
+      this.loadingMessagesMap = { ...this.loadingMessagesMap, [convId]: true }
       try {
         const res = await listMessages(convId, { daysBack: 1, pageSize: 10 })
         // 兼容新结构 MessagePageDto { messages, hasMore, oldestId, oldestCreatedAt } 与老结构 List<MessageDto>
@@ -152,7 +152,7 @@ export const useConversationsStore = defineStore('conversations', {
           const tb = b.discordCreatedAt ? new Date(b.discordCreatedAt).getTime() : (b.createdAt ? new Date(b.createdAt).getTime() : 0)
           return ta - tb
         })
-        this.messagesMap[convId] = msgs
+        this.messagesMap = { ...this.messagesMap, [convId]: msgs }
         if (msgs.length > 0) {
           this.earliestIdMap[convId] = msgs[0].id
           this.oldestCursorMap[convId] = {
@@ -168,7 +168,7 @@ export const useConversationsStore = defineStore('conversations', {
         console.log(`[fetchMessages] conv=${convId} got=${msgs.length} hasMore=${this.hasMoreMap[convId]} oldestId=${this.oldestCursorMap?.[convId]?.id}`, msgs[0] ? { firstAt: msgs[0].createdAt, lastAt: msgs[msgs.length - 1].createdAt } : null)
         return msgs
       } finally {
-        this.loadingMessagesMap[convId] = false
+        this.loadingMessagesMap = { ...this.loadingMessagesMap, [convId]: false }
       }
     },
     async loadMore(convId) {

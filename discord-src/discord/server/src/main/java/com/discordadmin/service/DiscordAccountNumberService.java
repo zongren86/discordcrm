@@ -4,6 +4,7 @@ import com.discordadmin.entity.Agent;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.DiscordAccountNumber;
 import com.discordadmin.entity.AccountBindingHistory;
+import com.discordadmin.repository.AgentAccountNumberRelRepository;
 import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
@@ -27,19 +28,71 @@ public class DiscordAccountNumberService {
     private final DiscordAccountRepository accountRepository;
     private final AccountBindingHistoryRepository bindingHistoryRepository;
     private final AgentRepository agentRepository;
+    private final AgentAccountNumberRelRepository relRepository;
 
     public DiscordAccountNumberService(DiscordAccountNumberRepository accountNumberRepository,
                                         DiscordAccountRepository accountRepository,
                                         AccountBindingHistoryRepository bindingHistoryRepository,
-                                        AgentRepository agentRepository) {
+                                        AgentRepository agentRepository,
+                                        AgentAccountNumberRelRepository relRepository) {
         this.accountNumberRepository = accountNumberRepository;
         this.accountRepository = accountRepository;
         this.bindingHistoryRepository = bindingHistoryRepository;
         this.agentRepository = agentRepository;
+        this.relRepository = relRepository;
     }
 
     /** 分页查询账号编号列表 */
     public Map<String, Object> list(String keyword, Instant startTime, Instant endTime, int page, int size) {
+        String role = SecurityUtils.currentRole();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+        boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role);
+        boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(role);
+
+        // 普通用户：只能看到分配给自己的编号
+        if (!isPlatformAdmin && !isMerchantAdmin && currentAgentId != null) {
+            List<Long> assignedNumberIds = relRepository.findAccountNumberIdsByAgentId(currentAgentId);
+            if (assignedNumberIds.isEmpty()) {
+                Map<String, Object> empty = new HashMap<>();
+                empty.put("content", List.of());
+                empty.put("totalElements", 0);
+                empty.put("totalPages", 0);
+                empty.put("number", 0);
+                empty.put("size", size);
+                return empty;
+            }
+
+            // 先获取所有匹配的编号（不分页），再过滤出属于当前用户的
+            List<DiscordAccountNumber> allMatching;
+            if (keyword != null && !keyword.trim().isEmpty() && startTime != null && endTime != null) {
+                allMatching = accountNumberRepository.searchByKeywordAndTimeRange(keyword, startTime, endTime, PageRequest.of(0, 100000)).getContent();
+            } else if (keyword != null && !keyword.trim().isEmpty()) {
+                allMatching = accountNumberRepository.searchByKeyword(keyword, PageRequest.of(0, 100000)).getContent();
+            } else if (startTime != null && endTime != null) {
+                allMatching = accountNumberRepository.findByTimeRange(startTime, endTime, PageRequest.of(0, 100000)).getContent();
+            } else {
+                allMatching = accountNumberRepository.findAll(PageRequest.of(0, 100000)).getContent();
+            }
+
+            List<DiscordAccountNumber> allFiltered = allMatching.stream()
+                    .filter(n -> assignedNumberIds.contains(n.getId()))
+                    .sorted(Comparator.comparing(DiscordAccountNumber::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                    .toList();
+
+            long filteredTotal = allFiltered.size();
+            int startIdx = page * size;
+            int endIdx = Math.min(startIdx + size, (int) filteredTotal);
+            List<DiscordAccountNumber> pagedContent = startIdx >= filteredTotal ? List.of() : allFiltered.subList(startIdx, endIdx);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("content", convertToDTOList(pagedContent));
+            result.put("totalElements", filteredTotal);
+            result.put("totalPages", (int) Math.ceil((double) filteredTotal / size));
+            result.put("number", page);
+            result.put("size", size);
+            return result;
+        }
+
         Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
         Page<DiscordAccountNumber> pageResult;
 
@@ -108,6 +161,25 @@ public class DiscordAccountNumberService {
                 num.setCreatorName(creatorName);
                 numbers.add(num);
             }
+        }
+        return accountNumberRepository.saveAll(numbers);
+    }
+
+    /** 按数量生成空编号（用户名和邮箱为空，后续可绑定） */
+    @Transactional
+    public List<DiscordAccountNumber> generate(int quantity) {
+        Long agentId = SecurityUtils.currentAgentId();
+        Agent currentUser = agentId != null ? agentRepository.findById(agentId)
+                .orElseThrow(() -> new IllegalArgumentException("当前用户不存在")) : null;
+        String creatorName = currentUser != null && currentUser.getDisplayName() != null ? currentUser.getDisplayName() : (currentUser != null ? currentUser.getUsername() : "系统");
+
+        List<DiscordAccountNumber> numbers = new ArrayList<>();
+        for (int i = 0; i < quantity; i++) {
+            DiscordAccountNumber num = new DiscordAccountNumber();
+            num.setBoundAccount(null);
+            num.setCreatorId(currentUser != null ? currentUser.getId() : null);
+            num.setCreatorName(creatorName);
+            numbers.add(num);
         }
         return accountNumberRepository.saveAll(numbers);
     }

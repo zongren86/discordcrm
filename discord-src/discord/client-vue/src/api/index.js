@@ -332,6 +332,9 @@ export function uploadAttachment(file) {
 export function listCustomers(params = {}) {
   return http.get('/customers', { params })
 }
+export function listCustomerAccounts() {
+  return http.get('/customers/accounts')
+}
 export function batchTags(userIds, tags, action) {
   return http.post('/customers/batch-tags', { userIds, tags, action })
 }
@@ -479,6 +482,9 @@ export function listAccountNumbers(params = {}) {
 }
 export function batchCreateAccountNumbers(accounts) {
   return http.post('/account-numbers/batch', { accounts })
+}
+export function generateAccountNumbers(quantity) {
+  return http.post('/account-numbers/generate', { quantity })
 }
 export function bindAccountNumber(id, data) {
   return http.put(`/account-numbers/${id}/bind`, data)

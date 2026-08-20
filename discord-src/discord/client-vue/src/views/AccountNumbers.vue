@@ -8,6 +8,10 @@
       <div class="header-actions">
         <el-button type="primary" @click="openCreateDialog">
           <el-icon><Plus /></el-icon>
+          <span>新增账号及编号</span>
+        </el-button>
+        <el-button type="success" @click="openGenerateDialog">
+          <el-icon><Plus /></el-icon>
           <span>新增编号</span>
         </el-button>
       </div>
@@ -98,8 +102,8 @@
       <el-empty v-if="!loading && tableData.length === 0" description="暂无数据" style="padding:60px 0;" />
     </div>
 
-    <!-- 新增编号弹窗 -->
-    <el-dialog v-model="createDialog.visible" title="新增账号编号" width="500px" @close="resetCreateDialog">
+    <!-- 新增账号及编号弹窗 -->
+    <el-dialog v-model="createDialog.visible" title="新增账号及编号" width="500px" @close="resetCreateDialog">
       <div class="dialog-tip">请输入账号，一行一个：</div>
       <el-input
         v-model="createDialog.accountsText"
@@ -110,6 +114,24 @@
       <template #footer>
         <el-button @click="createDialog.visible = false">取消</el-button>
         <el-button type="primary" @click="handleCreate">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新增编号（按数量生成）弹窗 -->
+    <el-dialog v-model="generateDialog.visible" title="新增编号" width="420px" @close="resetGenerateDialog">
+      <div class="dialog-tip">请输入要生成的编号数量，生成的编号用户名和邮箱为空，后续可通过绑定功能关联账号。</div>
+      <el-input-number
+        v-model="generateDialog.quantity"
+        :min="1"
+        :max="500"
+        :step="10"
+        step-strictly
+        style="width: 100%; margin-top: 12px;"
+        placeholder="请输入数量"
+      />
+      <template #footer>
+        <el-button @click="generateDialog.visible = false">取消</el-button>
+        <el-button type="primary" @click="handleGenerate">确定</el-button>
       </template>
     </el-dialog>
 
@@ -198,6 +220,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   listAccountNumbers,
   batchCreateAccountNumbers,
+  generateAccountNumbers,
   bindAccountNumber,
   getAccountNumberHistory,
   listUnboundAccounts,
@@ -226,6 +249,11 @@ const pagination = reactive({
 const createDialog = reactive({
   visible: false,
   accountsText: ''
+})
+
+const generateDialog = reactive({
+  visible: false,
+  quantity: 1
 })
 
 const bindDialog = reactive({
@@ -293,6 +321,32 @@ function openCreateDialog() {
 
 function resetCreateDialog() {
   createDialog.accountsText = ''
+}
+
+function openGenerateDialog() {
+  generateDialog.visible = true
+  generateDialog.quantity = 1
+}
+
+function resetGenerateDialog() {
+  generateDialog.quantity = 1
+}
+
+async function handleGenerate() {
+  const qty = generateDialog.quantity
+  if (!qty || qty < 1) {
+    ElMessage.warning('请输入有效的数量')
+    return
+  }
+  try {
+    await generateAccountNumbers(qty)
+    ElMessage.success(`成功生成 ${qty} 条编号`)
+    generateDialog.visible = false
+    resetGenerateDialog()
+    fetchData()
+  } catch (e) {
+    ElMessage.error('生成失败')
+  }
 }
 
 async function handleCreate() {

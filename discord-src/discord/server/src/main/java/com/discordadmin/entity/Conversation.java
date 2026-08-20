@@ -17,7 +17,11 @@ import java.time.Instant;
         @Index(name = "idx_conv_merchant_account", columnList = "merchant_id, discord_account_id"),
         @Index(name = "idx_conv_merchant_stage", columnList = "merchant_id, stage"),
         @Index(name = "idx_conv_channel_id", columnList = "channel_id"),
-        @Index(name = "idx_conv_discord_user_id", columnList = "discord_user_id")
+        @Index(name = "idx_conv_discord_user_id", columnList = "discord_user_id"),
+        @Index(name = "idx_conv_owner_agent_id", columnList = "owner_agent_id"),
+        @Index(name = "idx_conv_account_id", columnList = "discord_account_id"),
+        @Index(name = "idx_conv_merchant_agent", columnList = "merchant_id, owner_agent_id"),
+        @Index(name = "idx_conv_merchant_account_stage", columnList = "merchant_id, discord_account_id, stage")
 })
 @Getter
 @Setter

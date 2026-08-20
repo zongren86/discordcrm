@@ -1,9 +1,15 @@
 package com.discordadmin.controller;
 
 import com.discordadmin.discord.member.DiscordMemberService;
+import com.discordadmin.entity.Agent;
+import com.discordadmin.entity.DiscordAccount;
+import com.discordadmin.entity.DiscordAccountNumber;
 import com.discordadmin.entity.GuildMember;
 import com.discordadmin.entity.GuildServer;
 import com.discordadmin.entity.MerchantConfig;
+import com.discordadmin.repository.AgentAccountNumberRelRepository;
+import com.discordadmin.repository.AgentRepository;
+import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.GuildServerRepository;
 import com.discordadmin.security.SecurityUtils;
@@ -22,26 +28,58 @@ public class GuildServerController {
     private final DiscordAccountRepository accountRepository;
     private final GuildServerRepository guildServerRepository;
     private final DiscordMemberService discordMemberService;
+    private final AgentRepository agentRepository;
+    private final AgentAccountNumberRelRepository relRepository;
+    private final DiscordAccountNumberRepository accountNumberRepository;
 
     public GuildServerController(GuildService guildService,
                                  DiscordAccountRepository accountRepository,
                                  GuildServerRepository guildServerRepository,
-                                 DiscordMemberService discordMemberService) {
+                                 DiscordMemberService discordMemberService,
+                                 AgentRepository agentRepository,
+                                 AgentAccountNumberRelRepository relRepository,
+                                 DiscordAccountNumberRepository accountNumberRepository) {
         this.guildService = guildService;
         this.accountRepository = accountRepository;
         this.guildServerRepository = guildServerRepository;
         this.discordMemberService = discordMemberService;
+        this.agentRepository = agentRepository;
+        this.relRepository = relRepository;
+        this.accountNumberRepository = accountNumberRepository;
     }
 
     @GetMapping
     public List<Map<String, Object>> listServers(
             @RequestParam(required = false) Long discordAccountId) {
         Long merchantId = SecurityUtils.currentMerchantId();
+        String role = SecurityUtils.currentRole();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
         // 平台管理员可以查看所有商户的服务器，不按merchantId过滤
         if (SecurityUtils.isPlatformAdmin()) {
             merchantId = null;
         }
-        List<GuildServer> servers = guildService.listGuildServers(merchantId, discordAccountId);
+
+        List<GuildServer> servers;
+
+        // 普通用户：只能看到分配给自己账号的服务器
+        if (!SecurityUtils.isPlatformAdmin() && !"MERCHANT_ADMIN".equals(role) && currentAgentId != null) {
+            Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
+            if (assignedAccountIds.isEmpty()) {
+                return List.of();
+            }
+            if (discordAccountId != null && !assignedAccountIds.contains(discordAccountId)) {
+                return List.of();
+            }
+            List<Long> accountIdList = new ArrayList<>(assignedAccountIds);
+            if (merchantId != null) {
+                servers = guildServerRepository.findByMerchantIdAndDiscordAccountIdIn(merchantId, accountIdList);
+            } else {
+                servers = guildServerRepository.findByDiscordAccountIdIn(accountIdList);
+            }
+        } else {
+            servers = guildService.listGuildServers(merchantId, discordAccountId);
+        }
         
         // 批量获取账号信息，避免 N+1 查询
         Set<Long> accountIds = servers.stream()
@@ -354,5 +392,36 @@ public class GuildServerController {
     @PostMapping("/duplicates/clean")
     public Map<String, Object> cleanCrossServerDuplicates() {
         return guildService.cleanCrossServerDuplicates();
+    }
+
+    /** 获取当前用户有权限的账号ID列表（用于权限过滤） */
+    private Set<Long> getAssignedAccountIds(Long currentAgentId) {
+        Set<Long> assignedAccountIds = new HashSet<>();
+
+        Optional<Agent> agentOpt = agentRepository.findById(currentAgentId);
+        if (agentOpt.isEmpty()) {
+            return assignedAccountIds;
+        }
+
+        Agent agent = agentOpt.get();
+
+        // 1. 直接关联的账号（agent_discord_accounts）
+        assignedAccountIds.addAll(
+                agent.getDiscordAccounts().stream()
+                        .map(DiscordAccount::getId)
+                        .collect(Collectors.toSet()));
+
+        // 2. 通过编号链路关联的账号（AgentAccountNumberRel → DiscordAccountNumber → DiscordAccount）
+        List<Long> assignedNumberIds = relRepository.findAccountNumberIdsByAgentId(currentAgentId);
+        if (!assignedNumberIds.isEmpty()) {
+            List<DiscordAccountNumber> numbers = accountNumberRepository.findByIdIn(assignedNumberIds);
+            for (DiscordAccountNumber num : numbers) {
+                if (num.getDiscordAccountId() != null) {
+                    assignedAccountIds.add(num.getDiscordAccountId());
+                }
+            }
+        }
+
+        return assignedAccountIds;
     }
 }

@@ -23,4 +23,8 @@ public interface GuildServerRepository extends JpaRepository<GuildServer, Long> 
     
     // 删除指定账号关联的所有服务器
     void deleteByDiscordAccountId(Long discordAccountId);
+
+    // 按账号ID列表查询（用于权限过滤）
+    List<GuildServer> findByDiscordAccountIdIn(List<Long> discordAccountIds);
+    List<GuildServer> findByMerchantIdAndDiscordAccountIdIn(Long merchantId, List<Long> discordAccountIds);
 }

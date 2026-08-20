@@ -82,6 +82,9 @@ public class EmuInstance {
     @Column(name = "auto_last_result", length = 256)
     private String autoLastResult;
 
+    @Column(name = "guild_server_id")
+    private Long guildServerId;
+
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 
