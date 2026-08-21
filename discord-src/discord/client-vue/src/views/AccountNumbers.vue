@@ -37,55 +37,57 @@
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="tableData" stripe style="width: 100%;">
-        <el-table-column label="操作" width="200" fixed="left">
-          <template #default="{ row }">
-            <div class="action-cell">
-              <el-button size="small" type="primary" link @click="openBindDialog(row)">
-                绑定账号
-              </el-button>
-              <el-button size="small" type="primary" link @click="handleUnbind(row)">
-                解绑账号
-              </el-button>
-              <el-button size="small" type="primary" link @click="openHistoryDialog(row)">
-                绑定历史
-              </el-button>
-              <el-button size="small" type="primary" link @click="handleDelete(row)">
-                删除
-              </el-button>
-            </div>
-          </template>
-        </el-table-column>
+      <div class="table-wrap">
+        <el-table v-loading="loading" :data="tableData" stripe style="width: 100%;" height="100%">
+          <el-table-column label="操作" width="200" fixed="left">
+            <template #default="{ row }">
+              <div class="action-cell">
+                <el-button size="small" type="primary" link @click="openBindDialog(row)">
+                  绑定账号
+                </el-button>
+                <el-button size="small" type="primary" link @click="handleUnbind(row)">
+                  解绑账号
+                </el-button>
+                <el-button size="small" type="primary" link @click="openHistoryDialog(row)">
+                  绑定历史
+                </el-button>
+                <el-button size="small" type="primary" link @click="handleDelete(row)">
+                  删除
+                </el-button>
+              </div>
+            </template>
+          </el-table-column>
 
-        <el-table-column prop="id" label="编号" width="100" align="center" />
+          <el-table-column prop="id" label="编号" width="100" align="center" />
 
-        <el-table-column prop="accountName" label="用户名" min-width="200">
-          <template #default="{ row }">
-            <span v-if="row.accountName" class="bound-account">{{ row.accountName }}</span>
-            <el-tag v-else type="info" size="small">未绑定</el-tag>
-          </template>
-        </el-table-column>
+          <el-table-column prop="accountName" label="用户名" min-width="200">
+            <template #default="{ row }">
+              <span v-if="row.accountName" class="bound-account">{{ row.accountName }}</span>
+              <el-tag v-else type="info" size="small">未绑定</el-tag>
+            </template>
+          </el-table-column>
 
-        <el-table-column prop="accountEmail" label="账号邮箱" min-width="200">
-          <template #default="{ row }">
-            <span v-if="row.accountEmail">{{ row.accountEmail }}</span>
-            <span v-else style="color: var(--color-text-3);">-</span>
-          </template>
-        </el-table-column>
+          <el-table-column prop="accountEmail" label="账号邮箱" min-width="200">
+            <template #default="{ row }">
+              <span v-if="row.accountEmail">{{ row.accountEmail }}</span>
+              <span v-else style="color: var(--color-text-3);">-</span>
+            </template>
+          </el-table-column>
 
-        <el-table-column prop="creatorName" label="创建人" width="120">
-          <template #default="{ row }">
-            <span v-if="row.creatorName">{{ row.creatorName }}</span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
+          <el-table-column prop="creatorName" label="创建人" width="120">
+            <template #default="{ row }">
+              <span v-if="row.creatorName">{{ row.creatorName }}</span>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
 
-        <el-table-column prop="createdAt" label="创建时间" width="180">
-          <template #default="{ row }">
-            {{ formatDateTime(row.createdAt) }}
-          </template>
-        </el-table-column>
-      </el-table>
+          <el-table-column prop="createdAt" label="创建时间" width="180">
+            <template #default="{ row }">
+              {{ formatDateTime(row.createdAt) }}
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
 
       <div class="pagination-wrap">
         <el-pagination
@@ -124,8 +126,7 @@
         v-model="generateDialog.quantity"
         :min="1"
         :max="500"
-        :step="10"
-        step-strictly
+        :step="1"
         style="width: 100%; margin-top: 12px;"
         placeholder="请输入数量"
       />
@@ -492,6 +493,13 @@ onMounted(() => {
 <style scoped>
 .account-numbers-page {
   padding: 20px;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .page-header {
@@ -499,6 +507,7 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 20px;
+  flex-shrink: 0;
 }
 
 .page-title-wrap {
@@ -523,8 +532,17 @@ onMounted(() => {
   gap: 10px;
 }
 
+.page-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .filter-bar {
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 
 .filter-controls {
@@ -533,10 +551,18 @@ onMounted(() => {
   align-items: center;
 }
 
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
 .pagination-wrap {
   margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .dialog-tip {

@@ -49,47 +49,37 @@ public class DiscordAccountNumberService {
         boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role);
         boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(role);
 
-        // 普通用户：只能看到分配给自己的编号
+        // 普通用户：只能看到分配给自己的编号（使用SQL分页，避免内存全表扫描）
         if (!isPlatformAdmin && !isMerchantAdmin && currentAgentId != null) {
             List<Long> assignedNumberIds = relRepository.findAccountNumberIdsByAgentId(currentAgentId);
+            Map<String, Object> empty = new HashMap<>();
+            empty.put("content", List.of());
+            empty.put("totalElements", 0);
+            empty.put("totalPages", 0);
+            empty.put("number", 0);
+            empty.put("size", size);
             if (assignedNumberIds.isEmpty()) {
-                Map<String, Object> empty = new HashMap<>();
-                empty.put("content", List.of());
-                empty.put("totalElements", 0);
-                empty.put("totalPages", 0);
-                empty.put("number", 0);
-                empty.put("size", size);
                 return empty;
             }
 
-            // 先获取所有匹配的编号（不分页），再过滤出属于当前用户的
-            List<DiscordAccountNumber> allMatching;
+            Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
+            Page<DiscordAccountNumber> pageResult;
             if (keyword != null && !keyword.trim().isEmpty() && startTime != null && endTime != null) {
-                allMatching = accountNumberRepository.searchByKeywordAndTimeRange(keyword, startTime, endTime, PageRequest.of(0, 100000)).getContent();
+                pageResult = accountNumberRepository.searchByKeywordAndTimeRangeInIds(keyword, startTime, endTime, assignedNumberIds, pageable);
             } else if (keyword != null && !keyword.trim().isEmpty()) {
-                allMatching = accountNumberRepository.searchByKeyword(keyword, PageRequest.of(0, 100000)).getContent();
+                pageResult = accountNumberRepository.searchByKeywordInIds(keyword, assignedNumberIds, pageable);
             } else if (startTime != null && endTime != null) {
-                allMatching = accountNumberRepository.findByTimeRange(startTime, endTime, PageRequest.of(0, 100000)).getContent();
+                pageResult = accountNumberRepository.findByTimeRangeInIds(startTime, endTime, assignedNumberIds, pageable);
             } else {
-                allMatching = accountNumberRepository.findAll(PageRequest.of(0, 100000)).getContent();
+                pageResult = accountNumberRepository.findByIdIn(assignedNumberIds, pageable);
             }
 
-            List<DiscordAccountNumber> allFiltered = allMatching.stream()
-                    .filter(n -> assignedNumberIds.contains(n.getId()))
-                    .sorted(Comparator.comparing(DiscordAccountNumber::getId, Comparator.nullsLast(Comparator.naturalOrder())))
-                    .toList();
-
-            long filteredTotal = allFiltered.size();
-            int startIdx = page * size;
-            int endIdx = Math.min(startIdx + size, (int) filteredTotal);
-            List<DiscordAccountNumber> pagedContent = startIdx >= filteredTotal ? List.of() : allFiltered.subList(startIdx, endIdx);
-
             Map<String, Object> result = new HashMap<>();
-            result.put("content", convertToDTOList(pagedContent));
-            result.put("totalElements", filteredTotal);
-            result.put("totalPages", (int) Math.ceil((double) filteredTotal / size));
-            result.put("number", page);
-            result.put("size", size);
+            result.put("content", convertToDTOList(pageResult.getContent()));
+            result.put("totalElements", pageResult.getTotalElements());
+            result.put("totalPages", pageResult.getTotalPages());
+            result.put("number", pageResult.getNumber());
+            result.put("size", pageResult.getSize());
             return result;
         }
 
@@ -162,7 +152,28 @@ public class DiscordAccountNumberService {
                 numbers.add(num);
             }
         }
-        return accountNumberRepository.saveAll(numbers);
+        List<DiscordAccountNumber> saved = accountNumberRepository.saveAll(numbers);
+
+        // 自动关联创建者（普通用户）：确保创建后能在自己的列表中看到
+        if (currentUser != null) {
+            String role = SecurityUtils.currentRole();
+            boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role);
+            boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(role);
+            if (!isPlatformAdmin && !isMerchantAdmin) {
+                Instant now = Instant.now();
+                List<com.discordadmin.entity.AgentAccountNumberRel> rels = new ArrayList<>();
+                for (DiscordAccountNumber n : saved) {
+                    com.discordadmin.entity.AgentAccountNumberRel rel = new com.discordadmin.entity.AgentAccountNumberRel();
+                    rel.setAgentId(currentUser.getId());
+                    rel.setAccountNumberId(n.getId());
+                    rel.setLinkedAt(now);
+                    rel.setCreatedAt(now);
+                    rels.add(rel);
+                }
+                relRepository.saveAll(rels);
+            }
+        }
+        return saved;
     }
 
     /** 按数量生成空编号（用户名和邮箱为空，后续可绑定） */
@@ -181,7 +192,28 @@ public class DiscordAccountNumberService {
             num.setCreatorName(creatorName);
             numbers.add(num);
         }
-        return accountNumberRepository.saveAll(numbers);
+        List<DiscordAccountNumber> saved = accountNumberRepository.saveAll(numbers);
+
+        // 自动关联创建者（普通用户）：确保创建后能在自己的列表中看到
+        if (currentUser != null) {
+            String role = SecurityUtils.currentRole();
+            boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role);
+            boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(role);
+            if (!isPlatformAdmin && !isMerchantAdmin) {
+                Instant now = Instant.now();
+                List<com.discordadmin.entity.AgentAccountNumberRel> rels = new ArrayList<>();
+                for (DiscordAccountNumber n : saved) {
+                    com.discordadmin.entity.AgentAccountNumberRel rel = new com.discordadmin.entity.AgentAccountNumberRel();
+                    rel.setAgentId(currentUser.getId());
+                    rel.setAccountNumberId(n.getId());
+                    rel.setLinkedAt(now);
+                    rel.setCreatedAt(now);
+                    rels.add(rel);
+                }
+                relRepository.saveAll(rels);
+            }
+        }
+        return saved;
     }
 
     /** 绑定账号 */

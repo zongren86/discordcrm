@@ -108,99 +108,149 @@ public class DiscordAccountService {
 
         List<DiscordAccount> accounts = queryAccounts(keyword, status, merchantId, isPlatformAdmin, isMerchantAdmin, currentAgentId);
 
-        Map<Long, Boolean> tokenValidMap = new HashMap<>();
-        boolean changed = false;
-        long now = System.currentTimeMillis();
-        List<DiscordAccount> toSaveList = new ArrayList<>();
-
-        // 1) 先查缓存：命中缓存的账号直接跳过HTTP验证
-        List<DiscordAccount> needValidate = new ArrayList<>();
-        List<DiscordAccount> needAvatar = new ArrayList<>();
+        // ============== 优化：仅查数据库，不做任何 Discord API 调用 ==============
+        // Token 有效性：直接读数据库 token_valid 字段（由 TokenValidationScheduler 定时体检）
+        Map<Long, Boolean> tokenValidMap = new HashMap<>(accounts.size());
         for (DiscordAccount a : accounts) {
-            // Token 验证：查缓存
-            if (a.getAccountType() == DiscordAccount.AccountType.USER
-                    && a.getToken() != null && !a.getToken().isBlank()) {
-                Object[] cached = TOKEN_VALID_CACHE.get(a.getId());
-                if (cached != null && (Long) cached[1] > now) {
-                    // 缓存命中
-                    tokenValidMap.put(a.getId(), (Boolean) cached[0]);
-                } else {
-                    needValidate.add(a);
-                }
-            } else {
-                tokenValidMap.put(a.getId(), true);
-            }
-
-            // 头像：仅在头像为空时需要获取
-            if (a.getAvatarUrl() == null
-                    && a.getAccountType() == DiscordAccount.AccountType.USER
-                    && a.getToken() != null
-                    && a.getDiscordId() != null) {
-                needAvatar.add(a);
-            }
+            boolean valid = Boolean.TRUE.equals(a.getTokenValid())
+                    || a.getAccountType() != DiscordAccount.AccountType.USER
+                    || a.getToken() == null || a.getToken().isBlank();
+            tokenValidMap.put(a.getId(), valid);
         }
 
-        // 2) Token 验证：并行执行
-        if (!needValidate.isEmpty()) {
-            try {
-                CompletableFuture.allOf(needValidate.stream()
-                        .map(a -> CompletableFuture.runAsync(() -> {
-                            boolean isValid = checkTokenValid(a);
-                            tokenValidMap.put(a.getId(), isValid);
-                            // 写入缓存
-                            TOKEN_VALID_CACHE.put(a.getId(), new Object[]{
-                                    isValid, System.currentTimeMillis() + TOKEN_CACHE_TTL_MS
-                            });
-                        }))
-                        .toArray(CompletableFuture[]::new)).get(20, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                log.warn("并行Token验证失败，使用默认值(true): {}", e.getMessage());
-                for (DiscordAccount a : needValidate) {
-                    tokenValidMap.putIfAbsent(a.getId(), true);
-                }
-            }
-        }
-
-        // 3) 头像获取：仅对头像为空的账号并行获取
-        if (!needAvatar.isEmpty()) {
-            try {
-                CompletableFuture.allOf(needAvatar.stream()
-                        .map(a -> CompletableFuture.runAsync(() -> {
-                            try {
-                                JsonNode me = userClient.getMe(a.getToken());
-                                String avatarHash = me.path("avatar").asText(null);
-                                if (avatarHash != null && !avatarHash.isBlank()) {
-                                    String ext = avatarHash.startsWith("a_") ? "gif" : "png";
-                                    String avatarUrl = "https://cdn.discordapp.com/avatars/"
-                                            + a.getDiscordId() + "/" + avatarHash + "." + ext;
-                                    a.setAvatarUrl(avatarUrl);
-                                    synchronized (toSaveList) {
-                                        toSaveList.add(a);
-                                    }
-                                }
-                            } catch (Exception ignored) {}
-                        }))
-                        .toArray(CompletableFuture[]::new)).get(20, TimeUnit.SECONDS);
-            } catch (Exception e) {
-                log.warn("并行获取头像失败: {}", e.getMessage());
-            }
-        }
-
-        if (!toSaveList.isEmpty()) {
-            accountRepository.saveAll(toSaveList);
-        }
-
-        // 4) 仅查询会话数量（消息数已移到其他数据功能，好友数从缓存字段读取）
+        // 批量统计会话数量
         Map<Long, Long> conversationCountMap = batchCountConversations(accounts);
 
+        // ============== 修复 N+1：一次性批量查出 账号→编号→坐席→编号ID 映射 ==============
+        // Map<accountId, 直接关联的Agent>（优先用JOIN FETCH已加载的agents）
+        Map<Long, Agent> directAgentByAccountId = resolveDirectAgents(accounts, currentAgentId);
+
+        // Map<accountId, numberId>（一个账号绑定一个编号，取第一个，用于列表"账号编号"列显示）
+        // 同时收集 numberId 集合，后面查编号链路关联的坐席
+        Map<Long, Long> numberIdByAccountId = new HashMap<>();
+        Map<Long, Long> accountIdByNumberId = new HashMap<>();
+        if (!accounts.isEmpty()) {
+            Set<Long> accountIds = accounts.stream().map(DiscordAccount::getId).collect(Collectors.toSet());
+            List<DiscordAccountNumber> numbers = accountNumberRepository.findByDiscordAccountIdIn(accountIds);
+            for (DiscordAccountNumber num : numbers) {
+                if (num.getDiscordAccountId() != null) {
+                    numberIdByAccountId.putIfAbsent(num.getDiscordAccountId(), num.getId());
+                    accountIdByNumberId.put(num.getId(), num.getDiscordAccountId());
+                }
+            }
+        }
+
+        // 通过编号链路关联坐席：numberIds → rels(agentId) → agents
+        Map<Long, Agent> numberChainAgentByAccountId = resolveNumberChainAgents(
+                numberIdByAccountId, accountIdByNumberId, currentAgentId);
+
+        // 统计查询（好友数从 friend_count 缓存字段读）
         Map<Long, Boolean> finalTokenValidMap = tokenValidMap;
         return accounts.stream()
-                .map(a -> buildAccountDto(a,
-                        finalTokenValidMap.getOrDefault(a.getId(), true),
-                        a.getFriendCount() != null ? a.getFriendCount() : 0L,
-                        conversationCountMap.getOrDefault(a.getId(), 0L),
-                        0L)) // messageCount 不再显示
+                .map(a -> {
+                    // 优先直接关联Agent；其次通过编号链路找
+                    Agent directAgent = directAgentByAccountId.get(a.getId());
+                    Agent chainAgent = numberChainAgentByAccountId.get(a.getId());
+                    Agent matched = directAgent != null ? directAgent : chainAgent;
+                    String agentName = null, agentUsername = null;
+                    Long agentId = null;
+                    if (matched != null) {
+                        agentName = matched.getDisplayName() != null ? matched.getDisplayName() : matched.getUsername();
+                        agentUsername = matched.getUsername();
+                        agentId = matched.getId();
+                    }
+                    Long accountNumberId = numberIdByAccountId.get(a.getId());
+                    return AccountDto.from(a,
+                            botManager.isConnected(a.getId()),
+                            botManager.isConnecting(a.getId()),
+                            finalTokenValidMap.getOrDefault(a.getId(), true),
+                            a.getFriendCount() != null ? a.getFriendCount() : 0L,
+                            conversationCountMap.getOrDefault(a.getId(), 0L),
+                            0L,
+                            agentName, agentUsername, agentId,
+                            accountNumberId);
+                })
                 .toList();
+    }
+
+    /**
+     * 从 JOIN FETCH 加载的 agents 集合中解析直接关联的Agent。
+     * 优先匹配当前登录用户；否则取第一个。
+     */
+    private Map<Long, Agent> resolveDirectAgents(List<DiscordAccount> accounts, Long currentAgentId) {
+        Map<Long, Agent> result = new HashMap<>();
+        for (DiscordAccount a : accounts) {
+            if (a.getAgents() == null || a.getAgents().isEmpty()) continue;
+            Agent matched = null;
+            if (currentAgentId != null) {
+                for (Agent ag : a.getAgents()) {
+                    if (ag.getId().equals(currentAgentId)) { matched = ag; break; }
+                }
+            }
+            if (matched == null) {
+                matched = a.getAgents().iterator().next();
+            }
+            result.put(a.getId(), matched);
+        }
+        return result;
+    }
+
+    /**
+     * 通过编号链路（account → number → rel → agent）批量解析关联坐席。
+     * 不做循环内单条查询，4条SQL一次性搞定 → 组装Map。
+     */
+    private Map<Long, Agent> resolveNumberChainAgents(Map<Long, Long> numberIdByAccountId,
+                                                       Map<Long, Long> accountIdByNumberId,
+                                                       Long currentAgentId) {
+        Map<Long, Agent> result = new HashMap<>();
+        if (accountIdByNumberId.isEmpty()) return result;
+
+        // 1. 找出「直接关联查询未能命中」的账号，它们才有必要通过编号链路找
+        Set<Long> pendingAccountIds = new HashSet<>();
+        // 这里不判断直接关联命中情况，先查全量；调用方在最外层会优先使用直接关联。
+        // 为减少查询量，只查询「编号存在」的账号对应的 numberId
+        Set<Long> numberIds = accountIdByNumberId.keySet();
+
+        // 2. 查询编号 → 坐席 的关系
+        List<AgentAccountNumberRel> rels = relRepository.findByAccountNumberIdIn(new ArrayList<>(numberIds));
+        if (rels.isEmpty()) return result;
+
+        // 3. 按 numberId 分组 agentIds
+        Map<Long, List<Long>> agentIdsByNumberId = new HashMap<>();
+        Set<Long> allAgentIds = new HashSet<>();
+        for (AgentAccountNumberRel rel : rels) {
+            agentIdsByNumberId.computeIfAbsent(rel.getAccountNumberId(), k -> new ArrayList<>())
+                    .add(rel.getAgentId());
+            allAgentIds.add(rel.getAgentId());
+        }
+
+        // 4. 批量查 agents
+        Map<Long, Agent> agentById = allAgentIds.isEmpty() ? Map.of() :
+                agentRepository.findAllById(allAgentIds).stream()
+                        .collect(Collectors.toMap(Agent::getId, ag -> ag, (ag1, ag2) -> ag1));
+
+        // 5. 逐个账号选择最合适的Agent（优先当前用户）
+        for (var entry : numberIdByAccountId.entrySet()) {
+            Long accountId = entry.getKey();
+            Long numberId = entry.getValue();
+            List<Long> candidateAgentIds = agentIdsByNumberId.get(numberId);
+            if (candidateAgentIds == null || candidateAgentIds.isEmpty()) continue;
+
+            Agent matched = null;
+            if (currentAgentId != null && candidateAgentIds.contains(currentAgentId)) {
+                matched = agentById.get(currentAgentId);
+            }
+            if (matched == null) {
+                for (Long aid : candidateAgentIds) {
+                    matched = agentById.get(aid);
+                    if (matched != null) break;
+                }
+            }
+            if (matched != null) {
+                result.put(accountId, matched);
+            }
+        }
+        return result;
     }
 
     /** 检测 USER 账号的 token 有效性（仅对401错误标记为过期，其他错误保留为有效） */

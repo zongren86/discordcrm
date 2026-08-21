@@ -74,6 +74,13 @@ public class DiscordAccount {
     @Column(name = "token_checked_at")
     private Instant tokenCheckedAt;
 
+    /**
+     * Token 是否有效（数据库持久化字段，列表直接读，不实时调用Discord API验证）。
+     * true=有效，false=已失效(仅401会置为false)；其他网络/限流错误不改变此值。
+     */
+    @Column(name = "token_valid")
+    private Boolean tokenValid = true;
+
     @ManyToMany(mappedBy = "discordAccounts")
     @JsonIgnore
     private Set<Agent> agents = new HashSet<>();
