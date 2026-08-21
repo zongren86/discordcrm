@@ -91,11 +91,11 @@
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
-          :page-sizes="[10, 20, 50, 100]"
+          :page-sizes="[20, 50, 100, 200, 500]"
           :total="pagination.total"
           layout="total, sizes, prev, pager, next, jumper"
-          @size-change="fetchData"
-          @current-change="fetchData"
+          @size-change="handleSizeChange"
+          @current-change="handleCurrentChange"
         />
       </div>
 
@@ -241,8 +241,8 @@ const filters = reactive({
 })
 
 const pagination = reactive({
-  page: 0,
-  size: 20,
+  page: 1,
+  size: 100,
   total: 0
 })
 
@@ -288,7 +288,7 @@ async function fetchData() {
   loading.value = true
   try {
     const params = {
-      page: pagination.page,
+      page: pagination.page - 1,
       size: pagination.size
     }
     if (filters.keyword) {
@@ -311,7 +311,18 @@ async function fetchData() {
 function resetFilters() {
   filters.keyword = ''
   filters.dateRange = null
-  pagination.page = 0
+  pagination.page = 1
+  fetchData()
+}
+
+function handleSizeChange(size) {
+  pagination.size = size
+  pagination.page = 1
+  fetchData()
+}
+
+function handleCurrentChange(page) {
+  pagination.page = page
   fetchData()
 }
 

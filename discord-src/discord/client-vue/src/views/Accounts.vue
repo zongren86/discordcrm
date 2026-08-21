@@ -130,7 +130,7 @@
           <template #default="{ row }">{{ row.remark || '-' }}</template>
         </el-table-column>
 
-        <el-table-column label="操作" width="340" fixed="right">
+        <el-table-column label="操作" width="420" fixed="right">
           <template #default="{ row }">
             <div class="action-cell">
               <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="openRefreshToken(row)">

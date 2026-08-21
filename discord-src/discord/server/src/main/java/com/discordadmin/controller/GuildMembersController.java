@@ -16,16 +16,21 @@ import com.discordadmin.repository.FriendRepository;
 import com.discordadmin.repository.GuildMemberRepository;
 import com.discordadmin.repository.GuildServerRepository;
 import com.discordadmin.security.SecurityUtils;
+import jakarta.persistence.criteria.Predicate;
 import lombok.Data;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/guild-members")
@@ -78,26 +83,165 @@ public class GuildMembersController {
         String role = SecurityUtils.currentRole();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
-        List<GuildMember> members = queryMembers(guildServerId, keyword);
+        // 1) 权限：先收敛当前用户可见的服务器ID集合
+        Set<Long> visibleServerIds = resolveVisibleServerIds(merchantId, role, currentAgentId);
+        if (visibleServerIds.isEmpty()) {
+            return emptyPage(page, size);
+        }
 
-        Map<Long, GuildServer> serverMap = batchFetchServers(members);
+        // 2) 服务器ID再被显式筛选条件进一步收窄
+        Set<Long> effectiveServerIds = new HashSet<>(visibleServerIds);
+        if (guildServerId != null) {
+            effectiveServerIds.retainAll(Collections.singleton(guildServerId));
+        }
+        if (effectiveServerIds.isEmpty()) {
+            return emptyPage(page, size);
+        }
 
-        members = filterByDiscordAccount(members, serverMap, discordAccountId);
+        // 3) 通过账号筛选进一步收窄（服务器→账号反向过滤）
+        if (discordAccountId != null) {
+            Map<Long, GuildServer> allServers = fetchServerMap(effectiveServerIds);
+            effectiveServerIds.removeIf(sid -> {
+                GuildServer s = allServers.get(sid);
+                return s == null || !discordAccountId.equals(s.getDiscordAccountId());
+            });
+            if (effectiveServerIds.isEmpty()) {
+                return emptyPage(page, size);
+            }
+        }
+
+        // 4) 数据库级分页查询（主筛选：serverIds + keyword + discordStatus + friendStatus + 日期范围）
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
+        Page<GuildMember> memberPage = queryMembersPage(
+                effectiveServerIds, keyword,
+                discordStatus, friendStatus,
+                fetchDateFrom, fetchDateTo,
+                passDateFrom, passDateTo,
+                pageable);
+
+        List<GuildMember> members = memberPage.getContent();
+        if (members.isEmpty()) {
+            return new PageResponse<>(
+                    new ArrayList<>(), memberPage.getTotalElements(),
+                    memberPage.getTotalPages(), page, size);
+        }
+
+        // 5) 仅对分页内的 20 条数据做关联查询
+        Map<Long, GuildServer> serverMap = fetchServerMap(new HashSet<>(members.stream()
+                .map(GuildMember::getGuildServerId).filter(Objects::nonNull).collect(Collectors.toList())));
 
         Map<Long, DiscordAccount> accountMap = batchFetchAccounts(serverMap);
 
-        Map<Long, Friend> friendMap = batchFetchFriends(members);
+        // 分页内 discordAccountId 名称映射
+        Set<Long> assignedAccountIds = members.stream()
+                .map(GuildMember::getDiscordAccountId).filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, DiscordAccount> assignedAccountMap = assignedAccountIds.isEmpty() ? new HashMap<>()
+                : discordAccountRepository.findByIdIn(new ArrayList<>(assignedAccountIds)).stream()
+                    .collect(Collectors.toMap(DiscordAccount::getId, a -> a));
 
-        Map<String, Map<Long, Conversation>> conversationMap = batchFetchConversations(members, friendMap, serverMap);
+        Map<Long, Friend> friendMap = batchFetchFriendsForPage(members);
 
-        List<MemberDTO> dtos = buildDTOs(members, serverMap, accountMap, friendMap, conversationMap);
+        // 6) 仅当非 管理员 时，才进行"会话可见性"过滤（成本最高的一步，限定在分页大小内）
+        List<MemberDTO> dtos;
+        if ("PLATFORM_ADMIN".equals(role) || "MERCHANT_ADMIN".equals(role)) {
+            dtos = buildDTOs(members, serverMap, accountMap, friendMap, assignedAccountMap);
+        } else {
+            Map<String, Map<Long, Conversation>> conversationMap = batchFetchConversations(members, friendMap, serverMap);
+            List<MemberDTO> allDtos = buildDTOs(members, serverMap, accountMap, friendMap, assignedAccountMap);
+            dtos = filterDtosByAgentAccess(allDtos, conversationMap, currentAgentId, role);
+        }
 
-        // 权限过滤：普通用户只能看到自己名下会话的成员
-        dtos = filterDtosByAgentAccess(dtos, conversationMap, currentAgentId, role);
+        return new PageResponse<>(dtos, memberPage.getTotalElements(),
+                memberPage.getTotalPages(), page, size);
+    }
 
-        dtos = applyFilters(dtos, discordStatus, friendStatus, fetchDateFrom, fetchDateTo, passDateFrom, passDateTo);
+    private PageResponse<MemberDTO> emptyPage(int page, int size) {
+        return new PageResponse<>(new ArrayList<>(), 0, 0, page, size);
+    }
 
-        return paginate(dtos, page, size);
+    /** 权限：确定当前用户可见的所有服务器ID */
+    private Set<Long> resolveVisibleServerIds(Long merchantId, String role, Long currentAgentId) {
+        Set<Long> visibleServerIds;
+        if ("PLATFORM_ADMIN".equals(role)) {
+            visibleServerIds = merchantId != null
+                    ? guildServerRepository.findByMerchantId(merchantId).stream().map(GuildServer::getId).collect(Collectors.toSet())
+                    : guildServerRepository.findAll().stream().map(GuildServer::getId).collect(Collectors.toSet());
+        } else if ("MERCHANT_ADMIN".equals(role)) {
+            visibleServerIds = merchantId != null
+                    ? guildServerRepository.findByMerchantId(merchantId).stream().map(GuildServer::getId).collect(Collectors.toSet())
+                    : Collections.emptySet();
+        } else if (currentAgentId != null) {
+            Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
+            if (assignedAccountIds.isEmpty()) {
+                visibleServerIds = Collections.emptySet();
+            } else if (merchantId != null) {
+                visibleServerIds = guildServerRepository.findByMerchantIdAndDiscordAccountIdIn(merchantId, new ArrayList<>(assignedAccountIds))
+                        .stream().map(GuildServer::getId).collect(Collectors.toSet());
+            } else {
+                visibleServerIds = guildServerRepository.findByDiscordAccountIdIn(new ArrayList<>(assignedAccountIds))
+                        .stream().map(GuildServer::getId).collect(Collectors.toSet());
+            }
+        } else {
+            visibleServerIds = Collections.emptySet();
+        }
+        return visibleServerIds;
+    }
+
+    private Map<Long, GuildServer> fetchServerMap(Set<Long> serverIds) {
+        Map<Long, GuildServer> map = new HashMap<>();
+        if (serverIds == null || serverIds.isEmpty()) return map;
+        guildServerRepository.findAllById(serverIds).forEach(s -> map.put(s.getId(), s));
+        return map;
+    }
+
+    /** 用 JPA Specification 把所有可下推的筛选条件一次性下推到 SQL，并且真正分页 */
+    private Page<GuildMember> queryMembersPage(Set<Long> serverIds,
+                                               String keyword,
+                                               String discordStatus,
+                                               Integer friendStatus,
+                                               Instant fetchDateFrom, Instant fetchDateTo,
+                                               Instant passDateFrom, Instant passDateTo,
+                                               Pageable pageable) {
+        // 有 keyword 时：JPA Specification 不能直接写 LOWER 多字段 OR LIKE（会比较难写）
+        // 因此：没有 keyword 走 Specification；有 keyword 走自定义 @Query（Repository 已有方法但仅支持单 server）
+        // 为统一能力：我们直接写一个 Specification 处理全部非 keyword 条件；keyword 再在 WHERE 中用 CriteriaBuilder 构建
+        Specification<GuildMember> spec = (root, q, cb) -> {
+            List<Predicate> preds = new ArrayList<>();
+            preds.add(root.get("guildServerId").in(serverIds));
+
+            if (discordStatus != null && !discordStatus.isBlank()) {
+                preds.add(cb.equal(cb.lower(root.get("discordStatus")), discordStatus.toLowerCase()));
+            }
+            if (friendStatus != null) {
+                preds.add(cb.equal(root.get("friendStatus"), friendStatus));
+            }
+            if (fetchDateFrom != null) {
+                preds.add(cb.greaterThanOrEqualTo(root.get("lastFetchedAt"), fetchDateFrom));
+            }
+            if (fetchDateTo != null) {
+                preds.add(cb.lessThanOrEqualTo(root.get("lastFetchedAt"), fetchDateTo));
+            }
+            if (passDateFrom != null) {
+                preds.add(cb.greaterThanOrEqualTo(root.get("finishedAt"), passDateFrom));
+            }
+            if (passDateTo != null) {
+                preds.add(cb.lessThanOrEqualTo(root.get("finishedAt"), passDateTo));
+            }
+            if (keyword != null && !keyword.isBlank()) {
+                String kw = "%" + keyword.toLowerCase(Locale.ROOT) + "%";
+                Predicate pKeyword = cb.or(
+                        cb.like(cb.lower(cb.coalesce(root.get("username"), cb.literal(""))), kw),
+                        cb.like(cb.lower(cb.coalesce(root.get("nick"), cb.literal(""))), kw),
+                        cb.like(cb.lower(cb.coalesce(root.get("globalName"), cb.literal(""))), kw),
+                        cb.like(cb.lower(cb.coalesce(root.get("displayName"), cb.literal(""))), kw),
+                        cb.like(cb.lower(cb.coalesce(root.get("userId"), cb.literal(""))), kw)
+                );
+                preds.add(pKeyword);
+            }
+            return cb.and(preds.toArray(new Predicate[0]));
+        };
+
+        return guildMemberRepository.findAll(spec, pageable);
     }
 
     @GetMapping("/servers")
@@ -378,37 +522,81 @@ public class GuildMembersController {
         return conversationMap;
     }
 
+    /** 分页内批量查 friends：仅查当前页的成员，先按 server+userId 查，未命中再回退一次全 user_id */
+    private Map<Long, Friend> batchFetchFriendsForPage(List<GuildMember> members) {
+        Map<Long, Friend> friendMap = new HashMap<>();
+
+        Map<Long, List<GuildMember>> byServer = members.stream()
+                .filter(m -> m.getGuildServerId() != null && m.getUserId() != null)
+                .collect(Collectors.groupingBy(GuildMember::getGuildServerId));
+
+        for (Map.Entry<Long, List<GuildMember>> entry : byServer.entrySet()) {
+            Long serverId = entry.getKey();
+            List<String> userIds = entry.getValue().stream()
+                    .map(GuildMember::getUserId)
+                    .distinct()
+                    .collect(Collectors.toList());
+
+            List<Friend> friends = friendRepository.findByGuildServerIdAndFriendDiscordUserIdIn(serverId, userIds);
+            Map<String, Friend> serverFriendMap = new HashMap<>();
+            for (Friend f : friends) {
+                serverFriendMap.put(f.getFriendDiscordUserId(), f);
+            }
+            for (GuildMember m : entry.getValue()) {
+                Friend f = serverFriendMap.get(m.getUserId());
+                if (f != null) {
+                    friendMap.put(m.getId(), f);
+                }
+            }
+        }
+
+        Set<String> matchedUserIds = friendMap.values().stream()
+                .map(Friend::getFriendDiscordUserId)
+                .collect(Collectors.toSet());
+
+        Set<String> allUserIds = members.stream()
+                .map(GuildMember::getUserId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        Set<String> remainingUserIds = new HashSet<>(allUserIds);
+        remainingUserIds.removeAll(matchedUserIds);
+
+        if (!remainingUserIds.isEmpty()) {
+            List<Friend> fallbackFriends = friendRepository.findByFriendDiscordUserIdIn(new ArrayList<>(remainingUserIds));
+            Map<String, Friend> fallbackMap = new HashMap<>();
+            for (Friend f : fallbackFriends) {
+                fallbackMap.put(f.getFriendDiscordUserId(), f);
+            }
+            for (GuildMember m : members) {
+                if (!friendMap.containsKey(m.getId())) {
+                    Friend f = fallbackMap.get(m.getUserId());
+                    if (f != null) {
+                        friendMap.put(m.getId(), f);
+                    }
+                }
+            }
+        }
+
+        return friendMap;
+    }
+
     private List<MemberDTO> buildDTOs(List<GuildMember> members,
                                       Map<Long, GuildServer> serverMap,
                                       Map<Long, DiscordAccount> accountMap,
                                       Map<Long, Friend> friendMap,
-                                      Map<String, Map<Long, Conversation>> conversationMap) {
+                                      Map<Long, DiscordAccount> assignedAccountMap) {
         List<MemberDTO> dtos = new ArrayList<>();
-
-        // 批量获取分配给成员的Discord账号（用于添加账号列）
-        Set<Long> assignedAccountIds = members.stream()
-                .map(GuildMember::getDiscordAccountId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        Map<Long, DiscordAccount> assignedAccountMap = new HashMap<>();
-        if (!assignedAccountIds.isEmpty()) {
-            discordAccountRepository.findByIdIn(new ArrayList<>(assignedAccountIds))
-                    .forEach(a -> assignedAccountMap.put(a.getId(), a));
-        }
 
         for (GuildMember m : members) {
             GuildServer server = serverMap.get(m.getGuildServerId());
             DiscordAccount account = server != null ? accountMap.get(server.getDiscordAccountId()) : null;
             Friend friend = friendMap.get(m.getId());
 
-            // 好友添加状态
             Integer friendStatus = m.getFriendStatus();
             String friendStatusText = getFriendStatusText(friendStatus);
-            
-            // Discord在线状态
             String discordStatus = m.getDiscordStatus();
 
-            // 获取添加好友时使用的账号名称
             String assignedAccountName = null;
             if (m.getDiscordAccountId() != null) {
                 DiscordAccount assignedAccount = assignedAccountMap.get(m.getDiscordAccountId());
@@ -433,7 +621,7 @@ public class GuildMembersController {
             dto.setFriendStatusText(friendStatusText);
             dto.setLastError(m.getLastError());
             dto.setAssignedAccountName(assignedAccountName);
-            dto.setPassDate(m.getFinishedAt() != null ? m.getFinishedAt() : 
+            dto.setPassDate(m.getFinishedAt() != null ? m.getFinishedAt() :
                 (friend != null ? friend.getCreatedAt() : null));
             dto.setJoinedAt(m.getJoinedAt());
             dto.setLastFetchedAt(m.getLastFetchedAt());
@@ -522,6 +710,16 @@ public class GuildMembersController {
         int totalPages;
         int currentPage;
         int size;
+
+        public PageResponse() {}
+
+        public PageResponse(List<T> content, long totalElements, int totalPages, int currentPage, int size) {
+            this.content = content;
+            this.totalElements = totalElements;
+            this.totalPages = totalPages;
+            this.currentPage = currentPage;
+            this.size = size;
+        }
     }
 
     /** 获取当前用户有权限的账号ID列表（用于权限过滤） */

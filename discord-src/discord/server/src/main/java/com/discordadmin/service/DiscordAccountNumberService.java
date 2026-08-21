@@ -76,7 +76,7 @@ public class DiscordAccountNumberService {
 
             List<DiscordAccountNumber> allFiltered = allMatching.stream()
                     .filter(n -> assignedNumberIds.contains(n.getId()))
-                    .sorted(Comparator.comparing(DiscordAccountNumber::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+                    .sorted(Comparator.comparing(DiscordAccountNumber::getId, Comparator.nullsLast(Comparator.naturalOrder())))
                     .toList();
 
             long filteredTotal = allFiltered.size();
@@ -93,7 +93,7 @@ public class DiscordAccountNumberService {
             return result;
         }
 
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "createdAt"));
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
         Page<DiscordAccountNumber> pageResult;
 
         if (keyword != null && !keyword.trim().isEmpty() && startTime != null && endTime != null) {
