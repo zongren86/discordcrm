@@ -55,7 +55,7 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
             "   OR LOWER(COALESCE(u.username,'')) LIKE LOWER(CONCAT('%',:kw,'%')) " +
             "   OR LOWER(COALESCE(c.remark,'')) LIKE LOWER(CONCAT('%',:kw,'%')) " +
             "   OR LOWER(COALESCE(c.lastMessagePreview,'')) LIKE LOWER(CONCAT('%',:kw,'%'))) " +
-            "ORDER BY c.lastMessageAt DESC")
+            "ORDER BY c.lastMessageAt DESC, c.id DESC")
     List<Conversation> searchByMerchantAndKeyword(@Param("merchantId") Long merchantId,
                                                     @Param("kw") String keyword);
 
@@ -68,14 +68,14 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
             "   OR LOWER(COALESCE(u.username,'')) LIKE LOWER(CONCAT('%',:kw,'%')) " +
             "   OR LOWER(COALESCE(c.remark,'')) LIKE LOWER(CONCAT('%',:kw,'%')) " +
             "   OR LOWER(COALESCE(c.lastMessagePreview,'')) LIKE LOWER(CONCAT('%',:kw,'%'))) " +
-            "ORDER BY c.lastMessageAt DESC")
+            "ORDER BY c.lastMessageAt DESC, c.id DESC")
     List<Conversation> searchByMerchantAndFilters(@Param("merchantId") Long merchantId,
                                                    @Param("accountId") Long accountId,
                                                    @Param("stage") Conversation.Stage stage,
                                                    @Param("kw") String keyword);
 
     /** 置顶会话排在前面，其他按最后消息时间倒序 */
-    @Query("SELECT c FROM Conversation c WHERE (c.merchantId = :merchantId OR (c.merchantId IS NULL AND :merchantId IS NULL)) ORDER BY c.pinned DESC, c.lastMessageAt DESC")
+    @Query("SELECT c FROM Conversation c WHERE (c.merchantId = :merchantId OR (c.merchantId IS NULL AND :merchantId IS NULL)) ORDER BY c.pinned DESC, c.lastMessageAt DESC, c.id DESC")
     List<Conversation> findByMerchantIdOrderByPinnedAndLastMessageAtDesc(@Param("merchantId") Long merchantId);
 
     /** 统计指定商户下的会话总数 */
@@ -139,7 +139,7 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
     /** 普通用户权限过滤：ownerAgentId=自己的 或 ownerAgentId为空且账号在分配列表中的会话 */
     @Query("SELECT c FROM Conversation c WHERE (c.merchantId = :merchantId OR (c.merchantId IS NULL AND :merchantId IS NULL)) " +
             "AND (c.ownerAgentId = :agentId OR (c.ownerAgentId IS NULL AND c.discordAccount.id IN :accountIds)) " +
-            "ORDER BY c.pinned DESC, c.lastMessageAt DESC")
+            "ORDER BY c.pinned DESC, c.lastMessageAt DESC, c.id DESC")
     List<Conversation> findByMerchantIdAndAccountIds(@Param("merchantId") Long merchantId,
                                                      @Param("accountIds") List<Long> accountIds,
                                                      @Param("agentId") Long agentId);
@@ -148,7 +148,7 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
     @Query("SELECT c FROM Conversation c WHERE (c.merchantId = :merchantId OR (c.merchantId IS NULL AND :merchantId IS NULL)) " +
             "AND (c.ownerAgentId = :agentId OR (c.ownerAgentId IS NULL AND c.discordAccount.id IN :accountIds)) " +
             "AND (:stage IS NULL OR c.stage = :stage) " +
-            "ORDER BY c.pinned DESC, c.lastMessageAt DESC")
+            "ORDER BY c.pinned DESC, c.lastMessageAt DESC, c.id DESC")
     List<Conversation> findByMerchantIdAndAccountIdsAndStage(@Param("merchantId") Long merchantId,
                                                              @Param("accountIds") List<Long> accountIds,
                                                              @Param("stage") Conversation.Stage stage,

@@ -2902,9 +2902,21 @@ function sortByTimeDesc(a, b) {
   const timeB = getConversationTime(b)
   const tA = timeA ? new Date(timeA).getTime() : 0
   const tB = timeB ? new Date(timeB).getTime() : 0
-  // 安全检查：如果时间无效，返回0
-  if (isNaN(tA) || isNaN(tB)) return 0
-  return tB - tA
+  // 安全检查：如果时间无效，回退到 id 排序
+  if (isNaN(tA) || isNaN(tB)) {
+    return sortByIdDesc(a, b)
+  }
+  const cmp = tB - tA
+  if (cmp !== 0) return cmp
+  // 时间相同：按 id 降序，保证排序稳定（不抖动）
+  return sortByIdDesc(a, b)
+}
+
+function sortByIdDesc(a, b) {
+  const idA = a && a.id != null ? Number(a.id) : 0
+  const idB = b && b.id != null ? Number(b.id) : 0
+  if (isNaN(idA) || isNaN(idB)) return 0
+  return idB - idA
 }
 
 function getPinnedConversations() {
