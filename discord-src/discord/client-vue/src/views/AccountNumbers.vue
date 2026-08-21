@@ -591,15 +591,4 @@ onMounted(() => {
   color: var(--color-primary);
 }
 
-.action-cell {
-  display: flex;
-  flex-wrap: nowrap;
-  white-space: nowrap;
-  align-items: center;
-  gap: 0;
-}
-
-.action-cell .el-button + .el-button {
-  margin-left: 0;
-}
 </style>

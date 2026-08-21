@@ -27,13 +27,15 @@
     </div>
 
     <div class="page-body">
-      <el-table
-        :data="guildServers.servers"
-        v-loading="guildServers.loading"
-        stripe
-        style="width: 100%"
-        :header-cell-style="{ background: 'var(--color-bg-2)', color: 'var(--color-text)' }"
-      >
+      <div class="table-wrap">
+        <el-table
+          :data="pagedServers"
+          v-loading="guildServers.loading"
+          stripe
+          style="width: 100%"
+          height="100%"
+          :header-cell-style="{ background: 'var(--color-bg-2)', color: 'var(--color-text)' }"
+        >
         <el-table-column label="服务器" min-width="220">
           <template #default="{ row }">
             <div class="server-cell">
@@ -108,6 +110,18 @@
           <el-empty v-if="!loading" description="暂无服务器，点击右上角新增" />
         </template>
       </el-table>
+      </div>
+
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.size"
+          :page-sizes="[20, 50, 100, 200, 500]"
+          :total="pagination.total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="pagination.page = 1"
+        />
+      </div>
     </div>
 
     <!-- 编辑/新增服务器 Dialog -->
@@ -654,6 +668,17 @@ import { useGuildServersStore } from '@/stores/guildServers'
 const accounts = useAccountsStore()
 const guildServers = useGuildServersStore()
 const auth = useAuthStore()
+
+const pagination = reactive({
+  page: 1,
+  size: 100,
+  get total() { return guildServers.servers.length }
+})
+
+const pagedServers = computed(() => {
+  const start = (pagination.page - 1) * pagination.size
+  return guildServers.servers.slice(start, start + pagination.size)
+})
 
 const filters = reactive({
   discordAccountId: null
@@ -1449,7 +1474,23 @@ onUnmounted(() => {
   flex: 1;
   min-height: 0;
   padding: 20px 24px;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
+  flex-shrink: 0;
 }
 
 .server-cell { display: flex; align-items: center; gap: 10px; }
@@ -1811,8 +1852,6 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
 }
-.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
-
 /* Progress dialog - centered, full-height, scrollable body */
 .progress-dialog {
   max-height: 85vh;

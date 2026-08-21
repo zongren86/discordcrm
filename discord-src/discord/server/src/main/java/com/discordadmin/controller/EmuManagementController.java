@@ -118,14 +118,16 @@ public class EmuManagementController {
     }
 
     /**
-     * 设置模拟器数量
+     * 设置模拟器数量 / 新增模拟器
+     * body.mode: 'set'(默认，设置总数量，删除超出旧记录) | 'add'(追加，在现有基础上新增 count 台，保留已有记录)
      */
     @PostMapping("/emulators/count")
     public List<Map<String, Object>> setEmulatorCount(@RequestBody Map<String, Object> body) {
         int count = Integer.parseInt(body.get("count").toString());
         int cpuCores = body.containsKey("cpuCores") ? Integer.parseInt(body.get("cpuCores").toString()) : 1;
         int memoryGb = body.containsKey("memoryGb") ? Integer.parseInt(body.get("memoryGb").toString()) : 1;
-        return instanceService.setInstanceCount(count, cpuCores, memoryGb);
+        String mode = body.containsKey("mode") ? String.valueOf(body.get("mode")) : "set";
+        return instanceService.setInstanceCount(count, cpuCores, memoryGb, mode);
     }
 
     /**
@@ -174,6 +176,22 @@ public class EmuManagementController {
     @DeleteMapping("/emulators/{index}")
     public Map<String, Object> deleteEmulator(@PathVariable int index) {
         return instanceService.deleteInstance(index);
+    }
+
+    /**
+     * 更新模拟器绑定的 Discord 账号编号
+     * body: { number: 5 }  传 number=null 清除显式绑定（回退到默认instanceIndex对应）
+     */
+    @PutMapping("/emulators/{index}/discord-account-number")
+    public Map<String, Object> updateDiscordAccountNumber(@PathVariable int index,
+                                                          @RequestBody Map<String, Object> body) {
+        Integer number = null;
+        Object v = body.get("number");
+        if (v != null && !"".equals(v) && !"null".equalsIgnoreCase(String.valueOf(v))) {
+            try { number = Integer.parseInt(String.valueOf(v)); }
+            catch (NumberFormatException e) { throw new RuntimeException("number 参数必须是整数"); }
+        }
+        return instanceService.updateDiscordAccountNumber(index, number);
     }
 
     /**

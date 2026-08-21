@@ -483,5 +483,4 @@ onMounted(() => { fetchList(); fetchCatalog(); fetchMerchants() })
 .merchant-name { font-weight: 600; color: var(--color-text); }
 .add-merchant-section { border-top: 1px solid var(--color-border); padding-top: 16px; }
 .add-merchant-row { display: flex; gap: 10px; }
-.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

@@ -48,8 +48,9 @@
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="filteredAccounts" stripe style="width: 100%;" class="accounts-table">
-        <el-table-column prop="id" label="账号ID" width="90" align="center" />
+      <div class="table-wrap">
+        <el-table v-loading="loading" :data="pagedAccounts" stripe style="width: 100%;" height="100%">
+          <el-table-column prop="id" label="账号ID" width="90" align="center" />
         
         <el-table-column label="账号" min-width="240">
           <template #default="{ row }">
@@ -152,6 +153,18 @@
           </template>
         </el-table-column>
       </el-table>
+      </div>
+
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.size"
+          :page-sizes="[20, 50, 100, 200, 500]"
+          :total="pagination.total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="pagination.page = 1"
+        />
+      </div>
 
       <el-empty v-if="!loading && filteredAccounts.length === 0" description="暂无账号" style="padding:60px 0;" />
     </div>
@@ -309,6 +322,17 @@ const loading = ref(false)
 const filters = reactive({ keyword: '', status: null })
 const merchants = ref([])
 const merchantsLoading = ref(false)
+
+const pagination = reactive({
+  page: 1,
+  size: 100,
+  get total() { return filteredAccounts.value.length }
+})
+
+const pagedAccounts = computed(() => {
+  const start = (pagination.page - 1) * pagination.size
+  return filteredAccounts.value.slice(start, start + pagination.size)
+})
 
 async function fetchMerchants() {
   merchantsLoading.value = true
@@ -756,13 +780,18 @@ watch(() => filters.keyword, () => {
 .page-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 20px 24px 16px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-2);
+  flex-shrink: 0;
 }
 .page-title { margin: 0; font-size: 18px; font-weight: 700; color: var(--color-text); }
 .page-desc { margin: 4px 0 0; font-size: 12px; color: var(--color-text-2); }
 .header-actions { display: flex; gap: 10px; }
-.page-body { flex: 1; overflow: auto; padding: 20px 24px; }
+.page-body {
+  flex: 1; min-height: 0; overflow: hidden; padding: 20px 24px;
+  display: flex; flex-direction: column;
+}
 .filter-bar {
   display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px;
+  flex-shrink: 0;
 }
 .stat-cards {
   display: flex; gap: 12px;
@@ -777,8 +806,20 @@ watch(() => filters.keyword, () => {
 .stat-total { border-left: 3px solid var(--color-primary); }
 .stat-active { border-left: 3px solid var(--color-green); }
 .stat-inactive { border-left: 3px solid var(--color-text-3); }
-.filter-controls { display: flex; gap: 10px; align-items: center; }
+.filter-controls { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
 .accounts-table { border-radius: 8px; overflow: hidden; }
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+.pagination-wrap {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
 .account-cell { display: flex; align-items: center; gap: 10px; }
 .account-avatar-cell {
   flex-shrink: 0; background: linear-gradient(135deg, var(--color-primary), var(--color-pink));
@@ -802,5 +843,4 @@ watch(() => filters.keyword, () => {
 .status-text.expired { color: var(--color-yellow); }
 .merchant-cell { font-size: 13px; color: var(--color-text); display: inline-flex; align-items: center; }
 .cell-hint { font-size: 12px; color: var(--color-text-3); }
-.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

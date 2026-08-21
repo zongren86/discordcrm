@@ -61,7 +61,7 @@
                   <el-option v-for="n in 8" :key="n" :label="n + 'G'" :value="n" />
                 </el-select>
                 <el-button type="primary" size="small" @click="applyCount" :disabled="emuLoading">
-                  应用
+                  新增
                 </el-button>
               </div>
               <div class="action-row">
@@ -132,6 +132,21 @@
                 <span>~</span>
                 <el-input-number v-model="autoConfig.delayMaxMinutes" :min="0" :max="9999" size="small" style="width: 80px" />
                 <span class="unit">分钟</span>
+              </div>
+              <div class="form-row">
+                <label>并发</label>
+                <el-input-number v-model="autoConfig.maxConcurrentEmulators" :min="1" :max="200" size="small" style="width: 80px" />
+                <span class="unit">台</span>
+              </div>
+              <div class="form-row">
+                <label>启动间隔</label>
+                <el-input-number v-model="autoConfig.emulatorStartIntervalSec" :min="1" :max="3600" size="small" style="width: 80px" />
+                <span class="unit">秒</span>
+              </div>
+              <div class="form-row inline-row">
+                <label>测试模式</label>
+                <el-switch v-model="autoConfig.testModeEnabled" size="small" />
+                <span class="hint-sm" style="margin-left: 6px; color: #e6a23c">只打开Discord首页，不添加好友</span>
               </div>
               <div class="form-row">
                 <el-button type="primary" size="small" @click="saveAutoConfig">保存配置</el-button>
@@ -289,6 +304,7 @@
         v-if="emulators.length > 0" 
         :data="sortedEmulators" 
         style="margin-top: 8px; width: 100%"
+        max-height="calc(100vh - 560px)"
         @selection-change="handleSelectionChange"
         :row-class-name="rowClassName"
         size="small"
@@ -359,6 +375,35 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="Discord账号编号" width="130">
+          <template #default="{ row }">
+            <div style="display: flex; align-items: center; gap: 4px">
+              <el-input-number
+                v-if="editingAccountNumberIdx === row.index"
+                v-model="editingAccountNumberValue"
+                :min="1"
+                :max="999999"
+                size="small"
+                style="width: 80px"
+              />
+              <span v-else style="font-weight: 600; color: #303133">
+                {{ (row.discordAccountNumber ? 'V' + String(row.discordAccountNumber).padStart(3, '0') : '—') }}
+              </span>
+              <el-tooltip v-if="row.discordAccountNumberExplicit" content="已显式绑定（非默认）" placement="top">
+                <el-icon :size="12" style="color: #409eff"><Flag /></el-icon>
+              </el-tooltip>
+              <el-button
+                v-if="editingAccountNumberIdx !== row.index"
+                size="small" link type="primary" :icon="Edit"
+                @click="startEditAccountNumber(row)"
+              ></el-button>
+              <template v-else>
+                <el-button size="small" link type="success" :icon="Check" @click="saveEditAccountNumber(row.index)"></el-button>
+                <el-button size="small" link @click="cancelEditAccountNumber"><el-icon><Close /></el-icon></el-button>
+              </template>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="Discord账号" width="140">
           <template #default="{ row }">
             <span v-if="row.discordLoggedIn && row.discordAccount">{{ row.discordAccount }}</span>
@@ -406,7 +451,7 @@
         </el-table-column>
       </el-table>
 
-      <el-empty v-else-if="!loading" description="暂无模拟器，在上方设置数量后点击「应用」创建" />
+      <el-empty v-else-if="!loading" description="暂无模拟器，在上方设置数量后点击「新增」创建" />
     </div>
 
     <!-- 添加服务器弹窗 -->
@@ -529,7 +574,8 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import {
   Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
-  ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Avatar
+  ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Avatar,
+  Edit, Check, Close, Flag
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
@@ -563,7 +609,19 @@ const apkInput = ref(null)
 
 const emuConfig = ref({ cpuCores: 1, memoryGb: 1 })
 // 自动加好友配置：单位改为分钟
-const autoConfig = ref({ intervalMinutes: 15, delayMinMinutes: 1, delayMaxMinutes: 10, autoLoginDiscord: false })
+const autoConfig = ref({
+  intervalMinutes: 15,
+  delayMinMinutes: 1,
+  delayMaxMinutes: 10,
+  autoLoginDiscord: false,
+  maxConcurrentEmulators: 5,
+  emulatorStartIntervalSec: 5,
+  testModeEnabled: false
+})
+
+// Discord账号编号列编辑状态
+const editingAccountNumberIdx = ref(null)
+const editingAccountNumberValue = ref(null)
 
 // 操作中的模拟器索引列表（用于按钮禁用状态）
 const operatingEmulators = ref(new Set())
@@ -741,14 +799,15 @@ friendApi.interceptors.request.use(config => {
 })
 
 const sortedEmulators = computed(() => {
-  const collator = new Intl.Collator('zh', { numeric: true, sensitivity: 'base' })
+  // 按序号(index)从小到大排序，保证最早创建/编号最小的排在最上面
   return [...emulators.value].sort((a, b) => {
+    const idxA = a.index ?? Number.MAX_SAFE_INTEGER
+    const idxB = b.index ?? Number.MAX_SAFE_INTEGER
+    if (idxA !== idxB) return idxA - idxB
+    // index 相同时按名称再排一次
     const nameA = a.name || ''
     const nameB = b.name || ''
-    const cmp = collator.compare(nameA, nameB)
-    if (cmp !== 0) return cmp
-    // fallback: sort by index
-    return (a.index || 0) - (b.index || 0)
+    return nameA.localeCompare(nameB, 'zh', { numeric: true, sensitivity: 'base' })
   })
 })
 
@@ -898,20 +957,28 @@ async function checkService() {
 
 async function checkBackend() {
   try {
-    const resp = await emuApi.get('/emulators', { timeout: 3000 })
+    // 放宽到 30s：后端处理模拟器数据可能较慢，给足时间
+    const resp = await emuApi.get('/emulators', { timeout: 30000 })
     return Array.isArray(resp.data) || resp.status < 500
   } catch { return false }
 }
 
+// 健康检查防抖：连续失败 ≥ N 次才弹一次 warning，成功后再弹一次 success
+const healthFailStreak = ref(0)
+const LAST_WARN_KEY = 'emu_view_last_warn_ts'
 function startHealthCheck() {
   healthCheckTimer = setInterval(async () => {
     const ok = await checkBackend()
     if (!ok && backendAvailable.value) {
-      backendAvailable.value = false
-      ElMessage.warning('后端服务已断开，正在自动重连...')
+      healthFailStreak.value++
+      // 连续失败 ≥ 3 次才认为真的断开（每 10s 检查一次，3次=30s）
+      if (healthFailStreak.value >= 3) {
+        backendAvailable.value = false
+        ElMessage.warning('后端服务已断开，正在自动重连...')
+      }
     } else if (ok && !backendAvailable.value) {
+      healthFailStreak.value = 0
       backendAvailable.value = true
-      // 后端恢复后静默刷新所有数据
       try {
         await Promise.all([
           fetchEmulators(),
@@ -926,10 +993,13 @@ function startHealthCheck() {
       } catch (e) {
         // 部分数据加载失败不影响整体
       }
+    } else if (ok && backendAvailable.value) {
+      // 健康，重置失败计数
+      healthFailStreak.value = 0
     }
     // 同时检查物理状态
     await checkPhysicalStatus()
-  }, 5000) // 缩短到5秒，更快发现恢复
+  }, 10000) // 每 10s 检查一次，避免过于频繁
 }
 
 async function checkPhysicalStatus() {
@@ -1328,16 +1398,14 @@ async function loadAutoConfig() {
   try {
     const resp = await friendApi.get('/data/autoconfig')
     if (resp.data) {
-      // 将秒转换为分钟（如果后端返回的是秒）
-      if (resp.data.intervalSeconds !== undefined) {
-        autoConfig.value = {
-          intervalMinutes: Math.round(resp.data.intervalSeconds / 60) || 1,
-          delayMinMinutes: Math.round(resp.data.delayMinSeconds / 60) || 0,
-          delayMaxMinutes: Math.round(resp.data.delayMaxSeconds / 60) || 10,
-          autoLoginDiscord: resp.data.autoLoginDiscord !== undefined ? resp.data.autoLoginDiscord : autoConfig.value.autoLoginDiscord
-        }
-      } else {
-        autoConfig.value = { ...autoConfig.value, ...resp.data }
+      autoConfig.value = {
+        intervalMinutes: resp.data.intervalSeconds !== undefined ? (Math.round(resp.data.intervalSeconds / 60) || 1) : autoConfig.value.intervalMinutes,
+        delayMinMinutes: resp.data.delayMinSeconds !== undefined ? (Math.round(resp.data.delayMinSeconds / 60) || 0) : autoConfig.value.delayMinMinutes,
+        delayMaxMinutes: resp.data.delayMaxSeconds !== undefined ? (Math.round(resp.data.delayMaxSeconds / 60) || 10) : autoConfig.value.delayMaxMinutes,
+        autoLoginDiscord: resp.data.autoLoginDiscord !== undefined ? resp.data.autoLoginDiscord : autoConfig.value.autoLoginDiscord,
+        maxConcurrentEmulators: resp.data.maxConcurrentEmulators !== undefined ? resp.data.maxConcurrentEmulators : autoConfig.value.maxConcurrentEmulators,
+        emulatorStartIntervalSec: resp.data.emulatorStartIntervalSec !== undefined ? resp.data.emulatorStartIntervalSec : autoConfig.value.emulatorStartIntervalSec,
+        testModeEnabled: resp.data.testModeEnabled !== undefined ? resp.data.testModeEnabled : autoConfig.value.testModeEnabled
       }
     }
   } catch {}
@@ -1345,16 +1413,43 @@ async function loadAutoConfig() {
 
 async function saveAutoConfig() {
   try {
-    // 将分钟转换为秒发送到后端
+    // 将分钟转换为秒+新3字段一次提交
     const configToSave = {
       intervalSeconds: autoConfig.value.intervalMinutes * 60,
       delayMinSeconds: autoConfig.value.delayMinMinutes * 60,
-      delayMaxSeconds: autoConfig.value.delayMaxMinutes * 60
+      delayMaxSeconds: autoConfig.value.delayMaxMinutes * 60,
+      autoLoginDiscord: autoConfig.value.autoLoginDiscord,
+      maxConcurrentEmulators: autoConfig.value.maxConcurrentEmulators,
+      emulatorStartIntervalSec: autoConfig.value.emulatorStartIntervalSec,
+      testModeEnabled: autoConfig.value.testModeEnabled
     }
     await friendApi.post('/data/autoconfig', configToSave)
-    // 保存自动登录配置
-    await friendApi.post('/data/autoconfig/autologin', { autoLogin: autoConfig.value.autoLoginDiscord })
     ElMessage.success('自动加好友配置已保存')
+  } catch (e) {
+    ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))
+  }
+}
+
+// ====== Discord账号编号 列编辑 ======
+function startEditAccountNumber(row) {
+  editingAccountNumberIdx.value = row.index
+  editingAccountNumberValue.value = row.discordAccountNumber ? Number(row.discordAccountNumber) : Number(row.index)
+}
+function cancelEditAccountNumber() {
+  editingAccountNumberIdx.value = null
+  editingAccountNumberValue.value = null
+}
+async function saveEditAccountNumber(index) {
+  const number = editingAccountNumberValue.value
+  if (number == null || isNaN(number) || number < 1 || number > 999999) {
+    ElMessage.warning('请输入 1~999999 的整数')
+    return
+  }
+  try {
+    await axios.put(`${API_BASE}/emulators/${index}/discord-account-number`, { number })
+    ElMessage.success('已修改 Discord 账号编号绑定')
+    cancelEditAccountNumber()
+    await fetchEmulators()
   } catch (e) {
     ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))
   }
@@ -1408,17 +1503,18 @@ async function stopAuto(index) {
 
 async function applyCount() {
   emuLoading.value = true
-  showLoading('创建模拟器中...')
+  showLoading('新增模拟器中...')
   try {
     const resp = await emuApi.post('/emulators/count', {
       count: targetCount.value,
       cpuCores: emuConfig.value.cpuCores,
-      memoryGb: emuConfig.value.memoryGb
+      memoryGb: emuConfig.value.memoryGb,
+      mode: 'add'
     })
     emulators.value = Array.isArray(resp.data) ? resp.data : []
-    ElMessage.success(`已设置 ${targetCount.value} 台模拟器 (${emuConfig.value.cpuCores}核, ${emuConfig.value.memoryGb}G)`)
+    ElMessage.success(`已新增 ${targetCount.value} 台模拟器 (${emuConfig.value.cpuCores}核, ${emuConfig.value.memoryGb}G)`)
   } catch (e) {
-    ElMessage.error('设置失败: ' + (e.response?.data?.message || e.message))
+    ElMessage.error('新增失败: ' + (e.response?.data?.message || e.message))
   } finally {
     emuLoading.value = false
     hideLoading()
@@ -1661,6 +1757,13 @@ function formatCountdown(timestamp) {
   border: 1px solid #e4e7ed;
   border-radius: 6px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.table-wrap {
+  margin-top: 8px;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
 }
 
 .batch-info { display: flex; align-items: center; gap: 8px; }
@@ -2185,13 +2288,9 @@ function formatCountdown(timestamp) {
   color: #909399;
 }
 
-/* 批量操作工具栏 */
+/* 批量操作工具栏（已在上方统一定义，此处仅补充 margin-top） */
 .batch-toolbar {
   margin-top: 8px;
-  padding: 8px 12px;
-  background: #fff;
-  border-radius: 6px;
-  border: 1px solid #e4e7ed;
 }
 
 /* 操作列按钮间距 - 只保留1个空格 */

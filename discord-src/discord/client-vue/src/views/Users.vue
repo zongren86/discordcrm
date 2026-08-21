@@ -895,11 +895,4 @@ onMounted(() => {
   margin: 0 4px;
 }
 
-.action-cell {
-  display: flex;
-  flex-wrap: nowrap;
-  white-space: nowrap;
-  align-items: center;
-  gap: 0;
-}
 </style>

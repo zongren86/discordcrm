@@ -250,9 +250,10 @@ public class EmuInstanceService {
     /**
      * 设置模拟器数量 — 实体优先：先创建物理实体，成功后再写数据库记录
      * APK 检查仅作提示，不阻塞创建；创建后异步自动安装 Discord
+     * @param mode 'set'(默认，设置总数量，会删除超出的旧记录) 或 'add'(追加模式，在现有基础上新增 count 台)
      */
     @Transactional
-    public List<Map<String, Object>> setInstanceCount(int count, int cpuCores, int memoryGb) {
+    public List<Map<String, Object>> setInstanceCount(int count, int cpuCores, int memoryGb, String mode) {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
 
@@ -269,9 +270,21 @@ public class EmuInstanceService {
             throw new RuntimeException("未检测到 MumuManager，请启动 MuMu 模拟器后台服务（端口 8088）");
         }
 
-        // 2. 记录当前数据库记录数量（用于日志）
+        // 2. 记录当前数据库记录数量
         List<EmuInstance> existingInstances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
-        log.info("当前数据库已有 {} 条模拟器记录", existingInstances.size());
+        int existingCount = existingInstances.size();
+        log.info("当前数据库已有 {} 条模拟器记录", existingCount);
+
+        // 计算目标总数
+        int targetTotal;
+        boolean addMode = "add".equalsIgnoreCase(mode);
+        if (addMode) {
+            if (count <= 0) count = 1;
+            targetTotal = existingCount + count;
+        } else {
+            targetTotal = count;
+        }
+        log.info("模拟器模式={}, 新增数量={}, 现有数量={}, 目标总数={}", addMode ? "ADD" : "SET", count, existingCount, targetTotal);
 
         // 3. 获取当前物理模拟器数量（用于日志）
         int currentHealthyCount = 0;
@@ -296,35 +309,33 @@ public class EmuInstanceService {
         List<Map<String, Object>> physicalList = new ArrayList<>();
         String createMethod = "none";
 
-        // 优先使用本地模式（更可靠，直接操作 MumuManager）
         if (localMode && localReachable) {
-            log.info("使用本地模式创建模拟器（localMode=true, localReachable=true）");
+            log.info("使用本地模式创建模拟器（localMode=true, localReachable=true, targetTotal={})", targetTotal);
             try {
-                physicalList = mumuClientService.setEmulatorCount(count, cpuCores, memoryGb);
+                physicalList = mumuClientService.setEmulatorCount(targetTotal, cpuCores, memoryGb);
                 log.info("MumuManager 返回: {} 个模拟器", physicalList != null ? physicalList.size() : 0);
-                
+
                 int healthyInResult = countHealthy(physicalList);
-                log.info("健康模拟器数量: 需要 {}, 实际 {}", count, healthyInResult);
-                
-                if (healthyInResult >= count) {
+                log.info("健康模拟器数量: 需要 {}, 实际 {}", targetTotal, healthyInResult);
+
+                if (healthyInResult >= targetTotal) {
                     physicalSuccess = true;
                     createMethod = "local";
                 } else {
-                    log.error("MumuManager 返回的健康模拟器数量不足: 需要 {}, 实际健康 {}", count, healthyInResult);
-                    throw new RuntimeException("MumuManager 创建模拟器失败：健康实例数量不足 (需要 " + count + ", 实际 " + healthyInResult + ")");
+                    log.error("MumuManager 返回的健康模拟器数量不足: 需要 {}, 实际健康 {}", targetTotal, healthyInResult);
+                    throw new RuntimeException("MumuManager 创建模拟器失败：健康实例数量不足 (需要 " + targetTotal + ", 实际 " + healthyInResult + ")");
                 }
             } catch (Exception e) {
                 log.error("本地模式创建模拟器失败: {}", e.getMessage());
                 throw new RuntimeException("创建物理模拟器失败: " + e.getMessage());
             }
         } else if (agentOnline) {
-            // Agent 模式：通过 WebSocket 创建
             log.info("使用 Agent 模式创建模拟器");
             List<AgentRegistration> onlineAgents = webSocketService.getAllOnlineAgents();
             for (AgentRegistration agent : onlineAgents) {
                 try {
                     Map<String, Object> params = new HashMap<>();
-                    params.put("count", count);
+                    params.put("count", targetTotal);
                     params.put("cpuCores", cpuCores);
                     params.put("memoryGb", memoryGb);
 
@@ -369,11 +380,11 @@ public class EmuInstanceService {
             }
             
             healthyAfterCreate = countHealthy(finalList);
-            log.info("物理模拟器验证: 创建方式={}, 总数={}, 健康={}, 需要={}", 
-                    createMethod, finalList.size(), healthyAfterCreate, count);
+            log.info("物理模拟器验证: 创建方式={}, 总数={}, 健康={}, 需要目标总数={}", 
+                    createMethod, finalList.size(), healthyAfterCreate, targetTotal);
             
-            if (healthyAfterCreate < count) {
-                throw new RuntimeException(String.format("物理模拟器数量验证失败: 需要 %d 个健康实例，实际只有 %d 个。物理创建可能未成功，请检查 MumuManager 日志", count, healthyAfterCreate));
+            if (healthyAfterCreate < targetTotal) {
+                throw new RuntimeException(String.format("物理模拟器数量验证失败: 需要 %d 个健康实例，实际只有 %d 个。物理创建可能未成功，请检查 MumuManager 日志", targetTotal, healthyAfterCreate));
             }
             
             physicalList = finalList;
@@ -397,16 +408,27 @@ public class EmuInstanceService {
             log.info("Discord APK 检查通过，将在模拟器创建后自动安装");
         }
 
-        // 7. 写数据库记录（使用 Mumu 实际名称建立对应关系）
-        List<Map<String, Object>> instances = syncInstanceDatabase(merchantId, userId, count, cpuCores, memoryGb, physicalList);
+        // 7. 写数据库记录
+        // - 追加模式(add)：保留已有记录，仅为缺少的物理实例建立 DB 记录，保留原有字段
+        // - 设置模式(set)：删除旧记录、按最新物理列表重建
+        List<Map<String, Object>> instances;
+        if (addMode) {
+            instances = syncInstanceDatabaseIncremental(merchantId, userId, existingInstances, targetTotal,
+                    cpuCores, memoryGb, physicalList);
+        } else {
+            instances = syncInstanceDatabase(merchantId, userId, targetTotal, cpuCores, memoryGb, physicalList);
+        }
 
-        // 8. 如果 APK 存在，异步启动模拟器并自动安装 Discord
+        // 8. 如果 APK 存在，异步启动【新增的】模拟器并自动安装 Discord
         if (apkDownloaded) {
             CompletableFuture.runAsync(() -> {
                 try {
                     log.info("开始自动启动新创建的模拟器并安装 Discord...");
+                    // 追加模式只处理 index > existingCount 的新记录
+                    int startIndex = addMode ? existingCount : 0;
                     for (Map<String, Object> inst : instances) {
                         int index = ((Number) inst.get("index")).intValue();
+                        if (index <= startIndex) continue; // 跳过已有记录
                         try {
                             // 启动模拟器
                             mumuClientService.startEmulator(index);
@@ -439,6 +461,70 @@ public class EmuInstanceService {
         }
 
         return instances;
+    }
+
+    /**
+     * 追加模式下增量同步：保留已有 DB 记录，只为新增的物理实例创建新 DB 记录；
+     * 已存在的记录（按 instanceIndex 匹配）完全保留原有字段（autoRunning/discordAccountNumber 等）。
+     */
+    private List<Map<String, Object>> syncInstanceDatabaseIncremental(Long merchantId, String userId,
+                                                                     List<EmuInstance> existingInstances,
+                                                                     int targetTotal,
+                                                                     int cpuCores, int memoryGb,
+                                                                     List<Map<String, Object>> physicalList) {
+        // 已有 instanceIndex 集合
+        Set<Integer> existingIndexSet = existingInstances.stream()
+                .map(EmuInstance::getInstanceIndex)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+
+        // 收集物理实例中健康的
+        List<Map<String, Object>> healthyList = physicalList.stream()
+                .filter(e -> !"DAMAGED".equals(e.get("status")) && !Boolean.TRUE.equals(e.get("damaged")))
+                .sorted(Comparator.comparingInt(e -> ((Number) e.get("index")).intValue()))
+                .collect(Collectors.toList());
+
+        log.info("追加模式: 现有DB {} 条, 健康物理 {} 条, 目标总数 {}", existingIndexSet.size(), healthyList.size(), targetTotal);
+
+        // 为缺失的物理实例创建 DB 记录
+        int created = 0;
+        int newTarget = Math.min(targetTotal, healthyList.size());
+        for (int i = 0; i < healthyList.size() && created < newTarget; i++) {
+            Map<String, Object> mumuEmu = healthyList.get(i);
+            int mumuIndex = ((Number) mumuEmu.get("index")).intValue();
+            int dbIndex = mumuIndex + 1;
+
+            if (existingIndexSet.contains(dbIndex)) {
+                continue; // 已有记录，保留，跳过
+            }
+
+            String mumuName = (String) mumuEmu.get("name");
+            EmuInstance instance = new EmuInstance();
+            instance.setMerchantId(merchantId);
+            instance.setUserId(userId);
+            instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", dbIndex));
+            instance.setInstanceIndex(dbIndex);
+            instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
+            instance.setCpuCores(cpuCores);
+            instance.setMemoryGb(memoryGb);
+            instance.setResolution("720x1280");
+            instance.setAdbPort(mumuEmu.get("adbPort") != null ? ((Number) mumuEmu.get("adbPort")).intValue() : null);
+            // 保持默认"未安装/未登录/不自动加好友"，由用户手动配置
+            instance.setDiscordInstalled(false);
+            instance.setDiscordLoggedIn(false);
+            instance.setAutoRunning(false);
+            instance.setAddedCount(0);
+            instance.setCreatedAt(Instant.now());
+            instance.setUpdatedAt(Instant.now());
+            instanceRepository.save(instance);
+            created++;
+            log.info("追加创建DB记录: {} (DB index={})", instance.getName(), dbIndex);
+        }
+
+        log.info("追加完成: 新增 {} 条, 保留 {} 条", created, existingIndexSet.size());
+        return instanceRepository.findByMerchantIdAndUserId(merchantId, userId).stream()
+                .map(this::convertToMap)
+                .collect(Collectors.toList());
     }
 
     /**
@@ -1005,6 +1091,25 @@ public class EmuInstanceService {
     }
 
     /**
+     * 更新模拟器绑定的Discord账号编号（1=V001对应编号1...）
+     * @param number 传 null 表示清除显式绑定，回退到默认 instanceIndex 对应
+     */
+    @Transactional
+    public Map<String, Object> updateDiscordAccountNumber(int index, Integer number) {
+        Long merchantId = resolveMerchantId();
+        String userId = resolveUserId();
+        EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
+            .orElseThrow(() -> new RuntimeException("模拟器不存在"));
+        if (number != null && (number < 1 || number > 999999)) {
+            throw new RuntimeException("账号编号范围无效 (1~999999)");
+        }
+        instance.setDiscordAccountNumber(number);
+        instance.setUpdatedAt(Instant.now());
+        instanceRepository.save(instance);
+        return convertToMap(instance);
+    }
+
+    /**
      * 全部启动自动加好友
      */
     @Transactional
@@ -1320,6 +1425,12 @@ public class EmuInstanceService {
         item.put("discordAccount", displayAccount);
         item.put("discordAccountName", instance.getDiscordAccountName());
         item.put("discordAccountId", instance.getDiscordAccountId());
+        // 显示优先级：显式设置的discordAccountNumber > 默认instanceIndex（1-based即V001→1）
+        int displayNumber = instance.getDiscordAccountNumber() != null
+                ? instance.getDiscordAccountNumber()
+                : instance.getInstanceIndex();
+        item.put("discordAccountNumber", displayNumber);
+        item.put("discordAccountNumberExplicit", instance.getDiscordAccountNumber() != null);
         
         item.put("autoRunning", instance.getAutoRunning());
         item.put("addedCount", instance.getAddedCount());

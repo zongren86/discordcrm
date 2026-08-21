@@ -85,6 +85,10 @@ public class EmuInstance {
     @Column(name = "guild_server_id")
     private Long guildServerId;
 
+    /** 绑定的Discord账号编号（即DiscordAccountNumber.number，1、2、3...），支持显式编辑覆盖instanceIndex默认对应关系 */
+    @Column(name = "discord_account_number")
+    private Integer discordAccountNumber;
+
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 

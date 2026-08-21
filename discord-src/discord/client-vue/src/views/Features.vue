@@ -194,5 +194,4 @@ onMounted(fetchList)
 .cell-mono { font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--color-text-2); }
 .cell-hint { font-size:12px; color:var(--color-text-3); }
 .op-links { display:flex; gap:4px; white-space:nowrap; }
-.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

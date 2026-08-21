@@ -252,5 +252,4 @@ onMounted(() => { fetchList(); fetchNotif() })
 .cell-strong { font-weight:600; color:var(--color-text); }
 .cell-mono { font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--color-text-2); }
 .notif-toolbar { display:flex; gap:10px; margin-bottom:12px; }
-.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

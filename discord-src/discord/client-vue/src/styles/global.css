@@ -536,8 +536,12 @@ a:hover { color: var(--color-primary-hover); }
   align-items: center;
   gap: 0;
 }
+.el-table .col-action .action-cell .el-button {
+  font-size: 14px !important;
+  padding: 6px 8px !important;
+}
 .el-table .col-action .action-cell .el-button + .el-button {
-  margin-left: 0;
+  margin-left: 4px;
 }
 
 /* ------ 标签 ------ */

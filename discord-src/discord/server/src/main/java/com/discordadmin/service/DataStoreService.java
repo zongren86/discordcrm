@@ -58,6 +58,9 @@ public class DataStoreService {
                 config.setAutoCrawlDiscordAccount(c.isAutoCrawlDiscordAccount());
                 config.setCrawlIntervalSeconds(c.getCrawlIntervalSeconds());
                 config.setAutoLoginDiscord(c.isAutoLoginDiscord());
+                config.setMaxConcurrentEmulators(c.getMaxConcurrentEmulators());
+                config.setEmulatorStartIntervalSec(c.getEmulatorStartIntervalSec());
+                config.setTestModeEnabled(c.isTestModeEnabled());
             }
         } catch (Exception e) {
             // 加载失败不影响启动
@@ -264,5 +267,33 @@ public class DataStoreService {
     public void updateAutoLoginConfig(boolean autoLogin) {
         config.setAutoLoginDiscord(autoLogin);
         saveConfig();
+    }
+
+    public synchronized void updateFullConfig(Map<String, Object> body) {
+        if (body.containsKey("intervalSeconds"))
+            config.setIntervalSeconds(toInt(body.get("intervalSeconds"), config.getIntervalSeconds()));
+        if (body.containsKey("delayMinSeconds"))
+            config.setDelayMinSeconds(toInt(body.get("delayMinSeconds"), config.getDelayMinSeconds()));
+        if (body.containsKey("delayMaxSeconds"))
+            config.setDelayMaxSeconds(toInt(body.get("delayMaxSeconds"), config.getDelayMaxSeconds()));
+        if (body.containsKey("autoCrawlDiscordAccount"))
+            config.setAutoCrawlDiscordAccount(Boolean.parseBoolean(String.valueOf(body.get("autoCrawlDiscordAccount"))));
+        if (body.containsKey("crawlIntervalSeconds"))
+            config.setCrawlIntervalSeconds(toInt(body.get("crawlIntervalSeconds"), config.getCrawlIntervalSeconds()));
+        if (body.containsKey("autoLoginDiscord"))
+            config.setAutoLoginDiscord(Boolean.parseBoolean(String.valueOf(body.get("autoLoginDiscord"))));
+        if (body.containsKey("maxConcurrentEmulators"))
+            config.setMaxConcurrentEmulators(toInt(body.get("maxConcurrentEmulators"), config.getMaxConcurrentEmulators()));
+        if (body.containsKey("emulatorStartIntervalSec"))
+            config.setEmulatorStartIntervalSec(toInt(body.get("emulatorStartIntervalSec"), config.getEmulatorStartIntervalSec()));
+        if (body.containsKey("testModeEnabled"))
+            config.setTestModeEnabled(Boolean.parseBoolean(String.valueOf(body.get("testModeEnabled"))));
+        saveConfig();
+    }
+
+    private int toInt(Object v, int def) {
+        if (v == null) return def;
+        if (v instanceof Number n) return n.intValue();
+        try { return Integer.parseInt(String.valueOf(v)); } catch (Exception e) { return def; }
     }
 }

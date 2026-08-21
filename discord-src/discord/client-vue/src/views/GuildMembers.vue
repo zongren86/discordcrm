@@ -116,13 +116,15 @@
         </div>
       </div>
 
-      <el-table
-        v-loading="loading"
-        :data="tableData"
-        stripe
-        style="width: 100%"
-        :header-cell-style="{ background: 'var(--color-bg-2)', color: 'var(--color-text)' }"
-      >
+      <div class="table-wrap">
+        <el-table
+          v-loading="loading"
+          :data="tableData"
+          stripe
+          style="width: 100%"
+          height="100%"
+          :header-cell-style="{ background: 'var(--color-bg-2)', color: 'var(--color-text)' }"
+        >
         <el-table-column prop="guildServerName" label="服务器名称" min-width="160">
           <template #default="{ row }">
             <span v-if="row.guildServerName">{{ row.guildServerName }}</span>
@@ -221,12 +223,13 @@
           <el-empty v-if="!loading" description="暂无成员数据" />
         </template>
       </el-table>
+      </div>
 
       <div class="pagination-wrap">
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
-          :page-sizes="[20, 50, 100, 200]"
+          :page-sizes="[20, 50, 100, 200, 500]"
           :total="pagination.total"
           layout="total, sizes, prev, pager, next, jumper"
           background
@@ -432,7 +435,10 @@ onMounted(async () => {
   flex: 1;
   min-height: 0;
   padding: 20px 24px;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .filter-bar {
@@ -481,9 +487,16 @@ onMounted(async () => {
   line-height: 1.4;
 }
 
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
 .pagination-wrap {
-  margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+  flex-shrink: 0;
 }
 </style>

@@ -265,5 +265,4 @@ onMounted(() => {
   font-size: 12px;
   color: var(--color-text-2);
 }
-.action-cell { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; gap: 0; }
 </style>

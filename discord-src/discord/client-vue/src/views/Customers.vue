@@ -41,14 +41,16 @@
       </div>
 
       <!-- 客户列表 -->
-      <el-table
-        v-loading="loading"
-        :data="filteredCustomers"
-        stripe
-        @selection-change="handleSelectionChange"
-        style="width: 100%;"
-      >
-        <el-table-column type="selection" width="48" />
+      <div class="table-wrap">
+        <el-table
+          v-loading="loading"
+          :data="pagedCustomers"
+          stripe
+          @selection-change="handleSelectionChange"
+          style="width: 100%;"
+          height="100%"
+        >
+          <el-table-column type="selection" width="48" />
         <el-table-column label="客户" min-width="240">
           <template #default="{ row }">
             <div class="cust-cell">
@@ -106,6 +108,18 @@
           </template>
         </el-table-column>
       </el-table>
+      </div>
+
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.size"
+          :page-sizes="[20, 50, 100, 200, 500]"
+          :total="pagination.total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="pagination.page = 1"
+        />
+      </div>
     </div>
 
     <!-- 批量发送消息对话框 -->
@@ -201,6 +215,17 @@ const filteredCustomers = computed(() => {
     const remark = (c.remark || c.notes || '').toLowerCase()
     return name.includes(kw) || remark.includes(kw)
   })
+})
+
+const pagination = reactive({
+  page: 1,
+  size: 100,
+  get total() { return filteredCustomers.value.length }
+})
+
+const pagedCustomers = computed(() => {
+  const start = (pagination.page - 1) * pagination.size
+  return filteredCustomers.value.slice(start, start + pagination.size)
 })
 
 function parseTags(tags) {
@@ -361,6 +386,7 @@ onMounted(() => {
 
 .page-body {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   padding: 16px 24px;
   display: flex;
@@ -373,6 +399,20 @@ onMounted(() => {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .batch-bar {

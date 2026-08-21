@@ -84,10 +84,14 @@ public class DataController {
 
     @PostMapping("/autoconfig")
     public ResponseEntity<Map<String, String>> updateConfig(@RequestBody Map<String, Object> body) {
-        int interval = toInt(body.get("intervalSeconds"), 900);
-        int delayMin = toInt(body.get("delayMinSeconds"), 60);
-        int delayMax = toInt(body.get("delayMaxSeconds"), 800);
-        dataStore.updateConfig(interval, delayMin, delayMax);
+        // 兼容旧调用（仅传3参数）和新调用（所有参数一起传）
+        if (body.containsKey("intervalSeconds") || body.containsKey("delayMinSeconds") || body.containsKey("delayMaxSeconds")) {
+            int interval = toInt(body.get("intervalSeconds"), dataStore.getConfig().getIntervalSeconds());
+            int delayMin = toInt(body.get("delayMinSeconds"), dataStore.getConfig().getDelayMinSeconds());
+            int delayMax = toInt(body.get("delayMaxSeconds"), dataStore.getConfig().getDelayMaxSeconds());
+            dataStore.updateConfig(interval, delayMin, delayMax);
+        }
+        dataStore.updateFullConfig(body);
         return ResponseEntity.ok(Map.of("status", "ok"));
     }
 
