@@ -17,11 +17,15 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 模拟器自动加好友调度器（新流程：加一台 → 关一台 → 间隔到再开）
+ * 模拟器自动加好友调度器（支持两种执行模式）
+ *
+ * 执行模式：
+ * 1. 连续执行模式（预估总时长 >= 间隔时长）：处理完一批立即检查下一个符合条件的模拟器
+ * 2. 定时循环模式（预估总时长 < 间隔时长）：使用定时器，每隔间隔时长触发一批执行
  *
  * 调度规则：
  * 1. 读取 autoRunning=true 的模拟器记录（按当前商户+用户）
@@ -34,7 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *    - 打开 Discord 并进入首页
  *    - 检测登录态：已登录就用现有登录态，不强制重新登录
  *    - 【生产模式】：从好友号池取 1 个 PENDING 目标 → 调用 DiscordService.addFriendByUsername → 写结果 → 立即关闭模拟器
- *    - 【测试模式】：不执行加好友动作，把登录/首页/打开结果写入最后添加结果字段 → 立即关闭模拟器
+ *    - 【测试模式】：不执行加好友动作，把打开/登录结果写入最后添加结果字段 → 立即关闭模拟器
  *    - 设置 nextAddAt = now + intervalSeconds + [delayMin..delayMax] 随机延迟
  *    - 下一次 tick 到时重新启动模拟器 + 重新打开 Discord + 进入首页 + 执行动作
  */
@@ -63,6 +67,26 @@ public class EmuAutoAddDispatcher {
     /** 排队启动节流：上一次启动的时间戳（ms），用于每启动一台间隔 N 秒 */
     private volatile long lastLaunchAt = 0L;
 
+    // ========== 新增：执行模式相关状态 ==========
+    /** 任务运行状态 */
+    private volatile boolean isTaskRunning = false;
+    /** 停止标志 */
+    private volatile boolean stopFlag = false;
+    /** 连续执行模式下的循环检查定时器 */
+    private volatile Timer continuousCheckTimer = null;
+    /** 定时循环模式下的调度定时器 */
+    private volatile Timer schedulerTimer = null;
+    /** 任务启动时间 */
+    private volatile Instant taskStartTime = null;
+    /** 已启动的模拟器数量统计 */
+    private final AtomicLong startedCount = new AtomicLong(0);
+    /** 已完成的模拟器数量统计 */
+    private final AtomicLong completedCount = new AtomicLong(0);
+    /** 成功加好友数量 */
+    private final AtomicLong successCount = new AtomicLong(0);
+    /** 失败数量 */
+    private final AtomicLong failCount = new AtomicLong(0);
+
     public EmuAutoAddDispatcher(EmuInstanceRepository instanceRepository,
                                 MumuClientService mumuClientService,
                                 DiscordService discordService,
@@ -79,14 +103,149 @@ public class EmuAutoAddDispatcher {
         this.serverBindingRepository = serverBindingRepository;
     }
 
-    @Scheduled(fixedDelay = 1000)
-    public void tick() {
+    /**
+     * 启动全部自动加好友任务
+     * @return 启动结果信息
+     */
+    public Map<String, Object> startAllAutoAddWithMode() {
+        Map<String, Object> result = new HashMap<>();
+        
+        if (isTaskRunning) {
+            result.put("success", false);
+            result.put("message", "任务已在运行中");
+            return result;
+        }
+
+        AutoAddConfig cfg = dataStore.getConfig();
+        
+        // 检查时段配置
+        int periodMin = cfg.getPeriodMinutes();
+        int dailyLimit = cfg.getDailyLimit();
+        if (periodMin <= 0 || dailyLimit <= 0) {
+            result.put("success", false);
+            result.put("message", "请检查加好友时段和每天可加人数配置");
+            return result;
+        }
+
+        // 计算间隔时间
+        int intervalMinutes = cfg.calculateIntervalMinutes();
+        cfg.setIntervalSeconds(intervalMinutes * 60);
+        
+        // 获取模拟器总数
         Long merchantId = SecurityUtils.currentMerchantId();
         String userId = SecurityUtils.currentUserId();
         if (merchantId == null) merchantId = 1L;
         if (userId == null) userId = "default";
+        
+        List<EmuInstance> all = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+        int totalEmulators = all.size();
+        
+        // 计算预估总时长
+        int estimatedTotalDuration = cfg.calculateEstimatedTotalDuration(totalEmulators);
+        
+        // 判断执行模式
+        String mode;
+        if (estimatedTotalDuration >= intervalMinutes) {
+            mode = "continuous";  // 连续执行模式
+        } else {
+            mode = "scheduled";   // 定时循环模式
+        }
 
-        AutoAddConfig cfg = dataStore.getConfig();
+        // 初始化状态
+        isTaskRunning = true;
+        stopFlag = false;
+        taskStartTime = Instant.now();
+        startedCount.set(0);
+        completedCount.set(0);
+        successCount.set(0);
+        failCount.set(0);
+
+        // 启动执行
+        final AutoAddConfig cfgFinal = cfg;
+        final long merchantIdF = merchantId;
+        final String userIdF = userId;
+        final String modeF = mode;
+
+        if ("continuous".equals(mode)) {
+            // 连续执行模式：立即开始处理，并设置周期性检查
+            worker.submit(() -> {
+                try {
+                    log.info("启动连续执行模式，间隔: {}分钟, 预估总时长: {}分钟, 模拟器总数: {}", 
+                            intervalMinutes, estimatedTotalDuration, totalEmulators);
+                    // 立即执行第一轮
+                    executeOneRound(cfgFinal, merchantIdF, userIdF);
+                    // 设置周期性检查（每10秒检查一次是否有新的符合条件的模拟器）
+                    startContinuousCheck(cfgFinal, merchantIdF, userIdF, intervalMinutes * 60 * 1000L);
+                } catch (Exception e) {
+                    log.error("连续执行模式启动异常", e);
+                    stopTask();
+                }
+            });
+        } else {
+            // 定时循环模式：立即执行第一轮，然后设置定时器
+            worker.submit(() -> {
+                try {
+                    log.info("启动定时循环模式，间隔: {}分钟, 预估总时长: {}分钟", 
+                            intervalMinutes, estimatedTotalDuration);
+                    // 立即执行第一轮
+                    executeOneRound(cfgFinal, merchantIdF, userIdF);
+                    // 设置定时器
+                    startScheduledCheck(cfgFinal, merchantIdF, userIdF, intervalMinutes * 60 * 1000L);
+                } catch (Exception e) {
+                    log.error("定时循环模式启动异常", e);
+                    stopTask();
+                }
+            });
+        }
+
+        result.put("success", true);
+        result.put("message", "任务已启动");
+        result.put("mode", mode);
+        result.put("intervalMinutes", intervalMinutes);
+        result.put("estimatedTotalDuration", estimatedTotalDuration);
+        result.put("totalEmulators", totalEmulators);
+        return result;
+    }
+
+    /**
+     * 停止全部自动加好友任务
+     */
+    public void stopAllAutoAddTask() {
+        stopTask();
+    }
+
+    /**
+     * 获取任务状态
+     */
+    public Map<String, Object> getTaskStatus() {
+        Map<String, Object> status = new HashMap<>();
+        status.put("isRunning", isTaskRunning);
+        status.put("startedCount", startedCount.get());
+        status.put("completedCount", completedCount.get());
+        status.put("successCount", successCount.get());
+        status.put("failCount", failCount.get());
+        if (taskStartTime != null) {
+            status.put("startTime", taskStartTime.toString());
+            long elapsedSeconds = (System.currentTimeMillis() - taskStartTime.toEpochMilli()) / 1000;
+            status.put("elapsedSeconds", elapsedSeconds);
+        }
+        status.put("runningBusyCount", runningBusy.size());
+        return status;
+    }
+
+    /**
+     * 执行一轮加好友
+     */
+    private void executeOneRound(AutoAddConfig cfg, Long merchantId, String userId) {
+        if (stopFlag || !cfg.isInAddPeriod()) {
+            if (stopFlag) {
+                log.info("任务已停止，跳过本轮执行");
+            } else {
+                log.info("当前不在加好友时段内，跳过本轮执行");
+            }
+            return;
+        }
+
         int maxCon = cfg.getMaxConcurrentEmulators();
         Instant now = Instant.now();
 
@@ -109,13 +268,22 @@ public class EmuAutoAddDispatcher {
             return c != 0 ? c : Integer.compare(a.getInstanceIndex(), b.getInstanceIndex());
         });
 
-        for (EmuInstance emu : candidates) {
+        // 截取一批模拟器（按并发数）
+        List<EmuInstance> batch = candidates.size() > maxCon 
+            ? candidates.subList(0, maxCon) 
+            : candidates;
+
+        log.info("本轮候选模拟器: {}, 处理数量: {}", candidates.size(), batch.size());
+
+        for (EmuInstance emu : batch) {
+            if (stopFlag) break;
+            
             int curCon = concurrencyCount.get();
-            if (curCon >= maxCon) break; // 达到并发上限，等下一轮
+            if (curCon >= maxCon) break;
 
             int dbIndex = emu.getInstanceIndex();
             int expected = curCon;
-            if (!concurrencyCount.compareAndSet(expected, expected + 1)) continue; // CAS失败，跳过等待下一轮
+            if (!concurrencyCount.compareAndSet(expected, expected + 1)) continue;
             if (!runningBusy.add(dbIndex)) {
                 concurrencyCount.decrementAndGet();
                 continue;
@@ -123,7 +291,7 @@ public class EmuAutoAddDispatcher {
             final Long merchantIdF = merchantId;
             final String userIdF = userId;
 
-            // 排队启动间隔：距离上一台启动的时间间隔必须 >= emulatorStartIntervalSec
+            // 排队启动间隔
             long intervalMs = cfg.getEmulatorStartIntervalSec() * 1000L;
             long waitMs;
             synchronized (this) {
@@ -140,7 +308,9 @@ public class EmuAutoAddDispatcher {
             worker.submit(() -> {
                 try {
                     if (sleepMs > 0) Thread.sleep(sleepMs);
+                    startedCount.incrementAndGet();
                     runOneLifecycle(emuF, cfgF, merchantIdF, userIdF);
+                    completedCount.incrementAndGet();
                 } catch (InterruptedException ie) {
                     log.warn("调度启动被中断 emu#{}", dbIndex);
                     Thread.currentThread().interrupt();
@@ -155,12 +325,108 @@ public class EmuAutoAddDispatcher {
         }
     }
 
+    /**
+     * 连续执行模式的周期性检查
+     */
+    private void startContinuousCheck(AutoAddConfig cfg, Long merchantId, String userId, long checkIntervalMs) {
+        if (continuousCheckTimer != null) {
+            // 已经在运行中，不需要重复启动
+            return;
+        }
+        
+        Timer timer = new Timer("continuous-check", true);
+        timer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                if (stopFlag) {
+                    stopContinuousCheck();
+                    return;
+                }
+                // 检查是否还有符合条件的模拟器
+                if (!cfg.isInAddPeriod()) {
+                    return;
+                }
+                executeOneRound(cfg, merchantId, userId);
+            }
+        }, checkIntervalMs, checkIntervalMs);
+        continuousCheckTimer = timer;
+    }
+
+    /**
+     * 停止连续执行检查
+     */
+    private void stopContinuousCheck() {
+        if (continuousCheckTimer != null) {
+            continuousCheckTimer.cancel();
+            continuousCheckTimer = null;
+        }
+    }
+
+    /**
+     * 定时循环模式的调度检查
+     */
+    private void startScheduledCheck(AutoAddConfig cfg, Long merchantId, String userId, long intervalMs) {
+        if (schedulerTimer != null) {
+            return;
+        }
+        
+        Timer timer = new Timer("scheduled-check", true);
+        timer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                if (stopFlag) {
+                    stopScheduledCheck();
+                    return;
+                }
+                if (!cfg.isInAddPeriod()) {
+                    log.info("当前不在加好友时段内，跳过本轮执行");
+                    return;
+                }
+                executeOneRound(cfg, merchantId, userId);
+            }
+        }, intervalMs, intervalMs);
+        schedulerTimer = timer;
+    }
+
+    /**
+     * 停止定时循环检查
+     */
+    private void stopScheduledCheck() {
+        if (schedulerTimer != null) {
+            schedulerTimer.cancel();
+            schedulerTimer = null;
+        }
+    }
+
+    /**
+     * 停止任务
+     */
+    private void stopTask() {
+        stopFlag = true;
+        isTaskRunning = false;
+        taskStartTime = null;
+        
+        // 停止定时器
+        stopContinuousCheck();
+        stopScheduledCheck();
+        
+        // 关闭正在运行的模拟器
+        // 注意：正在运行的模拟器会在 runOneLifecycle 中检测 stopFlag 并提前退出
+        log.info("自动加好友任务已停止");
+    }
+
     /** 单次生命周期：启动 → 开Discord → 加好友/测试 → 关闭模拟器 → 写入nextAddAt */
     private void runOneLifecycle(EmuInstance emu, AutoAddConfig cfg, Long merchantId, String userId) {
         int dbIndex = emu.getInstanceIndex();
         int mumuIndex = dbIndex - 1;
         boolean testMode = cfg.isTestModeEnabled();
         Instant startTs = Instant.now();
+
+        // 检查是否已停止
+        if (stopFlag) {
+            log.info("任务已停止，跳过模拟器#{}", dbIndex);
+            return;
+        }
 
         // ========== Step 1: 启动模拟器（STOPPED才启动）==========
         EmuInstance fresh = refresh(emu);
@@ -295,9 +561,11 @@ public class EmuAutoAddDispatcher {
         if (success) {
             target.setFriendStatus(friendPoolService.STATUS_SUCCESS);
             target.setLastError(null);
+            successCount.incrementAndGet();
         } else {
             target.setFriendStatus(friendPoolService.STATUS_FAILED);
             target.setLastError(truncate(addRes, 255));
+            failCount.incrementAndGet();
         }
         target.setFinishedAt(Instant.now());
         target.setUpdatedAt(Instant.now());

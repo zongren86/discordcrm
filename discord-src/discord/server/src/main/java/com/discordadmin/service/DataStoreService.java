@@ -61,6 +61,11 @@ public class DataStoreService {
                 config.setMaxConcurrentEmulators(c.getMaxConcurrentEmulators());
                 config.setEmulatorStartIntervalSec(c.getEmulatorStartIntervalSec());
                 config.setTestModeEnabled(c.isTestModeEnabled());
+                // 新字段
+                config.setAddStartTime(c.getAddStartTime());
+                config.setAddEndTime(c.getAddEndTime());
+                config.setDailyLimit(c.getDailyLimit());
+                config.setEstimatedSingleDurationMin(c.getEstimatedSingleDurationMin());
             }
         } catch (Exception e) {
             // 加载失败不影响启动
@@ -288,6 +293,20 @@ public class DataStoreService {
             config.setEmulatorStartIntervalSec(toInt(body.get("emulatorStartIntervalSec"), config.getEmulatorStartIntervalSec()));
         if (body.containsKey("testModeEnabled"))
             config.setTestModeEnabled(Boolean.parseBoolean(String.valueOf(body.get("testModeEnabled"))));
+        // 新字段
+        if (body.containsKey("addStartTime"))
+            config.setAddStartTime(String.valueOf(body.get("addStartTime")));
+        if (body.containsKey("addEndTime"))
+            config.setAddEndTime(String.valueOf(body.get("addEndTime")));
+        if (body.containsKey("dailyLimit"))
+            config.setDailyLimit(toInt(body.get("dailyLimit"), config.getDailyLimit()));
+        if (body.containsKey("estimatedSingleDurationMin"))
+            config.setEstimatedSingleDurationMin(toInt(body.get("estimatedSingleDurationMin"), config.getEstimatedSingleDurationMin()));
+        // 自动计算间隔时间
+        int calculatedInterval = config.calculateIntervalMinutes();
+        if (calculatedInterval > 0) {
+            config.setIntervalSeconds(calculatedInterval * 60);
+        }
         saveConfig();
     }
 

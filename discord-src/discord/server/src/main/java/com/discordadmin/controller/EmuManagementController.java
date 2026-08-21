@@ -41,6 +41,8 @@ public class EmuManagementController {
     private final GuildMemberRepository guildMemberRepository;
     private final DiscordAccountRepository discordAccountRepository;
     private final EmuServerBindingRepository emuServerBindingRepository;
+    private final EmuAutoAddDispatcher autoAddDispatcher;
+    private final DataStoreService dataStore;
 
     public EmuManagementController(EmuAccountBindingService accountBindingService,
                                     EmuServerBindingService serverBindingService,
@@ -51,7 +53,9 @@ public class EmuManagementController {
                                     GuildServerRepository guildServerRepository,
                                     GuildMemberRepository guildMemberRepository,
                                     DiscordAccountRepository discordAccountRepository,
-                                    EmuServerBindingRepository emuServerBindingRepository) {
+                                    EmuServerBindingRepository emuServerBindingRepository,
+                                    EmuAutoAddDispatcher autoAddDispatcher,
+                                    DataStoreService dataStore) {
         this.accountBindingService = accountBindingService;
         this.serverBindingService = serverBindingService;
         this.friendPoolService = friendPoolService;
@@ -62,6 +66,8 @@ public class EmuManagementController {
         this.guildMemberRepository = guildMemberRepository;
         this.discordAccountRepository = discordAccountRepository;
         this.emuServerBindingRepository = emuServerBindingRepository;
+        this.autoAddDispatcher = autoAddDispatcher;
+        this.dataStore = dataStore;
     }
 
     private Long resolveMerchantId() {
@@ -301,19 +307,31 @@ public class EmuManagementController {
     }
 
     /**
-     * 全部启动自动加好友
+     * 全部启动自动加好友（支持时段配置和执行模式）
      */
     @PostMapping("/autoadd/startAll")
-    public List<Map<String, Object>> startAllAutoAdd() {
-        return instanceService.startAllAutoAdd();
+    public Map<String, Object> startAllAutoAdd() {
+        return autoAddDispatcher.startAllAutoAddWithMode();
     }
 
     /**
      * 全部停止自动加好友
      */
     @PostMapping("/autoadd/stopAll")
-    public List<Map<String, Object>> stopAllAutoAdd() {
-        return instanceService.stopAllAutoAdd();
+    public Map<String, Object> stopAllAutoAdd() {
+        autoAddDispatcher.stopAllAutoAddTask();
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("message", "任务已停止");
+        return result;
+    }
+
+    /**
+     * 获取自动加好友任务状态
+     */
+    @GetMapping("/autoadd/status")
+    public Map<String, Object> getAutoAddStatus() {
+        return autoAddDispatcher.getTaskStatus();
     }
 
     /**
@@ -321,10 +339,11 @@ public class EmuManagementController {
      */
     @PostMapping("/data/autoconfig")
     public Map<String, Object> saveAutoConfig(@RequestBody Map<String, Object> config) {
-        // 存储配置到商户级别的配置中
-        // 这里简化处理，实际应该使用MerchantConfig
+        dataStore.updateFullConfig(config);
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
+        // 返回更新后的配置
+        result.put("config", convertConfigToMap(dataStore.getConfig()));
         return result;
     }
 
@@ -333,10 +352,31 @@ public class EmuManagementController {
      */
     @GetMapping("/data/autoconfig")
     public Map<String, Object> getAutoConfig() {
+        return convertConfigToMap(dataStore.getConfig());
+    }
+
+    /**
+     * 将 AutoAddConfig 转换为 Map
+     */
+    private Map<String, Object> convertConfigToMap(com.discordadmin.model.AutoAddConfig cfg) {
         Map<String, Object> result = new HashMap<>();
-        result.put("intervalSeconds", 900);
-        result.put("delayMinSeconds", 60);
-        result.put("delayMaxSeconds", 800);
+        result.put("intervalSeconds", cfg.getIntervalSeconds());
+        result.put("delayMinSeconds", cfg.getDelayMinSeconds());
+        result.put("delayMaxSeconds", cfg.getDelayMaxSeconds());
+        result.put("autoCrawlDiscordAccount", cfg.isAutoCrawlDiscordAccount());
+        result.put("crawlIntervalSeconds", cfg.getCrawlIntervalSeconds());
+        result.put("autoLoginDiscord", cfg.isAutoLoginDiscord());
+        result.put("maxConcurrentEmulators", cfg.getMaxConcurrentEmulators());
+        result.put("emulatorStartIntervalSec", cfg.getEmulatorStartIntervalSec());
+        result.put("testModeEnabled", cfg.isTestModeEnabled());
+        // 新字段
+        result.put("addStartTime", cfg.getAddStartTime());
+        result.put("addEndTime", cfg.getAddEndTime());
+        result.put("dailyLimit", cfg.getDailyLimit());
+        result.put("estimatedSingleDurationMin", cfg.getEstimatedSingleDurationMin());
+        // 计算字段
+        result.put("calculatedIntervalMinutes", cfg.calculateIntervalMinutes());
+        result.put("periodMinutes", cfg.getPeriodMinutes());
         return result;
     }
 

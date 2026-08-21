@@ -112,7 +112,7 @@
             </div>
           </el-card>
 
-          <!-- 自动加好友配置移到左侧 -->
+          <!-- 自动加好友配置 -->
           <el-card class="panel" shadow="hover" style="margin-top: 8px">
             <template #header>
               <div class="panel-header">
@@ -121,36 +121,81 @@
               </div>
             </template>
             <div class="panel-body">
+              <!-- 加好友时段 -->
               <div class="form-row">
-                <label>间隔</label>
-                <el-input-number v-model="autoConfig.intervalMinutes" :min="1" :max="9999" size="small" style="width: 100px" />
-                <span class="unit">分钟</span>
-              </div>
-              <div class="form-row">
-                <label>延迟</label>
-                <el-input-number v-model="autoConfig.delayMinMinutes" :min="0" :max="9999" size="small" style="width: 80px" />
+                <label>加好友时段</label>
+                <el-time-picker
+                  v-model="autoConfig.addStartTime"
+                  format="HH:mm"
+                  value-format="HH:mm"
+                  style="width: 80px"
+                  size="small"
+                  placeholder="开始"
+                />
                 <span>~</span>
-                <el-input-number v-model="autoConfig.delayMaxMinutes" :min="0" :max="9999" size="small" style="width: 80px" />
-                <span class="unit">分钟</span>
+                <el-time-picker
+                  v-model="autoConfig.addEndTime"
+                  format="HH:mm"
+                  value-format="HH:mm"
+                  style="width: 80px"
+                  size="small"
+                  placeholder="结束"
+                />
               </div>
+              <!-- 每天可加人数 -->
               <div class="form-row">
-                <label>并发</label>
+                <label>每天可加人数</label>
+                <el-input-number v-model="autoConfig.dailyLimit" :min="1" :max="10000" size="small" style="width: 80px" />
+                <span class="unit">人</span>
+              </div>
+              <!-- 自动计算的间隔时间（只读） -->
+              <div class="form-row">
+                <label>间隔时间</label>
+                <el-input-number 
+                  v-model="autoConfig.calculatedIntervalMinutes" 
+                  :min="1" 
+                  :max="9999" 
+                  size="small" 
+                  style="width: 100px"
+                  :disabled="true"
+                />
+                <span class="unit">分钟(自动计算)</span>
+              </div>
+              <!-- 并发 -->
+              <div class="form-row">
+                <label>同时启动</label>
                 <el-input-number v-model="autoConfig.maxConcurrentEmulators" :min="1" :max="200" size="small" style="width: 80px" />
                 <span class="unit">台</span>
               </div>
+              <!-- 启动间隔 -->
               <div class="form-row">
                 <label>启动间隔</label>
                 <el-input-number v-model="autoConfig.emulatorStartIntervalSec" :min="1" :max="3600" size="small" style="width: 80px" />
                 <span class="unit">秒</span>
               </div>
+              <!-- 预估单机完成时长 -->
+              <div class="form-row">
+                <label>预估单机时长</label>
+                <el-input-number v-model="autoConfig.estimatedSingleDurationMin" :min="1" :max="1440" size="small" style="width: 80px" />
+                <span class="unit">分钟</span>
+              </div>
+              <!-- 延迟 -->
+              <div class="form-row">
+                <label>随机延迟</label>
+                <el-input-number v-model="autoConfig.delayMinMinutes" :min="0" :max="9999" size="small" style="width: 70px" />
+                <span>~</span>
+                <el-input-number v-model="autoConfig.delayMaxMinutes" :min="0" :max="9999" size="small" style="width: 70px" />
+                <span class="unit">分钟</span>
+              </div>
+              <!-- 测试模式 -->
               <div class="form-row inline-row">
                 <label>测试模式</label>
                 <el-switch v-model="autoConfig.testModeEnabled" size="small" />
-                <span class="hint-sm" style="margin-left: 6px; color: #e6a23c">只打开Discord首页，不添加好友</span>
+                <span class="hint-sm" style="margin-left: 6px; color: #e6a23c">默认开启，只测试不添加好友</span>
               </div>
+              <!-- 保存配置 -->
               <div class="form-row">
                 <el-button type="primary" size="small" @click="saveAutoConfig">保存配置</el-button>
-                <span class="hint-sm">间隔+随机延迟(下限~上限)后添加下一个好友</span>
               </div>
             </div>
           </el-card>
@@ -616,7 +661,14 @@ const autoConfig = ref({
   autoLoginDiscord: false,
   maxConcurrentEmulators: 5,
   emulatorStartIntervalSec: 5,
-  testModeEnabled: false
+  testModeEnabled: true,
+  // 新字段
+  addStartTime: '09:00',
+  addEndTime: '18:00',
+  dailyLimit: 6,
+  estimatedSingleDurationMin: 5,
+  // 计算字段
+  calculatedIntervalMinutes: 15
 })
 
 // Discord账号编号列编辑状态
@@ -1392,6 +1444,41 @@ function getFriendStatusText(status) {
   return map[status] || '未知'
 }
 
+// ========== 自动计算间隔时间 ==========
+function calculateIntervalMinutes() {
+  const startTime = autoConfig.value.addStartTime || '09:00'
+  const endTime = autoConfig.value.addEndTime || '18:00'
+  const dailyLimit = autoConfig.value.dailyLimit || 6
+  
+  // 解析时间为分钟
+  const [startH, startM] = startTime.split(':').map(Number)
+  const [endH, endM] = endTime.split(':').map(Number)
+  const startMinutes = startH * 60 + startM
+  const endMinutes = endH * 60 + endM
+  
+  const periodMin = endMinutes - startMinutes
+  if (periodMin <= 0 || dailyLimit <= 0) return 1
+  
+  return Math.max(1, Math.floor(periodMin / dailyLimit))
+}
+
+// 监听配置变化，自动计算间隔时间
+watch(() => [autoConfig.value.addStartTime, autoConfig.value.addEndTime, autoConfig.value.dailyLimit], () => {
+  autoConfig.value.calculatedIntervalMinutes = calculateIntervalMinutes()
+}, { immediate: true })
+
+// ========== 预估总时长计算 ==========
+function calculateEstimatedTotalDuration() {
+  const totalEmulators = emulators.value.length || 0
+  const batchSize = autoConfig.value.maxConcurrentEmulators || 5
+  const singleDuration = autoConfig.value.estimatedSingleDurationMin || 5
+  
+  if (totalEmulators <= 0 || batchSize <= 0) return singleDuration
+  
+  const batches = Math.ceil(totalEmulators / batchSize)
+  return singleDuration * batches
+}
+
 // ========== 模拟器操作 ==========
 
 async function loadAutoConfig() {
@@ -1405,7 +1492,14 @@ async function loadAutoConfig() {
         autoLoginDiscord: resp.data.autoLoginDiscord !== undefined ? resp.data.autoLoginDiscord : autoConfig.value.autoLoginDiscord,
         maxConcurrentEmulators: resp.data.maxConcurrentEmulators !== undefined ? resp.data.maxConcurrentEmulators : autoConfig.value.maxConcurrentEmulators,
         emulatorStartIntervalSec: resp.data.emulatorStartIntervalSec !== undefined ? resp.data.emulatorStartIntervalSec : autoConfig.value.emulatorStartIntervalSec,
-        testModeEnabled: resp.data.testModeEnabled !== undefined ? resp.data.testModeEnabled : autoConfig.value.testModeEnabled
+        testModeEnabled: resp.data.testModeEnabled !== undefined ? resp.data.testModeEnabled : autoConfig.value.testModeEnabled,
+        // 新字段
+        addStartTime: resp.data.addStartTime || autoConfig.value.addStartTime,
+        addEndTime: resp.data.addEndTime || autoConfig.value.addEndTime,
+        dailyLimit: resp.data.dailyLimit !== undefined ? resp.data.dailyLimit : autoConfig.value.dailyLimit,
+        estimatedSingleDurationMin: resp.data.estimatedSingleDurationMin !== undefined ? resp.data.estimatedSingleDurationMin : autoConfig.value.estimatedSingleDurationMin,
+        // 计算字段
+        calculatedIntervalMinutes: resp.data.calculatedIntervalMinutes || calculateIntervalMinutes()
       }
     }
   } catch {}
@@ -1413,15 +1507,23 @@ async function loadAutoConfig() {
 
 async function saveAutoConfig() {
   try {
-    // 将分钟转换为秒+新3字段一次提交
+    // 自动计算间隔时间
+    const calculatedInterval = calculateIntervalMinutes()
+    autoConfig.value.calculatedIntervalMinutes = calculatedInterval
+    
     const configToSave = {
-      intervalSeconds: autoConfig.value.intervalMinutes * 60,
+      intervalSeconds: calculatedInterval * 60,
       delayMinSeconds: autoConfig.value.delayMinMinutes * 60,
       delayMaxSeconds: autoConfig.value.delayMaxMinutes * 60,
       autoLoginDiscord: autoConfig.value.autoLoginDiscord,
       maxConcurrentEmulators: autoConfig.value.maxConcurrentEmulators,
       emulatorStartIntervalSec: autoConfig.value.emulatorStartIntervalSec,
-      testModeEnabled: autoConfig.value.testModeEnabled
+      testModeEnabled: autoConfig.value.testModeEnabled,
+      // 新字段
+      addStartTime: autoConfig.value.addStartTime,
+      addEndTime: autoConfig.value.addEndTime,
+      dailyLimit: autoConfig.value.dailyLimit,
+      estimatedSingleDurationMin: autoConfig.value.estimatedSingleDurationMin
     }
     await friendApi.post('/data/autoconfig', configToSave)
     ElMessage.success('自动加好友配置已保存')
@@ -1456,9 +1558,46 @@ async function saveEditAccountNumber(index) {
 }
 
 async function startAutoAll() {
+  // 先保存配置
+  await saveAutoConfig()
+  
+  // 计算预估总时长
+  const totalEmulators = emulators.value.length || 0
+  const intervalMinutes = autoConfig.value.calculatedIntervalMinutes || calculateIntervalMinutes()
+  const estimatedTotalDuration = calculateEstimatedTotalDuration()
+  
+  // 如果预估总时长 < 间隔时长，显示确认弹窗
+  if (estimatedTotalDuration < intervalMinutes) {
+    try {
+      await ElMessageBox.confirm(
+        `当前共 ${totalEmulators} 台模拟器，按当前间隔时间设置，完成一轮添加预计时间 ${estimatedTotalDuration} 分钟，小于间隔时间（${intervalMinutes} 分钟）。`,
+        '提示',
+        {
+          confirmButtonText: '继续启动',
+          cancelButtonText: '取消',
+          type: 'warning'
+        }
+      )
+      // 用户确认后继续启动
+      doStartAutoAll()
+    } catch {
+      // 用户取消
+      return
+    }
+  } else {
+    // 直接启动
+    doStartAutoAll()
+  }
+}
+
+async function doStartAutoAll() {
   try {
-    await friendApi.post('/autoadd/startAll')
-    ElMessage.success('已开始自动加好友')
+    const resp = await friendApi.post('/autoadd/startAll')
+    if (resp.data && resp.data.success !== false) {
+      ElMessage.success(`已开始自动加好友 (模式: ${resp.data.mode === 'continuous' ? '连续执行' : '定时循环'})`)
+    } else {
+      ElMessage.error(resp.data?.message || '启动失败')
+    }
     await fetchEmulators()
   } catch (e) {
     ElMessage.error('操作失败: ' + (e.response?.data?.message || e.message))
@@ -1467,8 +1606,8 @@ async function startAutoAll() {
 
 async function stopAutoAll() {
   try {
-    await friendApi.post('/autoadd/stopAll')
-    ElMessage.success('已停止所有自动加好友')
+    const resp = await friendApi.post('/autoadd/stopAll')
+    ElMessage.success(resp.data?.message || '已停止所有自动加好友')
     await fetchEmulators()
   } catch (e) {
     ElMessage.error('操作失败: ' + (e.response?.data?.message || e.message))
