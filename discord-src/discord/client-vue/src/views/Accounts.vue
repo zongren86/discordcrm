@@ -126,22 +126,21 @@
           <template #default="{ row }">{{ row.friendCount ?? 0 }}</template>
         </el-table-column>
 
-        <el-table-column label="消息" width="80" align="center">
-          <template #default="{ row }">{{ row.messageCount ?? 0 }}</template>
-        </el-table-column>
-
         <el-table-column prop="remark" label="备注" min-width="160">
           <template #default="{ row }">{{ row.remark || '-' }}</template>
         </el-table-column>
 
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column label="操作" width="340" fixed="right">
           <template #default="{ row }">
             <div class="action-cell">
               <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="openRefreshToken(row)">
                 <el-icon><Key /></el-icon> 更新Token
               </el-button>
+              <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="refreshAvatar(row)">
+                <el-icon><Picture /></el-icon> 更新头像
+              </el-button>
               <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="syncAccount(row)">
-                <el-icon><Refresh /></el-icon> 同步
+                <el-icon><Refresh /></el-icon> 同步好友
               </el-button>
               <el-button size="small" type="primary" link @click="openEdit(row)">
                 <el-icon><Edit /></el-icon> 编辑
@@ -292,8 +291,8 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Upload, Refresh, Edit, Delete, Search, OfficeBuilding, Download, Key } from '@element-plus/icons-vue'
-import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountRelationships, listMerchants, refreshAccountToken } from '@/api'
+import { Plus, Upload, Refresh, Edit, Delete, Search, OfficeBuilding, Download, Key, Picture } from '@element-plus/icons-vue'
+import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountFriends, listMerchants, refreshAccountToken, refreshAccountAvatar } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useAccountsStore } from '@/stores/accounts'
 
@@ -382,8 +381,16 @@ function statusLabel(status) {
 
 async function syncAccount(acc) {
   try {
-    await syncAccountRelationships(acc.id)
-    ElMessage.success('同步请求已发送')
+    await syncAccountFriends(acc.id)
+    ElMessage.success('同步好友成功')
+    await fetchAccounts()
+  } catch (e) {}
+}
+
+async function refreshAvatar(acc) {
+  try {
+    await refreshAccountAvatar(acc.id)
+    ElMessage.success('头像更新成功')
     await fetchAccounts()
   } catch (e) {}
 }

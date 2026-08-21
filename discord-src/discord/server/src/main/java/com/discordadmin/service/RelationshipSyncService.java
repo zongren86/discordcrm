@@ -188,8 +188,10 @@ public class RelationshipSyncService {
             log.warn("账号[id={}, name={}] 同步 DM 频道失败: {}", acc.getId(), acc.getName(), e.getMessage());
         }
 
-        // 同步成功清掉 lastError
+        // 同步成功清掉 lastError，并更新缓存的好友数量
         acc.setLastError(null);
+        long acceptedCount = remoteFriends.size();
+        acc.setFriendCount(acceptedCount);
         accountRepository.save(acc);
         log.info("账号[id={}, name={}] 同步好友+待处理请求 {} 个, DM 频道 {} 个", accountId, acc.getName(), updated, dmCount);
         return updated;

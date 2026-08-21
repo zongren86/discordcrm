@@ -38,6 +38,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Service
@@ -45,6 +49,11 @@ public class DiscordAccountService {
 
     private static final Logger log = LoggerFactory.getLogger(DiscordAccountService.class);
     private static final int MAX_DELETE_RETRIES = 3;
+
+    /** Token 有效性缓存：key=accountId, value=[isValid, expireAt] */
+    private static final ConcurrentMap<Long, Object[]> TOKEN_VALID_CACHE = new ConcurrentHashMap<>();
+    /** Token 缓存有效期（5分钟） */
+    private static final long TOKEN_CACHE_TTL_MS = 5 * 60 * 1000L;
 
     private final DiscordAccountRepository accountRepository;
     private final DiscordBotManager botManager;
@@ -99,71 +108,120 @@ public class DiscordAccountService {
 
         List<DiscordAccount> accounts = queryAccounts(keyword, status, merchantId, isPlatformAdmin, isMerchantAdmin, currentAgentId);
 
-        boolean changed = false;
         Map<Long, Boolean> tokenValidMap = new HashMap<>();
-        
+        boolean changed = false;
+        long now = System.currentTimeMillis();
+        List<DiscordAccount> toSaveList = new ArrayList<>();
+
+        // 1) 先查缓存：命中缓存的账号直接跳过HTTP验证
+        List<DiscordAccount> needValidate = new ArrayList<>();
+        List<DiscordAccount> needAvatar = new ArrayList<>();
         for (DiscordAccount a : accounts) {
-            boolean tokenValid = true;
-            
-            // 检测 USER 账号的 token 有效性（仅对401错误标记为过期，其他错误保留为有效）
+            // Token 验证：查缓存
             if (a.getAccountType() == DiscordAccount.AccountType.USER
                     && a.getToken() != null && !a.getToken().isBlank()) {
-                try {
-                    userClient.getMe(a.getToken());
-                    tokenValid = true;
-                } catch (DiscordUserClient.DiscordUserApiException e) {
-                    // 只有401才是真正的token过期
-                    if (e.statusCode == 401) {
-                        tokenValid = false;
-                        log.warn("账号 [{}] token 已失效(401)", a.getName());
-                    } else {
-                        // 其他HTTP错误(429限流、5xx等)不视为过期，保持有效
-                        log.warn("账号 [{}] token 验证失败(状态码={})，保留有效状态", a.getName(), e.statusCode);
-                        tokenValid = true;
-                    }
-                } catch (Exception e) {
-                    // 网络异常等非HTTP错误，不视为token过期
-                    log.warn("账号 [{}] token 验证异常({})，保留有效状态: {}", a.getName(), e.getClass().getSimpleName(), e.getMessage());
-                    tokenValid = true;
+                Object[] cached = TOKEN_VALID_CACHE.get(a.getId());
+                if (cached != null && (Long) cached[1] > now) {
+                    // 缓存命中
+                    tokenValidMap.put(a.getId(), (Boolean) cached[0]);
+                } else {
+                    needValidate.add(a);
                 }
+            } else {
+                tokenValidMap.put(a.getId(), true);
             }
-            tokenValidMap.put(a.getId(), tokenValid);
-            
-            // 获取头像
+
+            // 头像：仅在头像为空时需要获取
             if (a.getAvatarUrl() == null
                     && a.getAccountType() == DiscordAccount.AccountType.USER
                     && a.getToken() != null
                     && a.getDiscordId() != null) {
-                try {
-                    JsonNode me = userClient.getMe(a.getToken());
-                    String avatarHash = me.path("avatar").asText(null);
-                    if (avatarHash != null && !avatarHash.isBlank()) {
-                        String ext = avatarHash.startsWith("a_") ? "gif" : "png";
-                        String avatarUrl = "https://cdn.discordapp.com/avatars/"
-                                + a.getDiscordId() + "/" + avatarHash + "." + ext;
-                        a.setAvatarUrl(avatarUrl);
-                        changed = true;
-                    }
-                } catch (Exception ignored) {}
+                needAvatar.add(a);
             }
         }
-        if (changed) {
-            accountRepository.saveAll(accounts);
+
+        // 2) Token 验证：并行执行
+        if (!needValidate.isEmpty()) {
+            try {
+                CompletableFuture.allOf(needValidate.stream()
+                        .map(a -> CompletableFuture.runAsync(() -> {
+                            boolean isValid = checkTokenValid(a);
+                            tokenValidMap.put(a.getId(), isValid);
+                            // 写入缓存
+                            TOKEN_VALID_CACHE.put(a.getId(), new Object[]{
+                                    isValid, System.currentTimeMillis() + TOKEN_CACHE_TTL_MS
+                            });
+                        }))
+                        .toArray(CompletableFuture[]::new)).get(20, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("并行Token验证失败，使用默认值(true): {}", e.getMessage());
+                for (DiscordAccount a : needValidate) {
+                    tokenValidMap.putIfAbsent(a.getId(), true);
+                }
+            }
         }
 
-        // 批量查询 counts，避免 N+1 问题
-        Map<Long, Long> friendCountMap = batchCountFriends(accounts);
+        // 3) 头像获取：仅对头像为空的账号并行获取
+        if (!needAvatar.isEmpty()) {
+            try {
+                CompletableFuture.allOf(needAvatar.stream()
+                        .map(a -> CompletableFuture.runAsync(() -> {
+                            try {
+                                JsonNode me = userClient.getMe(a.getToken());
+                                String avatarHash = me.path("avatar").asText(null);
+                                if (avatarHash != null && !avatarHash.isBlank()) {
+                                    String ext = avatarHash.startsWith("a_") ? "gif" : "png";
+                                    String avatarUrl = "https://cdn.discordapp.com/avatars/"
+                                            + a.getDiscordId() + "/" + avatarHash + "." + ext;
+                                    a.setAvatarUrl(avatarUrl);
+                                    synchronized (toSaveList) {
+                                        toSaveList.add(a);
+                                    }
+                                }
+                            } catch (Exception ignored) {}
+                        }))
+                        .toArray(CompletableFuture[]::new)).get(20, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("并行获取头像失败: {}", e.getMessage());
+            }
+        }
+
+        if (!toSaveList.isEmpty()) {
+            accountRepository.saveAll(toSaveList);
+        }
+
+        // 4) 仅查询会话数量（消息数已移到其他数据功能，好友数从缓存字段读取）
         Map<Long, Long> conversationCountMap = batchCountConversations(accounts);
-        Map<Long, Long> messageCountMap = batchCountMessages(accounts);
 
         Map<Long, Boolean> finalTokenValidMap = tokenValidMap;
         return accounts.stream()
                 .map(a -> buildAccountDto(a,
                         finalTokenValidMap.getOrDefault(a.getId(), true),
-                        friendCountMap.getOrDefault(a.getId(), 0L),
+                        a.getFriendCount() != null ? a.getFriendCount() : 0L,
                         conversationCountMap.getOrDefault(a.getId(), 0L),
-                        messageCountMap.getOrDefault(a.getId(), 0L)))
+                        0L)) // messageCount 不再显示
                 .toList();
+    }
+
+    /** 检测 USER 账号的 token 有效性（仅对401错误标记为过期，其他错误保留为有效） */
+    private boolean checkTokenValid(DiscordAccount a) {
+        try {
+            userClient.getMe(a.getToken());
+            return true;
+        } catch (DiscordUserClient.DiscordUserApiException e) {
+            if (e.statusCode == 401) {
+                log.warn("账号 [{}] token 已失效(401)", a.getName());
+                return false;
+            } else {
+                // 其他HTTP错误(429限流、5xx等)不视为过期，保持有效
+                log.warn("账号 [{}] token 验证失败(状态码={})，保留有效状态", a.getName(), e.statusCode);
+                return true;
+            }
+        } catch (Exception e) {
+            // 网络异常等非HTTP错误，不视为token过期
+            log.warn("账号 [{}] token 验证异常({})，保留有效状态: {}", a.getName(), e.getClass().getSimpleName(), e.getMessage());
+            return true;
+        }
     }
 
     private Map<Long, Long> batchCountFriends(List<DiscordAccount> accounts) {
@@ -819,6 +877,55 @@ public class DiscordAccountService {
             botManager.stopAccount(id);
         }
         return AccountDto.from(account, botManager.isConnected(account.getId()), botManager.isConnecting(account.getId()));
+    }
+
+    /**
+     * 手动刷新账号头像（调用 Discord API 获取最新头像）
+     */
+    public AccountDto refreshAvatar(Long id) {
+        DiscordAccount account = accountRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("账号不存在"));
+        SecurityUtils.checkMerchantAccess(account.getMerchantId());
+
+        if (account.getAccountType() != DiscordAccount.AccountType.USER) {
+            throw new IllegalStateException("仅 USER 类型账号支持刷新头像");
+        }
+        if (account.getToken() == null || account.getToken().isBlank()) {
+            throw new IllegalStateException("账号 Token 为空，无法刷新头像");
+        }
+
+        try {
+            JsonNode me = userClient.getMe(account.getToken());
+            String avatarHash = me.path("avatar").asText(null);
+            if (avatarHash != null && !avatarHash.isBlank() && account.getDiscordId() != null) {
+                String ext = avatarHash.startsWith("a_") ? "gif" : "png";
+                String avatarUrl = "https://cdn.discordapp.com/avatars/"
+                        + account.getDiscordId() + "/" + avatarHash + "." + ext;
+                account.setAvatarUrl(avatarUrl);
+                account = accountRepository.save(account);
+                log.info("账号 [{}] 头像刷新成功", account.getName());
+            }
+            // 同步更新 discordName
+            String username = me.path("username").asText(null);
+            String globalName = me.path("global_name").asText(null);
+            if (globalName != null && !globalName.isBlank()) {
+                account.setDiscordName(globalName);
+                if (account.getName() == null || account.getName().isBlank()) {
+                    account.setName(globalName);
+                }
+            } else if (username != null && !username.isBlank()) {
+                account.setDiscordName(username);
+            }
+            account = accountRepository.save(account);
+        } catch (DiscordUserClient.DiscordUserApiException e) {
+            throw new IllegalStateException("刷新头像失败：Discord API " + e.statusCode, e);
+        } catch (Exception e) {
+            throw new IllegalStateException("刷新头像失败：" + e.getMessage(), e);
+        }
+
+        return AccountDto.from(account, botManager.isConnected(id), botManager.isConnecting(id),
+                account.getFriendCount() != null ? account.getFriendCount() : 0L,
+                conversationRepository.countByDiscordAccount(account), 0L);
     }
 
     /**

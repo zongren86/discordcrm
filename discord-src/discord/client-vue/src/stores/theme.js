@@ -39,12 +39,26 @@ export const useThemeStore = defineStore('theme', () => {
 
   // 全屏切换
   function toggleFullscreen() {
-    if (!document.fullscreenElement) {
-      document.requestFullscreen()
-      isFullscreen.value = true
-    } else {
-      document.exitFullscreen()
-      isFullscreen.value = false
+    try {
+      if (!document.fullscreenElement) {
+        // requestFullscreen 是 Element 的方法，必须在具体 DOM 元素上调用（而非 document）
+        const el = document.documentElement
+        if (el.requestFullscreen) {
+          el.requestFullscreen().catch(err => {
+            console.warn('进入全屏失败:', err)
+          })
+        }
+      } else {
+        // exitFullscreen 是 Document 的方法
+        if (document.exitFullscreen) {
+          document.exitFullscreen().catch(err => {
+            console.warn('退出全屏失败:', err)
+          })
+        }
+      }
+      // 状态变化以 fullscreenchange 事件为准（见下方监听器），避免手动赋值造成假状态
+    } catch (err) {
+      console.warn('切换全屏异常:', err)
     }
   }
 

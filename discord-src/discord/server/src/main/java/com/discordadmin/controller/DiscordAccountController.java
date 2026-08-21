@@ -2,18 +2,23 @@ package com.discordadmin.controller;
 
 import com.discordadmin.dto.DiscordAccountDtos.*;
 import com.discordadmin.service.DiscordAccountService;
+import com.discordadmin.service.RelationshipSyncService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/discord-accounts")
 public class DiscordAccountController {
 
     private final DiscordAccountService accountService;
+    private final RelationshipSyncService syncService;
 
-    public DiscordAccountController(DiscordAccountService accountService) {
+    public DiscordAccountController(DiscordAccountService accountService,
+                                     RelationshipSyncService syncService) {
         this.accountService = accountService;
+        this.syncService = syncService;
     }
 
     @GetMapping
@@ -67,5 +72,18 @@ public class DiscordAccountController {
     public RefreshTokenResponse refreshToken(@PathVariable Long id,
                                               @RequestBody RefreshTokenRequest request) {
         return accountService.refreshToken(id, request);
+    }
+
+    /** 同步好友关系 */
+    @PostMapping("/{id}/sync-friends")
+    public Map<String, Object> syncFriends(@PathVariable Long id) {
+        int count = syncService.syncOne(id);
+        return Map.of("syncedCount", count);
+    }
+
+    /** 手动更新头像 */
+    @PostMapping("/{id}/refresh-avatar")
+    public AccountDto refreshAvatar(@PathVariable Long id) {
+        return accountService.refreshAvatar(id);
     }
 }

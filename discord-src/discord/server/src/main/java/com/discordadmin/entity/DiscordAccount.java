@@ -78,6 +78,10 @@ public class DiscordAccount {
     @JsonIgnore
     private Set<Agent> agents = new HashSet<>();
 
+    /** 缓存的好友数量（同步好友时更新） */
+    @Column(name = "friend_count")
+    private Long friendCount = 0L;
+
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 

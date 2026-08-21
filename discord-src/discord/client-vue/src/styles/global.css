@@ -75,23 +75,23 @@
   --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* ===== B端管理后台字号规范 =====
-     所有字体统一 14px
+     所有字体统一 18px
      ------------------------------------------------------
-     --font-xs   14px  辅助文字/提示/时间/badge标签
-     --font-sm   14px  同 xs
-     --font-base 14px  B端基准正文：表单label、按钮文字、表格内容
-     --font-lg   14px  卡片/模块标题、弹窗标题、侧边一级菜单
-     --font-xl   14px  页面大标题
-     --font-2xl  14px  超大数据展示
-     --font-3xl  14px  特大数据展示
+     --font-xs   18px  辅助文字/提示/时间/badge标签
+     --font-sm   18px  同 xs
+     --font-base 18px  B端基准正文：表单label、按钮文字、表格内容
+     --font-lg   18px  卡片/模块标题、弹窗标题、侧边一级菜单
+     --font-xl   18px  页面大标题
+     --font-2xl  18px  超大数据展示
+     --font-3xl  18px  特大数据展示
   */
-  --font-xs: 14px;
-  --font-sm: 14px;
-  --font-base: 14px;
-  --font-lg: 14px;
-  --font-xl: 14px;
-  --font-2xl: 14px;
-  --font-3xl: 14px;
+  --font-xs: 18px;
+  --font-sm: 18px;
+  --font-base: 18px;
+  --font-lg: 18px;
+  --font-xl: 18px;
+  --font-2xl: 18px;
+  --font-3xl: 18px;
 
   /* ===== B端字重规范 ===== */
   --weight-normal: 400;    /* 正文、表格内容、表单label */
@@ -264,53 +264,53 @@
 }
 
 /* ===== 基础重置 ===== */
-* { box-sizing: border-box; font-size: 14px; }
+* { box-sizing: border-box; font-size: 18px; }
 
-/* Element Plus CSS变量覆盖 - 统一字体为14px */
+/* Element Plus CSS变量覆盖 - 统一字体为18px */
 :root {
-  --el-font-size-extra-large: 14px;
-  --el-font-size-large: 14px;
-  --el-font-size-medium: 14px;
-  --el-font-size-base: 14px;
-  --el-font-size-small: 14px;
-  --el-font-size-extra-small: 14px;
-  --el-font-size-extra-small-1: 14px;
+  --el-font-size-extra-large: 18px;
+  --el-font-size-large: 18px;
+  --el-font-size-medium: 18px;
+  --el-font-size-base: 18px;
+  --el-font-size-small: 18px;
+  --el-font-size-extra-small: 18px;
+  --el-font-size-extra-small-1: 18px;
   
   --el-font-weight-primary: 500;
   
   --el-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
   
   /* 组件内部字体变量 */
-  --el-button-font-size: 14px;
-  --el-form-label-font-size: 14px;
-  --el-input-font-size: 14px;
-  --el-textarea-font-size: 14px;
-  --el-table-font-size: 14px;
-  --el-dialog-title-font-size: 14px;
-  --el-dialog-content-font-size: 14px;
-  --el-message-font-size: 14px;
-  --el-menu-font-size: 14px;
-  --el-tag-font-size: 14px;
-  --el-pagination-font-size: 14px;
-  --el-select-font-size: 14px;
-  --el-empty-description-font-size: 14px;
-  --el-badge-font-size: 14px;
-  --el-alert-font-size: 14px;
-  --el-card-font-size: 14px;
-  --el-date-editor-font-size: 14px;
-  --el-radio-font-size: 14px;
-  --el-switch-font-size: 14px;
-  --el-tabs-font-size: 14px;
-  --el-tooltip-font-size: 14px;
-  --el-dropdown-font-size: 14px;
-  --el-progress-font-size: 14px;
-  --el-upload-font-size: 14px;
-  --el-steps-font-size: 14px;
-  --el-loading-font-size: 14px;
-  --el-scrollbar-font-size: 14px;
+  --el-button-font-size: 18px;
+  --el-form-label-font-size: 18px;
+  --el-input-font-size: 18px;
+  --el-textarea-font-size: 18px;
+  --el-table-font-size: 18px;
+  --el-dialog-title-font-size: 18px;
+  --el-dialog-content-font-size: 18px;
+  --el-message-font-size: 18px;
+  --el-menu-font-size: 18px;
+  --el-tag-font-size: 18px;
+  --el-pagination-font-size: 18px;
+  --el-select-font-size: 18px;
+  --el-empty-description-font-size: 18px;
+  --el-badge-font-size: 18px;
+  --el-alert-font-size: 18px;
+  --el-card-font-size: 18px;
+  --el-date-editor-font-size: 18px;
+  --el-radio-font-size: 18px;
+  --el-switch-font-size: 18px;
+  --el-tabs-font-size: 18px;
+  --el-tooltip-font-size: 18px;
+  --el-dropdown-font-size: 18px;
+  --el-progress-font-size: 18px;
+  --el-upload-font-size: 18px;
+  --el-steps-font-size: 18px;
+  --el-loading-font-size: 18px;
+  --el-scrollbar-font-size: 18px;
 }
 
-/* 强制覆盖所有UI组件库的字号为14px */
+/* 强制覆盖所有UI组件库的字号为18px */
 .el-button, .el-input__inner, .el-textarea__inner, .el-form-item__label,
 .el-table th.el-table__cell, .el-table td.el-table__cell,
 .el-dialog__title, .el-dialog__body, .el-message-box__message p,
@@ -323,7 +323,7 @@
 .el-upload, .el-loading-mask, .el-steps, .el-statistic,
 .el-descriptions, .el-timeline, .el-avatar, .el-icon,
 .el-typography, .el-text, .el-link {
-  font-size: 14px !important;
+  font-size: 18px !important;
 }
 
 html, body, #app {

@@ -72,6 +72,14 @@ export function batchImport(payload) {
 export function syncAccountRelationships(id) {
   return http.post('/discord-accounts/' + id + '/connect')
 }
+// 同步好友关系
+export function syncAccountFriends(id) {
+  return http.post('/discord-accounts/' + id + '/sync-friends')
+}
+// 手动刷新头像
+export function refreshAccountAvatar(id) {
+  return http.post('/discord-accounts/' + id + '/refresh-avatar')
+}
 // 刷新 USER 账号的 Token
 export function refreshAccountToken(id, email, password) {
   return http.post('/discord-accounts/' + id + '/refresh-token', { email, password })
