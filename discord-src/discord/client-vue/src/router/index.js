@@ -36,10 +36,16 @@ const router = createRouter({
   routes
 })
 
-// 获取用户有权限访问的第一个路径
+// 获取用户有权限访问的第一个路径（优先消息中心）
 function getFirstAllowedPath(auth) {
+  // 优先检查消息中心
+  if (auth.hasMenuPath('/chat')) {
+    return '/chat'
+  }
+  
+  // 如果没有消息中心权限，按顺序查找第一个有权限的菜单
   const pathList = [
-    '/stats', '/chat', '/account-numbers', '/accounts', '/customers',
+    '/stats', '/account-numbers', '/accounts', '/customers',
     '/guilds', '/guild-members', '/emulator', '/ai-settings',
     '/users', '/roles', '/features', '/audit'
   ]
@@ -54,47 +60,41 @@ function getFirstAllowedPath(auth) {
   return '/chat'
 }
 
-// 标记是否正在处理登录跳转，防止死循环
-let isNavigatingAfterLogin = false
-let permissionsRefreshing = false
-
-router.beforeEach(async (to, from, next) => {
+router.beforeEach((to, from, next) => {
   const auth = useAuthStore()
   
   // 未登录用户访问需要认证的页面，跳转到登录页
   if (to.meta.requiresAuth && !auth.isLoggedIn) {
+    console.log('路由守卫: 未登录，跳转到登录页')
     next('/login')
     return
   }
   
-  // 已登录用户访问登录页，跳转到第一个有权限的页面
-  if (to.path === '/login' && auth.isLoggedIn) {
-    next(getFirstAllowedPath(auth))
+  // 已登录用户访问登录页或根路径，跳转到第一个有权限的页面
+  if ((to.path === '/login' || to.path === '/') && auth.isLoggedIn) {
+    const targetPath = getFirstAllowedPath(auth)
+    console.log('路由守卫: 已登录，跳转到:', targetPath)
+    next(targetPath)
     return
   }
   
-  // 已登录用户，强制刷新权限（确保权限变更能及时生效）
+  // 已登录用户，使用缓存权限检查（登录时已获取，不调API）
   if (auth.isLoggedIn && to.meta.requiresAuth !== false) {
-    try {
-      await auth.fetchPermissions()
-    } catch (e) {}
-  }
-  
-  // 已登录用户访问没有权限的页面（使用menuPaths判断）
-  if (auth.isLoggedIn && to.meta.requiresAuth !== false) {
-    const path = to.path === '/' ? '/chat' : to.path
-    if (!auth.hasMenuPath(path)) {
-      const allowedPath = getFirstAllowedPath(auth)
-      if (allowedPath === to.path) {
-        next()
-      } else {
-        next(allowedPath)
-      }
+    const path = to.path
+    const hasPermission = auth.hasMenuPath(path)
+    console.log(`路由守卫: 检查路径 ${path}, 权限: ${hasPermission}, menuPaths:`, auth.menuPaths)
+    
+    if (!hasPermission) {
+      // 没有权限，跳转到第一个有权限的页面
+      const targetPath = getFirstAllowedPath(auth)
+      console.log('路由守卫: 无权限，跳转到:', targetPath)
+      next(targetPath)
       return
     }
   }
   
   // 其他情况直接放行
+  console.log('路由守卫: 放行', to.path)
   next()
 })
 

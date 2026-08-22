@@ -26,7 +26,6 @@
         class="sidebar-menu"
         :default-active="activeMenu"
         v-model:openeds="openeds"
-        :router="true"
         @select="handleSelect"
         :collapse="theme.sidebarCollapsed"
         :collapse-transition="false"
@@ -147,11 +146,7 @@
       </header>
 
       <main class="main-area">
-        <router-view v-slot="{ Component }">
-          <transition name="page" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </router-view>
+        <router-view />
       </main>
     </div>
   </div>
@@ -388,7 +383,34 @@ const avatarStyle = computed(() => ({
   fontWeight: 600
 }))
 
-function handleSelect() {}
+function handleSelect(index) {
+  if (!index) return
+  console.log('菜单点击:', index, '当前路径:', route.path)
+  
+  // 规范化路径：确保以 / 开头
+  let targetPath = index
+  if (!targetPath.startsWith('/')) {
+    targetPath = '/' + targetPath
+  }
+  
+  // 避免重复导航到相同路径
+  if (route.path === targetPath) {
+    console.log('当前已是该路径，跳过导航')
+    return
+  }
+  
+  try {
+    router.push(targetPath).then(() => {
+      console.log('导航成功:', targetPath)
+    }).catch(err => {
+      console.error('导航失败:', err)
+      // 如果导航失败，尝试 replace
+      router.replace(targetPath).catch(e => console.error('replace 也失败:', e))
+    })
+  } catch (e) {
+    console.error('导航异常:', e)
+  }
+}
 
 async function handleLogout() {
   try {
@@ -416,11 +438,35 @@ async function handleLogout() {
   }
 }
 
+// 根据权限获取默认路由（优先消息中心）
+function getDefaultRoute() {
+  // 优先检查消息中心权限
+  if (auth.hasMenuPath('/chat')) {
+    return '/chat'
+  }
+  
+  // 如果没有消息中心权限，按顺序查找第一个有权限的菜单
+  const pathList = [
+    '/stats', '/account-numbers', '/accounts', '/customers',
+    '/guilds', '/guild-members', '/emulator', '/ai-settings',
+    '/users', '/roles', '/features', '/audit'
+  ]
+  
+  for (const path of pathList) {
+    if (auth.hasMenuPath(path)) {
+      return path
+    }
+  }
+  
+  return '/chat'
+}
+
 onMounted(async () => {
   await loadMenuTree()
   
+  // 登录后跳转到第一个有权限的页面（优先消息中心）
   if (route.path === '/' || route.path === '/login') {
-    router.push(defaultRoute.value)
+    router.push(getDefaultRoute())
   }
   
   try {

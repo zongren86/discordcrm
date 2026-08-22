@@ -75,14 +75,20 @@ const rules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }]
 }
 
-// 根据权限获取第一个允许访问的路径
+// 根据权限获取第一个允许访问的路径（优先消息中心）
 function getFirstAllowedPath() {
   if (!auth.menuPaths || auth.menuPaths.length === 0) {
     return '/chat'
   }
   
+  // 优先检查消息中心
+  if (auth.hasMenuPath('/chat')) {
+    return '/chat'
+  }
+  
+  // 如果没有消息中心权限，按顺序查找第一个有权限的菜单
   const pathList = [
-    '/stats', '/chat', '/account-numbers', '/accounts', '/customers',
+    '/stats', '/account-numbers', '/accounts', '/customers',
     '/guilds', '/guild-members', '/emulator', '/ai-settings',
     '/users', '/roles', '/features', '/audit'
   ]
@@ -114,8 +120,9 @@ async function handleLogin() {
     await nextTick()
     await nextTick()
     
+    // 登录后跳转到第一个有权限的页面（优先消息中心）
     const targetPath = getFirstAllowedPath()
-    console.log('登录成功，准备跳转到:', targetPath, '当前权限:', auth.permissions)
+    console.log('登录成功，准备跳转到:', targetPath)
     
     // 使用 replace 而不是 push，避免浏览器历史记录问题
     await router.replace(targetPath).catch(err => {

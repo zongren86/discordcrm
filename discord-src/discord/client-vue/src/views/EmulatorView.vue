@@ -957,29 +957,42 @@ async function batchAction(action) {
 }
 
 onMounted(async () => {
-  await checkService()
+  // 并行执行所有加载，不等待服务检查
+  const loadTasks = [
+    fetchEmulators(),
+    loadAddedServers(),
+    loadAvailableServers(),
+    loadAutoConfig(),
+    checkApkStatus(),
+    loadFriendPoolStats(),
+    loadAllServerFriendPoolStats(),
+    loadFriendPool(),
+    checkPhysicalStatus(),
+    fetchAutoAddStatus()
+  ]
+  
+  // 服务检查与数据加载并行
+  const serviceCheckPromise = checkBackend().then(ok => {
+    backendAvailable.value = ok
+  })
+  
+  // 并行执行所有任务
+  await Promise.all([
+    serviceCheckPromise,
+    ...loadTasks.map(t => t.catch(() => null)) // 单个任务失败不影响其他
+  ])
+  
+  loading.value = false
+  
+  // 启动轮询
   if (backendAvailable.value) {
-    await Promise.all([
-      fetchEmulators(),
-      loadAddedServers(),
-      loadAvailableServers(),
-      loadAutoConfig(),
-      checkApkStatus(),
-      loadFriendPoolStats(),
-      loadAllServerFriendPoolStats(),
-      loadFriendPool(),
-      checkPhysicalStatus(),
-      fetchAutoAddStatus()
-    ])
     startFriendPoolPolling()
     // 如果任务正在运行，启动状态轮询
     if (autoAddTaskStatus.value.isRunning) {
       startAutoAddStatusPolling()
     }
-  } else {
-    // 后端不可用时仍尝试加载物理状态（使用不同的API路径可能仍可用）
-    checkPhysicalStatus()
   }
+  
   startHealthCheck()
   // 启动每秒更新的倒计时定时器
   countdownTimer = setInterval(() => {
@@ -1020,8 +1033,8 @@ async function checkService() {
 
 async function checkBackend() {
   try {
-    // 放宽到 30s：后端处理模拟器数据可能较慢，给足时间
-    const resp = await emuApi.get('/emulators', { timeout: 30000 })
+    // 缩短超时到5秒，避免长时间等待
+    const resp = await emuApi.get('/emulators', { timeout: 5000 })
     return Array.isArray(resp.data) || resp.status < 500
   } catch { return false }
 }
