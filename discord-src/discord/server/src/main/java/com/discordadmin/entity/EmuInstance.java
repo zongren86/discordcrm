@@ -67,7 +67,7 @@ public class EmuInstance {
     @Column(name = "discord_account_name", length = 128)
     private String discordAccountName;
 
-    @Column(name = "auto_running")
+    @Column(name = "auto_running", columnDefinition = "TINYINT(1)")
     private Boolean autoRunning = false;
 
     @Column(name = "added_count")
@@ -101,5 +101,15 @@ public class EmuInstance {
         STOPPED,    // 已停止
         CREATING,   // 创建中
         ERROR       // 错误
+    }
+
+    // 显式 getter 确保 Boolean 类型正确映射
+    public Boolean getAutoRunning() {
+        return autoRunning != null && autoRunning;
+    }
+
+    // 显式 setter
+    public void setAutoRunning(Boolean autoRunning) {
+        this.autoRunning = autoRunning;
     }
 }

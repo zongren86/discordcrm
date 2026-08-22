@@ -128,7 +128,7 @@
                   v-model="autoConfig.addStartTime"
                   format="HH:mm"
                   value-format="HH:mm"
-                  style="width: 80px"
+                  style="width: 120px"
                   size="small"
                   placeholder="开始"
                 />
@@ -137,7 +137,7 @@
                   v-model="autoConfig.addEndTime"
                   format="HH:mm"
                   value-format="HH:mm"
-                  style="width: 80px"
+                  style="width: 120px"
                   size="small"
                   placeholder="结束"
                 />
@@ -145,7 +145,7 @@
               <!-- 每天可加人数 -->
               <div class="form-row">
                 <label>每天可加人数</label>
-                <el-input-number v-model="autoConfig.dailyLimit" :min="1" :max="10000" size="small" style="width: 80px" />
+                <el-input-number v-model="autoConfig.dailyLimit" :min="1" :max="10000" size="small" style="width: 120px" />
                 <span class="unit">人</span>
               </div>
               <!-- 自动计算的间隔时间（只读） -->
@@ -154,9 +154,9 @@
                 <el-input-number 
                   v-model="autoConfig.calculatedIntervalMinutes" 
                   :min="1" 
-                  :max="9999" 
+                  :max="999999" 
                   size="small" 
-                  style="width: 100px"
+                  style="width: 120px"
                   :disabled="true"
                 />
                 <span class="unit">分钟(自动计算)</span>
@@ -164,27 +164,27 @@
               <!-- 并发 -->
               <div class="form-row">
                 <label>同时启动</label>
-                <el-input-number v-model="autoConfig.maxConcurrentEmulators" :min="1" :max="200" size="small" style="width: 80px" />
+                <el-input-number v-model="autoConfig.maxConcurrentEmulators" :min="1" :max="200" size="small" style="width: 120px" />
                 <span class="unit">台</span>
               </div>
               <!-- 启动间隔 -->
               <div class="form-row">
                 <label>启动间隔</label>
-                <el-input-number v-model="autoConfig.emulatorStartIntervalSec" :min="1" :max="3600" size="small" style="width: 80px" />
+                <el-input-number v-model="autoConfig.emulatorStartIntervalSec" :min="1" :max="3600" size="small" style="width: 120px" />
                 <span class="unit">秒</span>
               </div>
               <!-- 预估单机完成时长 -->
               <div class="form-row">
                 <label>预估单机时长</label>
-                <el-input-number v-model="autoConfig.estimatedSingleDurationMin" :min="1" :max="1440" size="small" style="width: 80px" />
+                <el-input-number v-model="autoConfig.estimatedSingleDurationMin" :min="1" :max="1440" size="small" style="width: 120px" />
                 <span class="unit">分钟</span>
               </div>
               <!-- 延迟 -->
               <div class="form-row">
                 <label>随机延迟</label>
-                <el-input-number v-model="autoConfig.delayMinMinutes" :min="0" :max="9999" size="small" style="width: 70px" />
+                <el-input-number v-model="autoConfig.delayMinMinutes" :min="0" :max="999999" size="small" style="width: 120px" />
                 <span>~</span>
-                <el-input-number v-model="autoConfig.delayMaxMinutes" :min="0" :max="9999" size="small" style="width: 70px" />
+                <el-input-number v-model="autoConfig.delayMaxMinutes" :min="0" :max="999999" size="small" style="width: 120px" />
                 <span class="unit">分钟</span>
               </div>
               <!-- 测试模式 -->
@@ -326,10 +326,10 @@
           <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall || !physicalStatus.available">
             批量安装DS
           </el-button>
-          <el-button type="primary" size="small" @click="startAutoAll">
+          <el-button v-if="!autoAddTaskRunning" type="primary" size="small" @click="startAutoAll">
             全部开始加好友
           </el-button>
-          <el-button type="primary" size="small" @click="stopAutoAll">
+          <el-button v-else type="danger" size="small" @click="stopAutoAll">
             全部停止加好友
           </el-button>
           <el-button type="primary" size="small" @click="batchAction('startAuto')" :disabled="!canBatchStartAuto">
@@ -671,6 +671,11 @@ const autoConfig = ref({
   calculatedIntervalMinutes: 15
 })
 
+// 自动加好友任务状态
+const autoAddTaskRunning = ref(false)
+const autoAddTaskStatus = ref({})
+let autoAddStatusPollTimer = null
+
 // Discord账号编号列编辑状态
 const editingAccountNumberIdx = ref(null)
 const editingAccountNumberValue = ref(null)
@@ -963,9 +968,14 @@ onMounted(async () => {
       loadFriendPoolStats(),
       loadAllServerFriendPoolStats(),
       loadFriendPool(),
-      checkPhysicalStatus()
+      checkPhysicalStatus(),
+      fetchAutoAddStatus()
     ])
     startFriendPoolPolling()
+    // 如果任务正在运行，启动状态轮询
+    if (autoAddTaskStatus.value.isRunning) {
+      startAutoAddStatusPolling()
+    }
   } else {
     // 后端不可用时仍尝试加载物理状态（使用不同的API路径可能仍可用）
     checkPhysicalStatus()
@@ -981,6 +991,7 @@ onUnmounted(() => {
   if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
   stopFriendPoolPolling()
+  stopAutoAddStatusPolling()
 })
 
 // 监听弹窗打开时加载数据
@@ -1592,9 +1603,11 @@ async function startAutoAll() {
 
 async function doStartAutoAll() {
   try {
-    const resp = await friendApi.post('/autoadd/startAll')
+    const resp = await friendApi.post('/emu/autoadd/startAll')
     if (resp.data && resp.data.success !== false) {
       ElMessage.success(`已开始自动加好友 (模式: ${resp.data.mode === 'continuous' ? '连续执行' : '定时循环'})`)
+      autoAddTaskRunning.value = true
+      startAutoAddStatusPolling()
     } else {
       ElMessage.error(resp.data?.message || '启动失败')
     }
@@ -1606,11 +1619,47 @@ async function doStartAutoAll() {
 
 async function stopAutoAll() {
   try {
-    const resp = await friendApi.post('/autoadd/stopAll')
+    const resp = await friendApi.post('/emu/autoadd/stopAll')
     ElMessage.success(resp.data?.message || '已停止所有自动加好友')
+    autoAddTaskRunning.value = false
+    stopAutoAddStatusPolling()
     await fetchEmulators()
   } catch (e) {
     ElMessage.error('操作失败: ' + (e.response?.data?.message || e.message))
+    autoAddTaskRunning.value = false
+    stopAutoAddStatusPolling()
+  }
+}
+
+// 获取任务状态
+async function fetchAutoAddStatus() {
+  try {
+    const resp = await friendApi.get('/emu/autoadd/status')
+    if (resp.data) {
+      autoAddTaskStatus.value = resp.data
+      autoAddTaskRunning.value = resp.data.isRunning || false
+    }
+  } catch (e) {
+    console.error('获取任务状态失败', e)
+  }
+}
+
+// 开始轮询任务状态
+function startAutoAddStatusPolling() {
+  stopAutoAddStatusPolling()
+  // 立即获取一次
+  fetchAutoAddStatus()
+  // 每2秒轮询一次
+  autoAddStatusPollTimer = setInterval(() => {
+    fetchAutoAddStatus()
+  }, 2000)
+}
+
+// 停止轮询任务状态
+function stopAutoAddStatusPolling() {
+  if (autoAddStatusPollTimer) {
+    clearInterval(autoAddStatusPollTimer)
+    autoAddStatusPollTimer = null
   }
 }
 
@@ -1875,13 +1924,13 @@ function formatCountdown(timestamp) {
 }
 
 .form-row.inline label,
-.form-row label { min-width: auto; font-size: 12px; color: #606266; }
+.form-row label { min-width: auto; font-size: 13px; color: #ffffff; }
 
 .action-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
-.hint { font-size: 12px; color: #909399; }
-.hint-sm { font-size: 11px; color: #c0c4cc; margin-left: 6px; }
-.unit { font-size: 12px; color: #909399; }
+.hint { font-size: 13px; color: #ffffff; }
+.hint-sm { font-size: 12px; color: #ffffff; margin-left: 6px; }
+.unit { font-size: 13px; color: #ffffff; }
 
 .batch-toolbar {
   position: sticky;

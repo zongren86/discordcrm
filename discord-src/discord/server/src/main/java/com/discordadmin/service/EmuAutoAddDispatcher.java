@@ -140,6 +140,13 @@ public class EmuAutoAddDispatcher {
         List<EmuInstance> all = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         int totalEmulators = all.size();
         
+        // 将所有模拟器标记为参与自动加好友任务
+        for (EmuInstance emu : all) {
+            emu.setAutoRunning(true);
+            instanceRepository.save(emu);
+        }
+        log.info("已将 {} 台模拟器标记为参与自动加好友", totalEmulators);
+        
         // 计算预估总时长
         int estimatedTotalDuration = cfg.calculateEstimatedTotalDuration(totalEmulators);
         
@@ -275,6 +282,10 @@ public class EmuAutoAddDispatcher {
 
         log.info("本轮候选模拟器: {}, 处理数量: {}", candidates.size(), batch.size());
 
+        // 按配置的启动间隔时间逐个启动，第1台延迟0，第2台延迟interval*1，第3台延迟interval*2...
+        long intervalMs = cfg.getEmulatorStartIntervalSec() * 1000L;
+        int index = 0;
+        
         for (EmuInstance emu : batch) {
             if (stopFlag) break;
             
@@ -291,23 +302,15 @@ public class EmuAutoAddDispatcher {
             final Long merchantIdF = merchantId;
             final String userIdF = userId;
 
-            // 排队启动间隔
-            long intervalMs = cfg.getEmulatorStartIntervalSec() * 1000L;
-            long waitMs;
-            synchronized (this) {
-                long nowMs = System.currentTimeMillis();
-                long earliestNext = lastLaunchAt + intervalMs;
-                waitMs = Math.max(0L, earliestNext - nowMs);
-                if (waitMs == 0L) lastLaunchAt = nowMs;
-                else lastLaunchAt = earliestNext;
-            }
-            final long sleepMs = waitMs;
+            // 按启动间隔时间逐个启动，递增延迟
+            final long sleepMs = intervalMs * index;
             final AutoAddConfig cfgF = cfg;
             final EmuInstance emuF = emu;
 
             worker.submit(() -> {
                 try {
                     if (sleepMs > 0) Thread.sleep(sleepMs);
+                    log.info("模拟器#{} 启动间隔延迟{}ms后开始启动", dbIndex, sleepMs);
                     startedCount.incrementAndGet();
                     runOneLifecycle(emuF, cfgF, merchantIdF, userIdF);
                     completedCount.incrementAndGet();
@@ -322,6 +325,7 @@ public class EmuAutoAddDispatcher {
                     concurrencyCount.decrementAndGet();
                 }
             });
+            index++;
         }
     }
 
@@ -409,6 +413,30 @@ public class EmuAutoAddDispatcher {
         // 停止定时器
         stopContinuousCheck();
         stopScheduledCheck();
+        
+        // 清理运行状态
+        runningBusy.clear();
+        concurrencyCount.set(0);
+        
+        // 重置统计
+        startedCount.set(0);
+        completedCount.set(0);
+        successCount.set(0);
+        failCount.set(0);
+        
+        // 重置所有模拟器的 autoRunning 状态
+        try {
+            List<EmuInstance> all = instanceRepository.findAll();
+            for (EmuInstance emu : all) {
+                if (Boolean.TRUE.equals(emu.getAutoRunning())) {
+                    emu.setAutoRunning(false);
+                    instanceRepository.save(emu);
+                }
+            }
+            log.info("已重置所有模拟器的自动加好友标记");
+        } catch (Exception e) {
+            log.warn("重置模拟器状态失败", e);
+        }
         
         // 关闭正在运行的模拟器
         // 注意：正在运行的模拟器会在 runOneLifecycle 中检测 stopFlag 并提前退出

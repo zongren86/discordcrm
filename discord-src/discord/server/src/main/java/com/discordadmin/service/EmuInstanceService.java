@@ -30,6 +30,7 @@ public class EmuInstanceService {
     private final DiscordAccountRepository discordAccountRepository;
     private final DiscordService discordService;
     private final com.discordadmin.repository.GuildMemberRepository guildMemberRepository;
+    private final jakarta.persistence.EntityManager entityManager;
 
     @Value("${emulator.local-mode:false}")
     private boolean localMode;
@@ -40,7 +41,8 @@ public class EmuInstanceService {
                                ApkManagementService apkManagementService,
                                DiscordAccountRepository discordAccountRepository,
                                DiscordService discordService,
-                               com.discordadmin.repository.GuildMemberRepository guildMemberRepository) {
+                               com.discordadmin.repository.GuildMemberRepository guildMemberRepository,
+                               jakarta.persistence.EntityManager entityManager) {
         this.instanceRepository = instanceRepository;
         this.mumuClientService = mumuClientService;
         this.webSocketService = webSocketService;
@@ -48,6 +50,7 @@ public class EmuInstanceService {
         this.discordAccountRepository = discordAccountRepository;
         this.discordService = discordService;
         this.guildMemberRepository = guildMemberRepository;
+        this.entityManager = entityManager;
     }
 
     private Long resolveMerchantId() {
@@ -69,6 +72,31 @@ public class EmuInstanceService {
         log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         log.info("查询结果: 找到 {} 个模拟器", instances.size());
+        
+        // 使用原生查询获取 auto_running 字段值，解决 JPA 映射问题
+        Map<Long, Boolean> autoRunningMap = new HashMap<>();
+        if (!instances.isEmpty()) {
+            List<Long> instanceIds = instances.stream().map(EmuInstance::getId).collect(Collectors.toList());
+            String sql = "SELECT id, auto_running FROM emu_instances WHERE id IN (:ids)";
+            List<?> results = entityManager.createNativeQuery(sql)
+                .setParameter("ids", instanceIds)
+                .getResultList();
+            for (Object row : results) {
+                Object[] parts = (Object[]) row;
+                Long id = ((Number) parts[0]).longValue();
+                // MySQL TINYINT(1) 在某些驱动下返回 Boolean，需要兼容处理
+                Boolean autoRunning;
+                if (parts[1] instanceof Boolean) {
+                    autoRunning = (Boolean) parts[1];
+                } else if (parts[1] instanceof Number) {
+                    autoRunning = ((Number) parts[1]).intValue() == 1;
+                } else {
+                    autoRunning = false;
+                }
+                autoRunningMap.put(id, autoRunning);
+            }
+            log.info("原生查询 auto_running 结果: {}", autoRunningMap.size());
+        }
         
         // 从 MumuManager 获取最新物理状态并合并
         List<Map<String, Object>> physicalList = null;
@@ -215,6 +243,17 @@ public class EmuInstanceService {
                 emu.put("successCount", 0);
                 emu.put("failedCount", 0);
             }
+        }
+        
+        // 使用原生查询的 autoRunningMap 覆盖结果，确保正确返回 autoRunning 状态
+        if (!autoRunningMap.isEmpty()) {
+            for (Map<String, Object> emu : result) {
+                Long emuId = ((Number) emu.get("id")).longValue();
+                if (autoRunningMap.containsKey(emuId)) {
+                    emu.put("autoRunning", autoRunningMap.get(emuId));
+                }
+            }
+            log.info("已使用 autoRunningMap 覆盖 {} 个模拟器的 autoRunning 状态", autoRunningMap.size());
         }
         
         return result;

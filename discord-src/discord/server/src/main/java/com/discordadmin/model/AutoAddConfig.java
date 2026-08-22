@@ -2,8 +2,8 @@ package com.discordadmin.model;
 
 public class AutoAddConfig {
     private int intervalSeconds = 900;
-    private int delayMinSeconds = 60;
-    private int delayMaxSeconds = 800;
+    private int delayMinSeconds = 0;
+    private int delayMaxSeconds = 5;
     private boolean autoCrawlDiscordAccount = false;
     private int crawlIntervalSeconds = 300;
     private boolean autoLoginDiscord = false;
@@ -90,7 +90,7 @@ public class AutoAddConfig {
     }
     
     /**
-     * 解析时间字符串为分钟数
+     * 解析时间字符串为分钟数（支持 HH:mm 和 HH:mm:ss 格式）
      */
     private int parseTimeToMinutes(String timeStr) {
         if (timeStr == null || timeStr.isBlank()) return 0;
@@ -100,6 +100,12 @@ public class AutoAddConfig {
                 int hours = Integer.parseInt(parts[0].trim());
                 int minutes = Integer.parseInt(parts[1].trim());
                 return hours * 60 + minutes;
+            } else if (parts.length == 3) {
+                int hours = Integer.parseInt(parts[0].trim());
+                int minutes = Integer.parseInt(parts[1].trim());
+                int seconds = Integer.parseInt(parts[2].trim());
+                // 向上取整到分钟
+                return hours * 60 + minutes + (seconds > 0 ? 1 : 0);
             }
         } catch (Exception e) {
             // ignore
