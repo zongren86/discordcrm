@@ -417,7 +417,7 @@
                   </div>
 
                   <!-- GIF消息渲染 -->
-                  <div v-if="!msg.isDeleted && isGifMsg(msg)" class="msg-gif-wrap" @mouseenter="hoveredGifMsgId = msg.id" @mouseleave="hoveredGifMsgId = null">
+                  <div v-if="!msg.isDeleted && isGifMsg(msg)" class="msg-gif-wrap" :key="'gif-' + msg.id + '-' + gifRenderCounter" @mouseenter="hoveredGifMsgId = msg.id" @mouseleave="hoveredGifMsgId = null">
                     <!-- GIF 操作按钮（收藏/下载） -->
                     <div v-if="hoveredGifMsgId === msg.id && !isGifFavorited(gifUrlOf(msg))" class="msg-gif-actions">
                       <el-tooltip content="收藏" placement="top">
@@ -443,21 +443,18 @@
                         </button>
                       </el-tooltip>
                     </div>
-                    
-                    <!-- iframe嵌入（klipy.com等页面URL） -->
-                    <iframe v-if="isIframeGifUrl(gifUrlOf(msg))"
-                            :src="gifUrlOf(msg)"
-                            class="msg-gif-iframe"
-                            frameborder="0"
-                            allowfullscreen
-                            @error="onGifError"></iframe>
+                    <!-- klipy.com页面URL解析中显示加载状态 -->
+                    <div v-if="isPageUrl(gifUrlOf(msg)) && msg.gifUrl && !resolvedGifUrls.has(msg.gifUrl)" class="msg-gif-loading">
+                      <div class="loading-spinner"></div>
+                      <span>加载中...</span>
+                    </div>
                     <!-- 视频格式的GIF（Discord动画常被转为MP4/WebM） -->
                     <video v-else-if="isVideoGif(gifUrlOf(msg))" 
                            :src="proxiedUrl(gifUrlOf(msg))" 
                            class="msg-gif-img" 
                            autoplay loop muted playsinline
                            @error="onGifError"></video>
-                    <!-- 普通GIF/图片 -->
+                    <!-- 普通GIF/图片（包括解析后的CDN直链） -->
                     <img v-else :src="proxiedUrl(gifUrlOf(msg))" class="msg-gif-img" @error="onGifError" />
                     <!-- GIF加载失败回退由 onGifError 处理 -->
                   </div>
@@ -1671,6 +1668,9 @@ function isGifMsg(msg) {
 
 function gifUrlOf(msg) {
   if (!msg) return ''
+  
+  // 读取 gifRenderCounter 确保解析完成后会触发响应式更新
+  const _renderVersion = gifRenderCounter.value
 
   // 优先使用消息的gifUrl字段（后端存储的URL，可能是klipy.com页面URL或CDN直链）
   if (msg.gifUrl) {
@@ -1679,11 +1679,12 @@ function gifUrlOf(msg) {
     if (resolvedGifUrls.value.has(rawUrl)) {
       return resolvedGifUrls.value.get(rawUrl)
     }
-    // 如果是 klipy.com 页面链接，触发异步解析（后续会用解析后的URL重新渲染）
+    // 如果是 klipy.com 页面链接，触发异步解析
     if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
       resolveGifUrl(rawUrl)
+      // 解析中时返回原始URL（iframe会加载失败，但解析完成后会自动更新为CDN直链）
     }
-    // 返回原始 URL（解析完成后会触发响应式更新）
+    // 返回原始 URL
     return normalizeGifUrl(rawUrl)
   }
 
@@ -1712,7 +1713,7 @@ function gifUrlOf(msg) {
     resolveGifUrl(rawUrl)
   }
   
-  // 返回原始 URL（如果是 klipy.com 页面 URL，后续会用 iframe 嵌入）
+  // 返回原始 URL
   return rawUrl
 }
 
@@ -1732,6 +1733,9 @@ function isIframeGifUrl(url) {
   return isPageUrl(url)
 }
 
+/** 强制重新渲染 GIF 消息的计数器 */
+const gifRenderCounter = ref(0)
+
 /** 解析 klipy.com 页面 URL 为 CDN 直链 */
 async function resolveGifUrl(url) {
   if (resolvingGifUrls.value.has(url)) return
@@ -1742,6 +1746,8 @@ async function resolveGifUrl(url) {
       resolvedGifUrls.value.set(url, res.data.resolvedUrl)
       // 触发 Vue 响应式更新
       resolvedGifUrls.value = new Map(resolvedGifUrls.value)
+      // 强制触发消息列表重新渲染（用于gifUrlOf函数的更新）
+      gifRenderCounter.value++
     }
   } catch (e) {
     console.warn('解析 klipy.com URL 失败:', url, e)
@@ -4827,16 +4833,32 @@ video.msg-gif-img {
   pointer-events: none;  /* 防止视频被点击暂停 */
 }
 
-iframe.msg-gif-iframe {
+.msg-gif-loading {
   width: 280px;
-  height: 280px;
+  height: 200px;
   max-width: 280px;
-  max-height: 280px;
   border-radius: 10px;
-  border: none;
-  display: block;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   background: #2b2d31;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #888;
+  font-size: 14px;
+}
+
+.loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #444;
+  border-top-color: #7289da;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .gif-fallback {
