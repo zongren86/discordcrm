@@ -4961,6 +4961,17 @@ onUnmounted(() => {
   object-fit: contain;
 }
 
+.msg-gif-placeholder {
+  color: #f56c6c;
+  font-size: 13px;
+  padding: 8px 12px;
+  background: rgba(245, 108, 108, 0.1);
+  border-radius: 6px;
+  max-width: 280px;
+  word-break: break-all;
+  cursor: pointer;
+}
+
 video.msg-gif-img {
   background: #000;
   pointer-events: none;  /* 防止视频被点击暂停 */
