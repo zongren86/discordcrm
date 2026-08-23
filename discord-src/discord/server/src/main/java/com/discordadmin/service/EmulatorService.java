@@ -461,7 +461,7 @@ public class EmulatorService {
         ensureMumuDaemon();
         log.info("创建模拟器 index={} cpu={} memMB={}", index, cpuCount, memoryMB);
 
-        Path vmPath = Paths.get(vmsBasePath, String.valueOf(index));
+        Path vmPath = Paths.get(resolvedVmsBasePath, String.valueOf(index));
         if (Files.exists(vmPath)) {
             log.info("模拟器 {} 已存在，跳过创建", index);
             // 确保 vmName 与管理后台一致

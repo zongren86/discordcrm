@@ -459,10 +459,7 @@
                            @error="onGifError"></video>
                     <!-- 普通GIF/图片 -->
                     <img v-else :src="proxiedUrl(gifUrlOf(msg))" class="msg-gif-img" @error="onGifError" />
-                    <!-- GIF加载失败时显示原始URL文本作为回退 -->
-                    <div v-if="!msg.isDeleted && msg.content && /^https?:\/\//i.test(msg.content)" class="msg-gif-fallback-text">
-                      <a :href="msg.content" target="_blank" rel="noopener noreferrer">{{ msg.content }}</a>
-                    </div>
+                    <!-- GIF加载失败回退由 onGifError 处理 -->
                   </div>
 
                   <!-- Sticker消息渲染 -->
@@ -1778,6 +1775,10 @@ function isPageUrl(url) {
   if (resolvedGifUrls.value.has(url)) return false
   try {
     const hostname = new URL(url).hostname.toLowerCase()
+    // 如果URL直接指向资源文件（如 .gif, .mp4 等），即使是 klipy.com 域名也不应视为页面
+    if (/\.(gif|mp4|webm|webp|png|jpg|jpeg|mov)(\?|#|$)/i.test(url)) {
+      return false  // 直接资源URL，不是页面
+    }
     return hostname === 'klipy.com' || hostname.endsWith('.klipy.com')
   } catch {
     return false
