@@ -51,7 +51,7 @@ public class MessageService {
     private static final List<String> DIRECT_MEDIA_EXTENSIONS = List.of(".gif", ".webm", ".mp4", ".mov", ".webp", ".png", ".jpg", ".jpeg");
     private static final List<String> GIF_SHARE_DOMAINS = List.of("klipy.com", "tenor.com", "giphy.com", "imgur.com", "futuri.io");
     private static final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
+            .connectTimeout(Duration.ofSeconds(30))
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
@@ -1355,13 +1355,37 @@ public class MessageService {
     }
 
     /**
-     * 从 URL 下载 GIF 文件
+     * 从 URL 下载 GIF 文件（带大小限制，最大 10MB）
      */
+    private static final int MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024; // 10MB
     private byte[] downloadGifFile(String url) {
         try {
+            // First try HEAD request to check file size
+            try {
+                HttpRequest headRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(url))
+                        .timeout(Duration.ofSeconds(10))
+                        .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build();
+                HttpResponse<Void> headResponse = httpClient.send(headRequest, HttpResponse.BodyHandlers.discarding());
+                if (headResponse.statusCode() >= 200 && headResponse.statusCode() < 300) {
+                    String contentLength = headResponse.headers().firstValue("Content-Length").orElse(null);
+                    if (contentLength != null) {
+                        long size = Long.parseLong(contentLength);
+                        if (size > MAX_DOWNLOAD_SIZE) {
+                            log.warn("文件过大，跳过下载: url={}, size={}MB", url, size / 1024 / 1024);
+                            return null;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {
+                // HEAD request failed, proceed with GET anyway
+            }
+
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
-                    .timeout(Duration.ofSeconds(15))
+                    .timeout(Duration.ofSeconds(45))
                     .header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .header("Accept", "image/gif, image/webp, video/webm, video/mp4, */*")
                     .GET()
@@ -1372,6 +1396,11 @@ public class MessageService {
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
                 byte[] body = response.body();
                 if (body != null && body.length > 0) {
+                    // Check actual downloaded size
+                    if (body.length > MAX_DOWNLOAD_SIZE) {
+                        log.warn("下载文件过大: url={}, size={}MB", url, body.length / 1024 / 1024);
+                        return null;
+                    }
                     log.info("GIF 下载成功: url={}, size={}bytes", url, body.length);
                     return body;
                 }

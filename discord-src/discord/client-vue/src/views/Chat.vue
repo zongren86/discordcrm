@@ -2706,14 +2706,20 @@ async function handleDownloadGif(msg) {
 async function sendGifFromFavorite(favorite) {
   if (!favorite || !conversations.currentConversationId) return
   
+  const loadingMsg = ElMessage.loading('正在发送...', 0)
   try {
-    // 使用专门的 GIF 发送 API，后端会智能处理（直接URL或下载上传）
     await sendGifMessageApi(conversations.currentConversationId, favorite.gifUrl, favorite.title)
+    loadingMsg.close()
     ElMessage.success('已发送')
-    gifPickerVisible.value = false  // 关闭弹窗
+    gifPickerVisible.value = false
   } catch (e) {
+    loadingMsg.close()
     console.error('发送GIF失败:', e)
-    ElMessage.error('发送失败')
+    if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
+      ElMessage.error('发送超时，文件可能过大，请选择较小的动图')
+    } else {
+      ElMessage.error('发送失败: ' + (e.message || '未知错误'))
+    }
   }
 }
 
@@ -2727,14 +2733,21 @@ async function sendStickerFromFavorite(fav) {
     ElMessage.error('无效的贴纸数据')
     return
   }
+  const loadingMsg = ElMessage.loading('正在发送...', 0)
   try {
     const url = fav.resolvedUrl || fav.favDisplayUrl || fav.gifUrl
     await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
+    loadingMsg.close()
     ElMessage.success('已发送')
     gifPickerVisible.value = false
   } catch (e) {
+    loadingMsg.close()
     console.error('发送Sticker失败:', e)
-    ElMessage.error('发送失败: ' + (e.message || ''))
+    if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
+      ElMessage.error('发送超时，文件可能过大')
+    } else {
+      ElMessage.error('发送失败: ' + (e.message || '未知错误'))
+    }
   }
 }
 
