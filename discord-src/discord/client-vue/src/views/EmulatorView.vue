@@ -1,39 +1,47 @@
 <template>
-  <div class="emulator-view">
+  <div class="guild-members-page">
     <div v-if="loading" class="loading-wrap">
       <el-icon class="is-loading" :size="48"><Loading /></el-icon>
       <p>正在加载好友管理界面...</p>
     </div>
 
-    <div v-else class="content">
-      <!-- 后端服务状态提示 -->
-      <el-alert
-        v-if="!backendAvailable"
-        type="error"
-        :closable="false"
-        show-icon
-        title="后端服务未连接"
-        :description="'无法连接到后端服务（' + config.EMU_API_URL + '），正在后台自动重连...'"
-        style="margin-bottom: 12px"
-      />
-
-      <!-- 物理模拟器连接状态提示 -->
-      <el-alert
-        v-if="!physicalStatus.available && !loading"
-        type="warning"
-        :closable="false"
-        show-icon
-        title="未检测到本地模拟器"
-        :description="physicalStatus.message"
-        style="margin-bottom: 12px"
-      />
-      <div v-if="!physicalStatus.available && !loading" style="margin: 8px 0; display: flex; gap: 8px">
-        <el-button type="primary" size="small" @click="checkPhysicalStatus">重新检测</el-button>
-        <el-button type="primary" size="small" @click="syncPhysical">同步数据</el-button>
+    <template v-else>
+      <div class="page-header">
+        <div>
+          <h2 class="page-title">好友管理</h2>
+          <p class="page-desc">管理模拟器实例，配置自动加好友，监控添加状态</p>
+        </div>
+        <div class="header-actions">
+          <el-tag v-if="!physicalStatus.available" type="warning" effect="light">
+            未检测到本地模拟器
+          </el-tag>
+          <el-tag v-else type="success" effect="light">
+            模拟器已连接
+          </el-tag>
+          <el-button
+            v-if="!physicalStatus.available"
+            link
+            type="primary"
+            size="small"
+            @click="checkPhysicalStatus"
+          >重新检测</el-button>
+        </div>
       </div>
 
-      <!-- TAB 结构 -->
-      <el-tabs v-model="activeTab" type="border-card">
+      <div class="page-body">
+        <!-- 后端服务状态提示 -->
+        <el-alert
+          v-if="!backendAvailable"
+          type="error"
+          :closable="false"
+          show-icon
+          title="后端服务未连接"
+          :description="'无法连接到后端服务（' + config.EMU_API_URL + '），正在后台自动重连...'"
+          style="margin-bottom: 12px"
+        />
+
+        <!-- TAB 结构 -->
+        <el-tabs v-model="activeTab" type="card">
         <!-- Tab 1: 模拟器列表 -->
         <el-tab-pane 
           v-if="hasTabPermission('emulator_tab_list') || hasTabPermission('emulator')" 
@@ -462,7 +470,8 @@
           </el-card>
         </el-tab-pane>
       </el-tabs>
-    </div>
+      </div>
+    </template>
 
     <!-- 新增模拟器弹窗 -->
     <el-dialog v-model="showAddDialog" title="新增模拟器" width="400px" :close-on-click-modal="false">
@@ -1956,13 +1965,52 @@ function formatCountdown(timestamp) {
 </script>
 
 <style scoped>
-.emulator-view {
+/* ========== 与 GuildMembers.vue 保持一致的页面结构样式 ========== */
+.guild-members-page {
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--color-bg, #f5f7fa);
+  background: var(--color-bg);
   overflow: hidden;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  background: var(--color-bg-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.page-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-2);
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.page-body {
+  flex: 1;
+  min-height: 0;
+  padding: 20px 24px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .content { 
@@ -1974,9 +2022,9 @@ function formatCountdown(timestamp) {
   overflow: hidden;
 }
 
-.panel { margin-bottom: 8px; }
-.panel-header { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
-.panel-body { display: flex; flex-direction: column; gap: 6px; }
+.panel { margin-bottom: 12px; }
+.panel-header { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; color: var(--color-text); }
+.panel-body { display: flex; flex-direction: column; gap: 8px; }
 
 .form-row {
   display: flex;
@@ -1999,62 +2047,63 @@ function formatCountdown(timestamp) {
 }
 
 .form-row.inline label,
-.form-row label { min-width: auto; font-size: 13px; color: #ffffff; }
+.form-row label { min-width: auto; font-size: 13px; color: var(--color-text); }
 
 .action-row { display: flex; gap: 6px; flex-wrap: wrap; }
 
-.hint { font-size: 13px; color: #ffffff; }
-.hint-sm { font-size: 12px; color: #ffffff; margin-left: 6px; }
-.unit { font-size: 13px; color: #ffffff; }
+.hint { font-size: 13px; color: var(--color-text-2); }
+.hint-sm { font-size: 12px; color: var(--color-text-3); margin-left: 6px; }
+.unit { font-size: 13px; color: var(--color-text-2); }
 
 .batch-toolbar {
   position: sticky;
   top: 0;
-  z-index: 100;
+  z-index: 10;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 8px 12px;
-  margin-bottom: 8px;
-  background: transparent;
-  border: 1px solid var(--color-border, #e4e7ed);
-  border-radius: 6px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
 }
 
 .pagination-container {
   display: flex;
   justify-content: flex-end;
-  padding: 8px 12px;
-  border-top: 1px solid var(--color-border, #e4e7ed);
-  background: transparent;
+  padding: 10px 14px;
+  flex-shrink: 0;
 }
 
 /* 去除 el-card 白色背景 */
 :deep(.el-card) {
-  background: transparent !important;
-  border: 1px solid var(--color-border, #e4e7ed);
+  background: var(--color-bg) !important;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
 }
 
 :deep(.el-card__header) {
-  background: transparent;
-  border-bottom: 1px solid var(--color-border, #e4e7ed);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
 }
 
-/* TAB 样式 - 去除白色背景 */
+/* TAB 样式 - 与 GuildMembers.vue 统一 */
 :deep(.el-tabs--border-card > .el-tabs__header) {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--color-border, #e4e7ed);
+  background: var(--color-bg-2);
+  border: 1px solid var(--color-border);
+  border-bottom: none;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
 }
 
 :deep(.el-tabs--border-card > .el-tabs__content) {
-  border: none;
+  border: 1px solid var(--color-border);
   border-top: none;
-  padding: 12px;
-  background: transparent;
+  padding: 16px;
+  background: var(--color-bg-2);
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
   display: flex;
   flex-direction: column;
 }
@@ -2076,50 +2125,53 @@ function formatCountdown(timestamp) {
 .table-container :deep(.el-table) {
   flex: 1;
   min-height: 0;
-  background: transparent !important;
+  background: var(--color-bg) !important;
 }
 
 .table-container :deep(.el-table__wrapper) {
-  background: transparent !important;
+  background: var(--color-bg) !important;
 }
 
 .table-container :deep(.el-table__inner-wrapper) {
-  background: transparent !important;
+  background: var(--color-bg) !important;
 }
 
 .table-container :deep(.el-table__header-wrapper) {
-  background: transparent !important;
+  background: var(--color-bg) !important;
 }
 
 .table-container :deep(.el-table__body-wrapper) {
-  background: transparent !important;
+  background: var(--color-bg) !important;
 }
 
 .table-container :deep(.el-table tr) {
-  background: transparent !important;
+  background: var(--color-bg) !important;
 }
 
 .table-container :deep(.el-table th.el-table__cell) {
-  background: var(--color-bg-2, #f5f7fa) !important;
+  background: var(--color-bg-2) !important;
 }
 
 .table-container :deep(.el-table td.el-table__cell) {
-  background: transparent !important;
+  background: var(--color-bg) !important;
 }
 
 .table-wrap {
-  margin-top: 8px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  width: 100%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
 }
 
 .batch-info { display: flex; align-items: center; gap: 8px; }
-.batch-count { font-size: 13px; color: #606266; }
+.batch-count { font-size: 13px; color: var(--color-text-2); }
 
 .batch-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 
-.emu-name { font-weight: 600; font-size: 13px; }
+.emu-name { font-weight: 600; font-size: 13px; color: var(--color-text); }
 
 :deep(.checkbox-column .cell) {
   display: flex;
@@ -2135,7 +2187,7 @@ function formatCountdown(timestamp) {
   width: 16px;
   height: 16px;
   border-color: #409eff;
-  background-color: #fff;
+  background-color: var(--color-bg);
 }
 
 :deep(.checkbox-column .el-checkbox__input.is-checked .el-checkbox__inner) {
@@ -2149,35 +2201,12 @@ function formatCountdown(timestamp) {
 }
 
 :deep(.selected-row) {
-  background-color: #ecf5ff !important;
+  background-color: var(--color-bg-2) !important;
 }
 
 :deep(.el-table .cell) {
-  padding: 4px 8px;
+  padding: 6px 10px;
   font-size: 13px;
-}
-
-:deep(.el-card__header) {
-  padding: 8px 12px;
-  font-size: 14px;
-}
-
-:deep(.el-card__body) {
-  padding: 8px 12px;
-}
-
-/* TAB 样式 */
-:deep(.el-tabs--border-card > .el-tabs__header) {
-  background: #f5f7fa;
-  border: 1px solid #e4e7ed;
-  border-bottom: none;
-}
-
-:deep(.el-tabs--border-card > .el-tabs__content) {
-  border: 1px solid #e4e7ed;
-  border-top: none;
-  padding: 12px;
-  background: #fff;
 }
 
 /* 新增模拟器弹窗样式 */
@@ -2190,9 +2219,9 @@ function formatCountdown(timestamp) {
 }
 
 .add-emu-form label {
-  min-width: 70px;
+  min-width: 80px;
   font-size: 13px;
-  color: #606266;
+  color: var(--color-text);
 }
 
 .loading-wrap,
@@ -2203,7 +2232,7 @@ function formatCountdown(timestamp) {
   justify-content: center;
   gap: 12px;
   padding: 40px 24px;
-  color: var(--color-text-2, #606266);
+  color: var(--color-text-2);
 }
 
 .error-wrap h3 { color: #f56c6c; }
@@ -2229,7 +2258,7 @@ function formatCountdown(timestamp) {
   justify-content: space-between;
   align-items: center;
   padding: 6px 10px;
-  background: #f5f7fa;
+  background: var(--color-bg-2);
   border-radius: 4px;
 }
 
@@ -2244,10 +2273,11 @@ function formatCountdown(timestamp) {
 .server-name {
   font-weight: 500;
   font-size: 13px;
+  color: var(--color-text);
 }
 
 .account-number {
-  color: #909399;
+  color: var(--color-text-3);
   font-size: 12px;
 }
 
@@ -2267,11 +2297,11 @@ function formatCountdown(timestamp) {
 }
 
 .server-item:hover {
-  background: #e8eaed;
+  background: var(--color-bg);
 }
 
 .server-item--selected {
-  background: #ecf5ff;
+  background: var(--color-bg);
   border: 1px solid #409eff;
 }
 
@@ -2535,14 +2565,14 @@ function formatCountdown(timestamp) {
 .server-card-list {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 10px;
+  gap: 12px;
 }
 
 .server-card {
-  background: transparent;
-  border: 1px solid var(--color-border, #e4e7ed);
-  border-radius: 8px;
-  padding: 10px 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -2554,21 +2584,21 @@ function formatCountdown(timestamp) {
 
 .server-card--selected {
   border-color: #409eff;
-  background: #ecf5ff;
+  background: var(--color-bg-2);
 }
 
 /* 统计信息区域 */
 .server-card-stats {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: stretch;
 }
 
 .server-card-stats .stat-item {
   flex: 1;
   text-align: center;
-  padding: 6px 4px;
-  background: #f5f7fa;
+  padding: 8px 6px;
+  background: var(--color-bg-2);
   border-radius: 6px;
   min-width: 0;
 }
@@ -2576,19 +2606,20 @@ function formatCountdown(timestamp) {
 /* 服务器名称特殊样式 - 放在左边 */
 .server-card-stats .stat-server-name {
   flex: 1.2;
-  background: #ecf5ff;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
 }
 
 .server-card-stats .server-name-text {
   font-size: 13px;
   font-weight: 600;
-  color: #303133;
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2623,24 +2654,23 @@ function formatCountdown(timestamp) {
 .server-card-stats .stat-value {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: var(--color-text);
   white-space: nowrap;
 }
 
 .server-card-stats .stat-pct {
   font-size: 10px;
-  color: #909399;
+  color: var(--color-text-3);
   white-space: nowrap;
 }
 
 .server-card-stats .stat-label {
   font-size: 11px;
-  color: #909399;
+  color: var(--color-text-3);
   margin-top: 2px;
   white-space: nowrap;
 }
 
-/* 带进度条的统计（保留兼容） */
 .stat-with-progress {
   display: flex;
   flex-direction: column;
@@ -2657,17 +2687,20 @@ function formatCountdown(timestamp) {
 .stat-with-progress .stat-num {
   font-size: 13px;
   font-weight: 500;
-  color: #303133;
+  color: var(--color-text);
 }
 
 .stat-with-progress .stat-pct {
   font-size: 11px;
-  color: #909399;
+  color: var(--color-text-3);
 }
 
-/* 批量操作工具栏（已在上方统一定义，此处仅补充 margin-top） */
-.batch-toolbar {
-  margin-top: 8px;
+/* 空状态提示 */
+.empty-hint {
+  padding: 24px;
+  text-align: center;
+  color: var(--color-text-3);
+  font-size: 13px;
 }
 
 /* 操作列按钮间距 - 只保留1个空格 */
