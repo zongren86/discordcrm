@@ -1093,7 +1093,10 @@ const lottieInstances = new Map()
 async function initLottieAnimation(msgId, idx, sticker) {
   const containerId = `lottie-sticker-${msgId}-${idx}`
   const container = document.getElementById(containerId)
-  if (!container) return
+  if (!container) {
+    console.warn('[Lottie] Container not found:', containerId)
+    return
+  }
   
   // 避免重复初始化
   if (lottieInstances.has(containerId)) {
@@ -1103,15 +1106,23 @@ async function initLottieAnimation(msgId, idx, sticker) {
   
   try {
     const url = stickerLottieUrl(sticker)
-    if (!url) return
+    if (!url) {
+      console.warn('[Lottie] No URL for sticker:', sticker)
+      return
+    }
+    
+    console.log('[Lottie] Init animation:', containerId, 'url:', url)
     
     // 如果需要代理，使用代理 URL
     const fetchUrl = needsProxy(url) ? proxiedUrl(url) : url
+    console.log('[Lottie] Fetch URL:', fetchUrl, 'needsProxy:', needsProxy(url))
     
     // 用 fetch 获取 JSON
     const response = await fetch(fetchUrl)
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const jsonData = await response.json()
+    
+    console.log('[Lottie] JSON loaded:', containerId, 'keys:', Object.keys(jsonData).slice(0, 5))
     
     const instance = lottie.loadAnimation({
       container: container,
@@ -1121,12 +1132,14 @@ async function initLottieAnimation(msgId, idx, sticker) {
       animationData: jsonData
     })
     lottieInstances.set(containerId, instance)
+    console.log('[Lottie] Animation loaded successfully:', containerId)
   } catch (e) {
-    console.warn('Lottie 初始化失败:', containerId, e)
+    console.warn('[Lottie] 初始化失败:', containerId, e)
     // 失败时尝试直接用 URL（不走代理）
     try {
       const url = stickerLottieUrl(sticker)
       if (url && !needsProxy(url)) {
+        console.log('[Lottie] Retrying with path:', url)
         const instance = lottie.loadAnimation({
           container: container,
           renderer: 'svg',
@@ -1151,19 +1164,25 @@ function initPendingLottieAnimations() {
   
   // 使用 setTimeout 延迟执行，确保 DOM 完全渲染
   setTimeout(() => {
+    let lottieCount = 0
     msgs.forEach(msg => {
       if (!isStickerMsg(msg)) return
       const items = stickerItemsOf(msg)
+      console.log('[Lottie] Found sticker message', msg.id, 'items:', items.length, 'isLottie:', items.map(i => isLottieSticker(i)))
       items.forEach((sticker, idx) => {
         if (isLottieSticker(sticker)) {
           const containerId = `lottie-sticker-${msg.id}-${idx}`
-          if (!lottieInstances.has(containerId)) {
+          const container = document.getElementById(containerId)
+          console.log('[Lottie] Checking container', containerId, 'exists:', !!container, 'hasInstance:', lottieInstances.has(containerId))
+          if (container && !lottieInstances.has(containerId)) {
             initLottieAnimation(msg.id, idx, sticker)
+            lottieCount++
           }
         }
       })
     })
-  }, 100)
+    console.log('[Lottie] Init complete, lottieCount:', lottieCount)
+  }, 200)
 }
 
 // 翻译预览相关状态
@@ -1653,9 +1672,19 @@ function isGifMsg(msg) {
 function gifUrlOf(msg) {
   if (!msg) return ''
 
-  // 优先使用消息的gifUrl字段（后端上传后的CDN链接）
+  // 优先使用消息的gifUrl字段（后端存储的URL，可能是klipy.com页面URL或CDN直链）
   if (msg.gifUrl) {
-    return normalizeGifUrl(msg.gifUrl)
+    const rawUrl = msg.gifUrl
+    // 检查是否已解析过 klipy.com URL
+    if (resolvedGifUrls.value.has(rawUrl)) {
+      return resolvedGifUrls.value.get(rawUrl)
+    }
+    // 如果是 klipy.com 页面链接，触发异步解析（后续会用解析后的URL重新渲染）
+    if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
+      resolveGifUrl(rawUrl)
+    }
+    // 返回原始 URL（解析完成后会触发响应式更新）
+    return normalizeGifUrl(rawUrl)
   }
 
   // 优先从附件中获取GIF/动画URL
@@ -1687,11 +1716,18 @@ function gifUrlOf(msg) {
   return rawUrl
 }
 
-/** 判断 GIF URL 是否需要使用 iframe 嵌入（如 klipy.com 页面 URL） */
+/** 判断 GIF URL 是否需要使用 iframe 嵌入（如 klipy.com 页面 URL）
+ * 注意：此函数接收的是 gifUrlOf(msg) 的返回值，可能是原始URL或解析后的CDN URL
+ * 为了正确判断，需要检查原始URL是否已被解析
+ */
 function isIframeGifUrl(url) {
   if (!url) return false
-  // 如果 URL 已经被解析为 CDN URL，不需要 iframe
-  if (resolvedGifUrls.value.has(url)) return false
+  // 检查是否已解析过（需要通过遍历缓存判断，因为key是原始URL，value是解析后的URL）
+  // 如果url本身就是解析后的CDN URL，说明已解析过，不需要iframe
+  if (/\.(gif|mp4|webm|webp)(\?|#|$)/i.test(url) && url.includes('klipy.com')) {
+    // 这是CDN直链（如 static2.klipy.com/xxx.gif），不需要iframe
+    return false
+  }
   // 如果是 klipy.com 页面 URL，需要 iframe
   return isPageUrl(url)
 }
