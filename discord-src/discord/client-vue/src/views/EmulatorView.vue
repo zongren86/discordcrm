@@ -2016,7 +2016,7 @@ function formatCountdown(timestamp) {
   align-items: center;
   padding: 8px 12px;
   margin-bottom: 8px;
-  background: var(--color-bg-2, #fff);
+  background: transparent;
   border: 1px solid var(--color-border, #e4e7ed);
   border-radius: 6px;
 }
@@ -2026,21 +2026,32 @@ function formatCountdown(timestamp) {
   justify-content: flex-end;
   padding: 8px 12px;
   border-top: 1px solid var(--color-border, #e4e7ed);
-  background: var(--color-bg-2, #fff);
+  background: transparent;
 }
 
-/* TAB 样式 */
-:deep(.el-tabs--border-card > .el-tabs__header) {
-  background: var(--color-bg-2, #f5f7fa);
+/* 去除 el-card 白色背景 */
+:deep(.el-card) {
+  background: transparent !important;
   border: 1px solid var(--color-border, #e4e7ed);
-  border-bottom: none;
+}
+
+:deep(.el-card__header) {
+  background: transparent;
+  border-bottom: 1px solid var(--color-border, #e4e7ed);
+}
+
+/* TAB 样式 - 去除白色背景 */
+:deep(.el-tabs--border-card > .el-tabs__header) {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--color-border, #e4e7ed);
 }
 
 :deep(.el-tabs--border-card > .el-tabs__content) {
-  border: 1px solid var(--color-border, #e4e7ed);
+  border: none;
   border-top: none;
   padding: 12px;
-  background: var(--color-bg-2, #fff);
+  background: transparent;
   flex: 1;
   min-height: 0;
   overflow: hidden;
@@ -2065,6 +2076,35 @@ function formatCountdown(timestamp) {
 .table-container :deep(.el-table) {
   flex: 1;
   min-height: 0;
+  background: transparent !important;
+}
+
+.table-container :deep(.el-table__wrapper) {
+  background: transparent !important;
+}
+
+.table-container :deep(.el-table__inner-wrapper) {
+  background: transparent !important;
+}
+
+.table-container :deep(.el-table__header-wrapper) {
+  background: transparent !important;
+}
+
+.table-container :deep(.el-table__body-wrapper) {
+  background: transparent !important;
+}
+
+.table-container :deep(.el-table tr) {
+  background: transparent !important;
+}
+
+.table-container :deep(.el-table th.el-table__cell) {
+  background: var(--color-bg-2, #f5f7fa) !important;
+}
+
+.table-container :deep(.el-table td.el-table__cell) {
+  background: transparent !important;
 }
 
 .table-wrap {
@@ -2499,8 +2539,8 @@ function formatCountdown(timestamp) {
 }
 
 .server-card {
-  background: #fff;
-  border: 1px solid #e4e7ed;
+  background: transparent;
+  border: 1px solid var(--color-border, #e4e7ed);
   border-radius: 8px;
   padding: 10px 12px;
   cursor: pointer;
