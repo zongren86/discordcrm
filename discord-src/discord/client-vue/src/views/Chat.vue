@@ -13,7 +13,7 @@
 
         <div class="filter-bar">
           <el-select v-model="selectedAccountId" size="small" placeholder="账号" clearable class="filter-select">
-            <el-option :value="null" label="全部账号" />
+            <el-option value="" label="全部账号" />
             <el-option v-for="acc in accountOptionsForFilter" :key="acc.id" :value="acc.id"
               :label="acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id)">
               {{ acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id) }}
@@ -23,12 +23,12 @@
           </el-select>
 
           <el-select v-model="selectedStage" size="small" placeholder="漏斗" clearable class="filter-select">
-            <el-option :value="null" label="全部阶段" />
+            <el-option value="" label="全部阶段" />
             <el-option v-for="s in stageOptions" :key="s.value" :value="s.value" :label="s.label" />
           </el-select>
 
           <el-select v-model="selectedPresence" size="small" placeholder="状态" clearable class="filter-select">
-            <el-option :value="null" label="全部状态" />
+            <el-option value="" label="全部状态" />
             <el-option value="online" label="在线" />
             <el-option value="idle" label="闲置" />
             <el-option value="dnd" label="请勿打扰" />
@@ -2706,7 +2706,7 @@ async function handleDownloadGif(msg) {
 async function sendGifFromFavorite(favorite) {
   if (!favorite || !conversations.currentConversationId) return
   
-  const loadingMsg = ElMessage.loading('正在发送...', 0)
+  const loadingMsg = ElMessage({ message: '正在发送...', duration: 0, type: 'info' })
   try {
     await sendGifMessageApi(conversations.currentConversationId, favorite.gifUrl, favorite.title)
     loadingMsg.close()
@@ -2733,7 +2733,7 @@ async function sendStickerFromFavorite(fav) {
     ElMessage.error('无效的贴纸数据')
     return
   }
-  const loadingMsg = ElMessage.loading('正在发送...', 0)
+  const loadingMsg = ElMessage({ message: '正在发送...', duration: 0, type: 'info' })
   try {
     const url = fav.resolvedUrl || fav.favDisplayUrl || fav.gifUrl
     await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
