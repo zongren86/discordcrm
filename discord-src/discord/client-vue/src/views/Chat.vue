@@ -448,14 +448,18 @@
                       <div class="loading-spinner"></div>
                       <span>加载中...</span>
                     </div>
-                    <!-- 视频格式的GIF（Discord动画常被转为MP4/WebM） -->
+                    <!-- Lottie JSON 兜底 -->
+                    <div v-else-if="isStickerJsonUrl(gifUrlOf(msg))" class="msg-gif-loading">
+                      <span class="gif-fail-text">[Lottie Sticker - 请在 Sticker 区域查看]</span>
+                    </div>
+                    <!-- 视频格式的GIF -->
                     <video v-else-if="isVideoGif(gifUrlOf(msg))" 
                            :src="proxiedUrl(gifUrlOf(msg))" 
                            class="msg-gif-img" 
                            autoplay loop muted playsinline
                            @error="onGifError"></video>
-                    <!-- 普通GIF/图片（包括解析后的CDN直链） -->
-                    <img v-else :src="proxiedUrl(gifUrlOf(msg))" class="msg-gif-img" @error="onGifError" />
+                    <!-- 普通GIF/图片 -->
+                    <img v-else-if="gifUrlOf(msg)" :src="proxiedUrl(gifUrlOf(msg))" class="msg-gif-img" @error="onGifError" />
                     <!-- GIF加载失败回退由 onGifError 处理 -->
                   </div>
 
@@ -611,9 +615,13 @@
               </div>
             </el-popover>
 
-            <!-- GIF 选择器入口（放在 emoji 图标右边） -->
-            <button class="toolbar-btn gif-picker-btn-inline" @click="gifPickerVisible = true" title="选择 GIF">
+            <!-- GIF 选择器入口 -->
+            <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('gif')" title="选择 GIF">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><text x="12" y="16" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">GIF</text></svg>
+            </button>
+            <!-- Sticker 选择器入口 -->
+            <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('sticker')" title="选择 Sticker">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/><path d="M8.5 14c1.2 1 2.5 1.5 3.5 1.5s2.3-.5 3.5-1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
             </button>
 
             <el-popover v-model:visible="showMentionPanel" placement="top-start" width="240" trigger="click">
@@ -937,50 +945,49 @@
     </aside>
   </div>
 
-  <!-- GIF 选择器弹窗 -->
-  <el-dialog v-model="gifPickerVisible" title="选择 GIF" width="500px" :close-on-click-modal="true">
+  <!-- GIF/Sticker 选择器弹窗（根据 mode 只显示对应收藏） -->
+  <el-dialog v-model="gifPickerVisible" :title="gifPickerMode === 'gif' ? '选择 GIF' : '选择 Sticker'" width="500px" :close-on-click-modal="true">
     <div class="gif-picker">
-      <!-- Tab 切换 -->
-      <el-tabs v-model="gifPickerTab">
-        <el-tab-pane label="GIF收藏" name="gifFavorites">
-          <div v-if="gifFavorites.length === 0" class="gif-empty">
-            <p>暂无收藏的 GIF</p>
-            <p class="gif-empty-hint">在聊天中 hover GIF 消息，点击❤️即可收藏</p>
-          </div>
-          <div v-else class="gif-grid">
-            <div v-for="fav in gifFavorites" :key="fav.id" class="gif-item" 
-                 @click="sendGifFromFavorite(fav)">
-              <img :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'GIF'" 
-                   class="gif-thumb" @error="onGifError" />
-              <div class="gif-item-actions">
-                <button class="gif-item-btn" @click.stop="handleUnfavoriteById(fav.id)" title="取消收藏">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                </button>
-              </div>
+      <!-- GIF 收藏 -->
+      <template v-if="gifPickerMode === 'gif'">
+        <div v-if="gifFavorites.length === 0" class="gif-empty">
+          <p>暂无收藏的 GIF</p>
+          <p class="gif-empty-hint">在聊天中 hover GIF 消息，点击❤️即可收藏</p>
+        </div>
+        <div v-else class="gif-grid">
+          <div v-for="fav in gifFavorites" :key="fav.id" class="gif-item" 
+               @click="sendGifFromFavorite(fav)">
+            <img :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'GIF'" 
+                 class="gif-thumb" @error="onGifError" />
+            <div class="gif-item-actions">
+              <button class="gif-item-btn" @click.stop="handleUnfavoriteById(fav.id)" title="取消收藏">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+              </button>
             </div>
           </div>
-        </el-tab-pane>
-        <el-tab-pane label="Sticker收藏" name="stickerFavorites">
-          <div v-if="stickerFavorites.length === 0" class="gif-empty">
-            <p>暂无收藏的 Sticker</p>
-          </div>
-          <div v-else class="gif-grid">
-            <div v-for="fav in stickerFavorites" :key="fav.id" class="gif-item" 
-                 @click="sendStickerFromFavorite(fav)">
-              <!-- Lottie JSON 格式贴纸：用容器加载 Lottie 动画（img 不能渲染 JSON） -->
-              <div v-if="isStickerJsonUrl(fav.gifUrl)" :id="'picker-sticker-' + fav.id" class="gif-thumb gif-thumb-lottie"></div>
-              <!-- 图片/视频格式贴纸：直接用 img -->
-              <img v-else :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'Sticker'" 
-                   class="gif-thumb" @error="onGifError" />
-              <div class="gif-item-actions">
-                <button class="gif-item-btn" @click.stop="handleUnfavoriteById(fav.id)" title="取消收藏">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                </button>
-              </div>
+        </div>
+      </template>
+      <!-- Sticker 收藏 -->
+      <template v-else-if="gifPickerMode === 'sticker'">
+        <div v-if="stickerFavorites.length === 0" class="gif-empty">
+          <p>暂无收藏的 Sticker</p>
+        </div>
+        <div v-else class="gif-grid">
+          <div v-for="fav in stickerFavorites" :key="fav.id" class="gif-item" 
+               @click="sendStickerFromFavorite(fav)">
+            <!-- Lottie JSON 格式贴纸 -->
+            <div v-if="isStickerJsonUrl(fav.gifUrl)" :id="'picker-sticker-' + fav.id" class="gif-thumb gif-thumb-lottie"></div>
+            <!-- 图片/视频格式贴纸 -->
+            <img v-else :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'Sticker'" 
+                 class="gif-thumb" @error="onGifError" />
+            <div class="gif-item-actions">
+              <button class="gif-item-btn" @click.stop="handleUnfavoriteById(fav.id)" title="取消收藏">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+              </button>
             </div>
           </div>
-        </el-tab-pane>
-      </el-tabs>
+        </div>
+      </template>
     </div>
   </el-dialog>
 </template>
@@ -1034,8 +1041,9 @@ const dateQuick = ref('')
 const hoveredGifMsgId = ref(null)  // 当前鼠标悬停的 GIF 消息 ID
 const gifFavorites = ref([])  // 当前账号的 GIF 收藏列表
 const gifFavoritedUrls = ref(new Set())  // 已收藏的 GIF URL 集合
-const gifPickerVisible = ref(false)  // GIF 选择器弹窗可见性
-const gifPickerTab = ref('gifFavorites')  // 当前 Tab: gifFavorites | stickerFavorites
+const gifPickerVisible = ref(false)  // GIF/Sticker 选择器弹窗可见性
+const gifPickerMode = ref('gif')  // 当前模式: 'gif' | 'sticker'
+const gifPickerTab = ref('gifFavorites')  // 当前 Tab (保留兼容)
 const stickerFavorites = ref([])  // Sticker 收藏列表
 const hoveredStickerMsgId = ref(null)
 
@@ -1090,8 +1098,8 @@ const aiLoading = ref(false)
 const lottieInstances = new Map()
 
 // 监听 GIF 选择器：当显示且处于 Sticker 收藏 Tab 时，初始化贴纸 Lottie 预览
-watch([gifPickerVisible, gifPickerTab], ([vis, tab]) => {
-  if (vis && tab === 'stickerFavorites') {
+watch([gifPickerVisible, gifPickerMode], ([vis, mode]) => {
+  if (vis && mode === 'sticker') {
     initPickerStickerLotties()
   } else if (!vis) {
     disposePickerLotties()
@@ -1100,7 +1108,7 @@ watch([gifPickerVisible, gifPickerTab], ([vis, tab]) => {
 
 // stickerFavorites 列表变化时（收藏/取消收藏后）重新初始化已显示的 Lottie
 watch(stickerFavorites, () => {
-  if (gifPickerVisible.value && gifPickerTab.value === 'stickerFavorites') {
+  if (gifPickerVisible.value && gifPickerMode.value === 'sticker') {
     initPickerStickerLotties()
   }
 }, { deep: true })
@@ -1657,8 +1665,13 @@ function displayContentOf(msg) {
 function isGifMsg(msg) {
   if (!msg) return false
   
+  // Sticker 消息由 isStickerMsg 处理，这里排除
+  if (msg.messageType === 'sticker' || msg.messageType === 'lottie') return false
+  
   // 优先检查消息类型和gifUrl字段
   if (msg.messageType === 'gif' && msg.gifUrl) {
+    // 如果 gifUrl 本身是 Sticker/Lottie JSON，由 isStickerMsg 处理
+    if (/cdn\.discordapp\.com\/stickers|\.json([?#]|$)/i.test(msg.gifUrl)) return false
     return true
   }
   
@@ -1678,6 +1691,8 @@ function isGifMsg(msg) {
   const content = msg.content.trim()
   // 消息是纯URL且指向GIF/图片/视频站点
   if (/^https?:\/\/\S+$/.test(content)) {
+    // Sticker/Lottie URL 排除（由 isStickerMsg 处理）
+    if (/cdn\.discordapp\.com\/stickers|\.json([?#]|$)/i.test(content)) return false
     // Discord GIF 代理或常见GIF/视频域名
     return /(gif|imgur|tenor|giphy|klipy|cdn\.)/i.test(content) ||
       /\.(gif|webp|mp4|webm|png|jpg|jpeg)(\?|#|$)/i.test(content)
@@ -1694,8 +1709,10 @@ function gifUrlOf(msg) {
     // 检查是否已解析过 klipy.com URL
     if (isGifUrlResolved(rawUrl)) {
       const resolved = resolvedGifUrls.value.get(rawUrl)
-      if (!resolved) return ''  // 解析失败收敛：返回空让模板显示错误占位
-      return resolved
+      if (resolved) return resolved
+      // 解析失败（failedGifUrls）：返回空，让模板走错误占位分支，不再尝试加载原始页面URL
+      console.warn('[gifUrlOf] 解析失败收敛，返回空字符串:', rawUrl)
+      return ''
     }
     // 未解析但属于 klipy.com 页面 URL → 渲染时自动触发解析（兜底，不依赖 watch）
     if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
@@ -1728,8 +1745,10 @@ function gifUrlOf(msg) {
   // 检查是否已解析过 klipy.com URL
   if (isGifUrlResolved(rawUrl)) {
     const resolved = resolvedGifUrls.value.get(rawUrl)
-    if (!resolved) return ''
-    return resolved
+    if (resolved) return resolved
+    // 解析失败收敛：返回空，避免再代理加载页面URL触发 onGifError 回退显示
+    console.warn('[gifUrlOf] content分支解析失败收敛，返回空字符串:', rawUrl)
+    return ''
   }
   // 未解析但属于 klipy.com 页面 URL → 自动触发解析
   if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
@@ -1804,14 +1823,17 @@ async function resolveGifUrl(url) {
     // 15s 超时兜底：防止 API 挂起导致 UI 无限显示加载中
     const timeoutP = new Promise((_, rj) => setTimeout(() => rj(new Error('timeout')), 15000))
     const res = await Promise.race([resolveGifUrlApi(url), timeoutP])
-    console.log('[GIF解析] API返回:', url, res?.data)
-    if (res?.data?.resolvedUrl) {
-      resolvedGifUrls.value.set(url, res.data.resolvedUrl)
-      console.log('[GIF解析] 成功:', url, '->', res.data.resolvedUrl)
+    // axios 拦截器 (http.js:26) 已自动 response.data 解包，res 即为 JSON 对象
+    console.log('[GIF解析] API返回:', url, res)
+    // 兼容两种可能：若拦截器改回默认则用 res.data，否则用 res.resolvedUrl
+    const resolvedUrl = res?.resolvedUrl ?? res?.data?.resolvedUrl
+    if (resolvedUrl) {
+      resolvedGifUrls.value.set(url, resolvedUrl)
+      console.log('[GIF解析] 成功:', url, '->', resolvedUrl)
       resolvedGifUrls.value = new Map(resolvedGifUrls.value)
       gifRenderCounter.value++
     } else {
-      console.warn('[GIF解析] resolvedUrl为空:', url, res?.data)
+      console.warn('[GIF解析] resolvedUrl为空:', url, res)
       markFailed('empty resolvedUrl')
     }
   } catch (e) {
@@ -1908,14 +1930,25 @@ function isPageUrl(url) {
 /** 将外部 GIF URL 转为后端代理 URL，绕过浏览器 CORS/Cloudflare 限制 */
 function proxiedUrl(url) {
   if (!url) return ''
-  // 如果是 klipy.com 页面链接且已解析，返回解析后的 CDN URL
-  // CDN URL 已支持 CORS（static2.klipy.com 返回 Access-Control-Allow-Origin: *），
-  // 直接返回让浏览器加载，绕过后端代理的 500 错误
-  if (isPageUrl(url) && isGifUrlResolved(url)) {
-    const cdnUrl = resolvedGifUrls.value.get(url)
-    console.log('[proxiedUrl] 使用解析后CDN:', url, '->', cdnUrl)
-    return cdnUrl || url  // CDN URL 直接返回，不代理
+  // klipy.com 页面URL解析失败收敛：直接返回空字符串
+  // 避免模板用 <img src="代理页面URL"> 加载 HTML 触发 onGifError 回退显示原始链接
+  if (isGifUrlResolved(url) && !resolvedGifUrls.value.has(url) && failedGifUrls.value.has(url)) {
+    console.warn('[proxiedUrl] URL已失败收敛，跳过代理:', url)
+    return ''
   }
+  // 如果是 klipy.com 页面链接且已解析成功，返回解析后的 CDN URL（按CDN域名判断是否要代理）
+  if (resolvedGifUrls.value.has(url)) {
+    const cdnUrl = resolvedGifUrls.value.get(url)
+    if (cdnUrl) {
+      console.log('[proxiedUrl] 使用解析后CDN:', url, '->', cdnUrl)
+      if (needsProxy(cdnUrl)) {
+        return '/api/proxy/fetch?url=' + encodeURIComponent(cdnUrl)
+      }
+      return cdnUrl
+    }
+  }
+  // Sticker/Lottie JSON、普通图片GIF、动画视频等：统一按 needsProxy 判定
+  // cdn.discordapp.com/stickers JSON 要代理是因为浏览器 fetch 直链会被 CORS 拦截（Discord CDN CORS 不覆盖前端域名）
   if (needsProxy(url)) {
     return '/api/proxy/fetch?url=' + encodeURIComponent(url)
   }
@@ -1937,10 +1970,14 @@ function isStickerMsg(msg) {
   if (msg.messageType === 'sticker' || msg.messageType === 'lottie') return true
   // 兼容旧字段名 contentType
   if (msg.contentType === 'sticker' || msg.contentType === 'lottie') return true
+  // 检查 msg.gifUrl 是否是 Sticker/Lottie URL（收藏发送的贴纸 gifUrl 是 JSON）
+  if (msg.gifUrl && /cdn\.discordapp\.com\/stickers|\.json([?#]|$)/i.test(msg.gifUrl)) {
+    return true
+  }
   // 检查是否是 Sticker/Lottie URL
   if (msg.content && /^https?:\/\/\S+$/.test(msg.content.trim())) {
     const url = msg.content.trim().toLowerCase()
-    if (url.includes('cdn.discordapp.com/stickers') || url.endsWith('.json')) {
+    if (url.includes('cdn.discordapp.com/stickers') || /\.json([?#]|$)/i.test(url)) {
       return true
     }
   }
@@ -1963,11 +2000,14 @@ function stickerItemsOf(msg) {
     } catch { /* ignore */ }
   }
 
-  // stickerItemsJson 没有结果时，才从 content 中提取 Sticker URL（兼容 URL 形式的 Sticker 消息）
-  if (msg.content && /^https?:\/\/\S+$/.test(msg.content.trim())) {
-    const url = msg.content.trim()
+  // stickerItemsJson 没有结果时，从 msg.gifUrl 中提取（收藏发送的贴纸：messageType=gif + gifUrl=Sticker JSON URL）
+  const urlsToTry = []
+  if (msg.gifUrl) urlsToTry.push(msg.gifUrl)
+  if (msg.content && /^https?:\/\/\S+$/.test(msg.content.trim())) urlsToTry.push(msg.content.trim())
+
+  for (const url of urlsToTry) {
     const lowerUrl = url.toLowerCase()
-    
+
     // 处理 cdn.discordapp.com/stickers/xxx.json 格式
     const stickerMatch = lowerUrl.match(/cdn\.discordapp\.com\/stickers\/(\d+)\.json/i)
     if (stickerMatch) {
@@ -1975,11 +2015,11 @@ function stickerItemsOf(msg) {
       return [{
         id: stickerId,
         name: 'Sticker',
-        formatType: 3, // Lottie format
+        formatType: 3,
         assetUrl: url
       }]
     }
-    
+
     // 处理 cdn.discordapp.com/stickers/xxx/assetUrl.ext 格式
     const assetMatch = lowerUrl.match(/cdn\.discordapp\.com\/stickers\/(\d+)\/([a-zA-Z0-9_-]+)\.(gif|png|webm|json)/i)
     if (assetMatch) {
@@ -1994,8 +2034,23 @@ function stickerItemsOf(msg) {
         assetUrl: assetUrl + '.' + ext
       }]
     }
+
+    // 任意包含 stickers/.+.json 的 URL 兜底（带查询参数也能命中）
+    const looseJsonMatch = lowerUrl.match(/cdn\.discordapp\.com\/stickers\/(.+)\.json([?#]|$)/i)
+    if (looseJsonMatch) {
+      // 从 path 推断 ID（取 /stickers/ 后的第一段数字）
+      const pathPart = looseJsonMatch[1]
+      const idMatch = pathPart.match(/^(\d+)/)
+      const stickerId = idMatch ? idMatch[1] : ('sticker-' + Math.random().toString(36).slice(2, 8))
+      return [{
+        id: stickerId,
+        name: 'Sticker',
+        formatType: 3,
+        assetUrl: url
+      }]
+    }
   }
-  
+
   return []
 }
 
@@ -2007,11 +2062,18 @@ function isLottieSticker(sticker) {
 /** 判断收藏的 URL 是否是 Lottie JSON 形式（Sticker 收藏 Tab 判断渲染方式） */
 function isStickerJsonUrl(url) {
   if (!url) return false
-  return /cdn\.discordapp\.com\/stickers\/.+\.json(\?|#|$)/i.test(url) || /\.json(\?|#|$)/i.test(url)
+  return /cdn\.discordapp\.com\/stickers\/.+\.json([?#]|$)/i.test(url) || /\.json([?#]|$)/i.test(url)
 }
 
 // Sticker 收藏 Tab 的 Lottie 实例缓存（与聊天区缓存分开，避免ID冲突）
 const pickerLottieInstances = new Map()
+
+/** 打开 GIF/Sticker 选择器 */
+function openGifPicker(mode) {
+  gifPickerMode.value = mode
+  gifPickerTab.value = mode === 'sticker' ? 'stickerFavorites' : 'gifFavorites'
+  gifPickerVisible.value = true
+}
 
 /** 销毁所有 Sticker 收藏 Tab 的 Lottie 实例（弹窗关闭时释放） */
 function disposePickerLotties() {
@@ -2498,26 +2560,34 @@ function onGifError(e) {
     } catch { /* keep original */ }
   }
   
+  // 如果 src 为空或是当前页面（localhost），不显示 fallback
+  if (!originalUrl || originalUrl === window.location.href || originalUrl === location.href) {
+    return
+  }
+  
   const fallback = document.createElement('div')
   fallback.className = 'gif-fallback'
   
-  // 显示原始链接作为回退
-  if (originalUrl) {
-    const failText = document.createElement('span')
-    failText.className = 'gif-fail-text'
-    failText.textContent = '[GIF加载失败]'
-    fallback.appendChild(failText)
-    
-    const link = document.createElement('a')
-    link.href = originalUrl
-    link.textContent = originalUrl
-    link.target = '_blank'
-    link.rel = 'noopener noreferrer'
-    link.className = 'gif-fallback-link'
-    fallback.appendChild(link)
-  } else {
-    fallback.textContent = '[GIF加载失败]'
+  // Lottie JSON URL 提示不同
+  if (/\.json([?#]|$)/i.test(originalUrl)) {
+    fallback.innerHTML = '<span class="gif-fail-text">[Sticker加载失败 - Lottie格式]</span>'
+    el.parentNode?.appendChild(fallback)
+    return
   }
+  
+  // 显示原始链接作为回退
+  const failText = document.createElement('span')
+  failText.className = 'gif-fail-text'
+  failText.textContent = '[GIF加载失败]'
+  fallback.appendChild(failText)
+  
+  const link = document.createElement('a')
+  link.href = originalUrl
+  link.textContent = originalUrl
+  link.target = '_blank'
+  link.rel = 'noopener noreferrer'
+  link.className = 'gif-fallback-link'
+  fallback.appendChild(link)
   
   el.parentNode?.appendChild(fallback)
 }
