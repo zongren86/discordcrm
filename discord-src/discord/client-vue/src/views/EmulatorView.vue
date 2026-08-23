@@ -26,12 +26,11 @@
         title="未检测到本地模拟器"
         :description="physicalStatus.message"
         style="margin-bottom: 12px"
-      >
-        <template #default>
-          <el-button type="primary" size="small" @click="checkPhysicalStatus">重新检测</el-button>
-          <el-button type="primary" size="small" @click="syncPhysical" style="margin-left: 8px">同步数据</el-button>
-        </template>
-      </el-alert>
+      />
+      <div v-if="!physicalStatus.available && !loading" style="margin: 8px 0; display: flex; gap: 8px">
+        <el-button type="primary" size="small" @click="checkPhysicalStatus">重新检测</el-button>
+        <el-button type="primary" size="small" @click="syncPhysical">同步数据</el-button>
+      </div>
 
       <!-- TAB 结构 -->
       <el-tabs v-model="activeTab" type="border-card">
@@ -215,7 +214,12 @@
           <div class="batch-toolbar">
             <div class="batch-actions">
               <!-- 新增按钮（放在第一个位置） -->
-              <el-button type="primary" size="small" @click="showAddDialog = true" :permission="['emulator_tab_list']">
+              <el-button 
+                v-if="hasTabPermission('emulator_tab_list') || hasTabPermission('emulator')" 
+                type="primary" 
+                size="small" 
+                @click="showAddDialog = true"
+              >
                 + 新增
               </el-button>
               <el-button type="primary" size="small" @click="batchAction('start')" :disabled="!canBatchStart || !physicalStatus.available">
@@ -750,8 +754,15 @@ const addEmuConfig = ref({ cpuCores: 1, memoryGb: 1 })
 
 // 权限检查
 const authStore = useAuthStore()
+// 如果用户没有任何 emulator 相关权限，默认显示所有 TAB（向下兼容）
+const hasAnyEmulatorTabPermission = computed(() => {
+  const perms = ['emulator_tab_list', 'emulator_tab_config', 'emulator']
+  return perms.some(p => authStore.hasPermission(p))
+})
 function hasTabPermission(perm) {
-  return authStore.hasPermission(perm)
+  // 如果没有配置任何 TAB 权限，默认允许访问（兼容旧系统）
+  if (!hasAnyEmulatorTabPermission.value) return true
+  return authStore.hasPermission(perm) || authStore.hasPermission('emulator')
 }
 
 // 模拟器详情
