@@ -492,17 +492,27 @@ public class MessageService {
                               String messageType, String audioData, String audioMimeType,
                               Integer audioDuration, String audioFileName, String agentDisplayName,
                               java.util.List<java.util.Map<String, String>> attachments) {
+        Message result = null;
         // 如果有附件，先发送附件消息
         if (attachments != null && !attachments.isEmpty()) {
-            sendAttachments(conversationId, attachments, agentDisplayName);
+            Message attMsg = sendAttachments(conversationId, attachments, agentDisplayName);
+            // 如果没有文字内容或语音，返回附件消息
+            if (attMsg != null) {
+                result = attMsg;
+            }
         }
-        // 再发送文本/语音消息
-        return sendReply(conversationId, content, targetLanguage,
-                messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
+        // 只有当有文字内容或语音时，才发送文本/语音消息
+        boolean hasTextOrVoice = (content != null && !content.isBlank()) 
+                                || ("voice".equals(messageType) && audioData != null && !audioData.isBlank());
+        if (hasTextOrVoice) {
+            result = sendReply(conversationId, content, targetLanguage,
+                    messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
+        }
+        return result;
     }
 
-    /** 发送附件到 Discord 并保存本地记录 */
-    private void sendAttachments(Long conversationId, java.util.List<java.util.Map<String, String>> attachments, String agentDisplayName) {
+    /** 发送附件到 Discord 并保存本地记录，返回保存的消息 */
+    private Message sendAttachments(Long conversationId, java.util.List<java.util.Map<String, String>> attachments, String agentDisplayName) {
         try {
             Conversation conversation = conversationRepository.findById(conversationId)
                     .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
@@ -578,10 +588,13 @@ public class MessageService {
                 // 推送到前端
                 MessageDtos.MessageDto dto = MessageDtos.MessageDto.from(savedAtt);
                 messagingTemplate.convertAndSend("/topic/messages", dto);
+                
+                return savedAtt;
             }
         } catch (Exception e) {
             log.error("发送附件整体失败: {}", e.getMessage());
         }
+        return null;
     }
 
     public void translateAndSave(Message message, String targetLanguage) {

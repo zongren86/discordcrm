@@ -122,6 +122,27 @@ public class DiscordMessageListener extends ListenerAdapter {
                     log.warn("下载语音附件失败: {}", ex.getMessage(), ex);
                 }
             }
+
+            // 检测附件中的 GIF/视频（Discord 动画消息通常以 MP4/WebM 附件形式发送）
+            if ("text".equals(messageType)) {
+                Attachment gifAtt = attachments.stream()
+                        .filter(a -> {
+                            String ct = a.getContentType();
+                            String fn = a.getFileName() != null ? a.getFileName().toLowerCase() : "";
+                            return (ct != null && (ct.startsWith("video/") || ct.startsWith("image/gif")))
+                                    || fn.endsWith(".gif") || fn.endsWith(".mp4") || fn.endsWith(".webm") || fn.endsWith(".mov");
+                        })
+                        .findFirst().orElse(null);
+                if (gifAtt != null) {
+                    messageType = "gif";
+                    gifUrl = gifAtt.getUrl();
+                    if (content == null || content.isBlank()) {
+                        content = "[GIF] " + (gifAtt.getFileName() != null ? gifAtt.getFileName() : "动画");
+                    }
+                    log.info("[DISCORD GIF] 检测到附件形式的GIF/视频消息: accountId={}, file={}, url={}",
+                            accountId, gifAtt.getFileName(), truncate(gifUrl, 120));
+                }
+            }
         }
 
         InboundMessage inbound = new InboundMessage(
