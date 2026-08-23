@@ -2,6 +2,7 @@ package com.discordadmin.controller;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -33,6 +34,7 @@ public class ProxyController {
     /** 允许代理的白名单域名（GIF/动画相关） */
     private static final Set<String> ALLOWED_DOMAINS = Set.of(
             "klipy.com",
+            "static2.klipy.com",
             "tenor.com",
             "giphy.com",
             "imgur.com",
@@ -73,13 +75,37 @@ public class ProxyController {
             "instagram.com"
     );
 
-    private final HttpClient httpClient;
+    private final HttpClient httpClient;  // 带代理的客户端
+    private final HttpClient directHttpClient;  // 直连客户端（代理不可用时使用）
+    private final boolean proxyConfigured;  // 是否已配置代理
+    private volatile Boolean proxyAvailable = null;  // 代理可用性缓存
+    private volatile long lastProxyCheckTime = 0;  // 上次检查代理时间
 
-    public ProxyController() {
-        this.httpClient = HttpClient.newBuilder()
+    public ProxyController(
+            @Value("${discord.proxy.host:127.0.0.1}") String proxyHost,
+            @Value("${discord.proxy.port:7890}") int proxyPort) {
+        HttpClient.Builder builder = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL);
+        
+        // 创建直连客户端（始终可用）
+        this.directHttpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
+        
+        boolean proxyOk = false;
+        try {
+            // 配置代理
+            java.net.InetSocketAddress proxyAddr = new java.net.InetSocketAddress(proxyHost, proxyPort);
+            builder.proxy(java.net.ProxySelector.of(proxyAddr));
+            log.info("ProxyController 配置代理: {}:{}", proxyHost, proxyPort);
+            proxyOk = true;
+        } catch (Exception e) {
+            log.warn("ProxyController 代理配置失败，仅使用直连: {}", e.getMessage());
+        }
+        this.proxyConfigured = proxyOk;
+        this.httpClient = builder.build();
     }
 
     /**
@@ -131,12 +157,16 @@ public class ProxyController {
                     .GET()
                     .build();
 
-            // 4. 执行请求（带重试机制）
+            // 4. 执行请求（带重试机制 + 代理降级）
             HttpResponse<byte[]> response = null;
             int maxRetries = 2;
+            boolean useProxy = proxyConfigured && isProxyAvailable();
+            
             for (int attempt = 0; attempt < maxRetries; attempt++) {
                 try {
-                    response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                    // 根据代理可用性选择客户端
+                    HttpClient client = useProxy ? httpClient : directHttpClient;
+                    response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
                     
                     // 如果成功获取内容，立即返回
                     int statusCode = response.statusCode();
@@ -149,7 +179,7 @@ public class ProxyController {
                         
                         // 检测 Cloudflare 拦截页面
                         if (statusCode == 403 && contentType.contains("text/html") && isCloudflareBlocked(body)) {
-                            log.warn("代理请求被 Cloudflare 拦截：{}", url);
+                            log.warn("{}请求被 Cloudflare 拦截：{}", useProxy ? "代理" : "直连", url);
                             // 对于 Cloudflare 拦截，尝试用不同的 User-Agent 重试
                             if (attempt < maxRetries - 1) {
                                 try { Thread.sleep(500); } catch (InterruptedException ie) {
@@ -169,11 +199,23 @@ public class ProxyController {
                         headers.setCacheControl("public, max-age=3600");
                         headers.set("Accept-Ranges", "none");
 
-                        log.debug("代理请求成功：{} -> {} ({} bytes)", url, contentType, body.length);
+                        log.debug("{}请求成功：{} -> {} ({} bytes)", useProxy ? "代理" : "直连", url, contentType, body.length);
                         return new ResponseEntity<>(body, headers, statusCode);
                     }
                 } catch (Exception e) {
-                    log.debug("代理请求尝试 {} 失败：{} - {}", attempt + 1, url, e.getMessage());
+                    log.debug("{}请求尝试 {} 失败：{} - {}", useProxy ? "代理" : "直连", attempt + 1, url, e.getMessage());
+                    
+                    // 代理失败时，自动降级为直连
+                    if (useProxy && attempt == 0) {
+                        log.warn("代理请求失败，降级为直连请求：{}", url);
+                        useProxy = false;
+                        // 标记代理不可用
+                        proxyAvailable = false;
+                        lastProxyCheckTime = System.currentTimeMillis();
+                        // 用直连重试
+                        continue;
+                    }
+                    
                     if (attempt < maxRetries - 1) {
                         try { Thread.sleep(300); } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
@@ -183,9 +225,10 @@ public class ProxyController {
             }
 
             // 所有重试都失败了
-            log.warn("代理请求最终失败：{}", url);
+            log.warn("请求最终失败（{}）：{}", useProxy ? "代理" : "直连", url);
             return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                    .body(("代理请求失败").getBytes());
+                    .header("X-Proxy-Error", "request-failed")
+                    .body(("资源加载失败，请稍后重试").getBytes());
 
         } catch (Exception e) {
             log.error("代理请求异常：{} - {}", url, e.getMessage());
@@ -258,6 +301,141 @@ public class ProxyController {
     }
 
     /**
+     * 解析 GIF URL - 对于 klipy.com 等有 Cloudflare 防护的网站，
+     * 使用 GoogleBot UA 访问页面提取真实的 CDN URL
+     * 支持代理降级：代理不可用时自动使用直连
+     */
+    @GetMapping("/resolve-gif-url")
+    public ResponseEntity<java.util.Map<String, Object>> resolveGifUrl(@RequestParam("url") String url) {
+        java.util.Map<String, Object> result = new java.util.HashMap<>();
+        try {
+            URI uri = new URI(url);
+            String host = uri.getHost();
+            if (host == null) {
+                result.put("success", false);
+                result.put("error", "无效的 URL");
+                return ResponseEntity.ok(result);
+            }
+
+            String lowerHost = host.toLowerCase();
+            // 只处理 klipy.com 的 URL
+            if (!lowerHost.equals("klipy.com") && !lowerHost.endsWith(".klipy.com")) {
+                result.put("success", true);
+                result.put("resolvedUrl", url);
+                return ResponseEntity.ok(result);
+            }
+
+            // 使用 GoogleBot UA 访问 klipy 页面，支持代理降级
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(uri)
+                    .timeout(Duration.ofSeconds(10))
+                    .header("User-Agent", "Googlebot/2.1 (+http://www.google.com/bot.html)")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .GET()
+                    .build();
+
+            // 先尝试代理，失败后降级为直连
+            String pageContent = null;
+            boolean useProxy = proxyConfigured && isProxyAvailable();
+            
+            if (useProxy) {
+                try {
+                    HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                    if (response.statusCode() == 200) {
+                        pageContent = new String(response.body());
+                        log.debug("解析 GIF URL: 代理请求成功 {}", url);
+                    } else {
+                        log.warn("解析 GIF URL: 代理请求返回状态码 {}", response.statusCode());
+                    }
+                } catch (Exception e) {
+                    log.warn("解析 GIF URL: 代理请求失败，降级为直连: {}", e.getMessage());
+                    useProxy = false;
+                    // 标记代理不可用
+                    proxyAvailable = false;
+                    lastProxyCheckTime = System.currentTimeMillis();
+                }
+            }
+            
+            // 直连降级
+            if (pageContent == null) {
+                try {
+                    HttpResponse<byte[]> response = directHttpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                    if (response.statusCode() == 200) {
+                        pageContent = new String(response.body());
+                        log.debug("解析 GIF URL: 直连请求成功 {}", url);
+                    } else {
+                        log.warn("解析 GIF URL: 直连请求返回状态码 {}", response.statusCode());
+                    }
+                } catch (Exception e) {
+                    log.warn("解析 GIF URL: 直连请求也失败: {}", e.getMessage());
+                }
+            }
+
+            if (pageContent != null) {
+                // 从页面中提取媒体 URL（支持 .gif, .mp4, .webm 格式）
+                String mediaUrl = extractMediaUrl(pageContent);
+                if (mediaUrl != null) {
+                    result.put("success", true);
+                    result.put("resolvedUrl", mediaUrl);
+                    result.put("originalUrl", url);
+                    result.put("method", "googlebot-extract");
+                } else {
+                    // 提取失败，返回原始 URL 让前端尝试
+                    result.put("success", true);
+                    result.put("resolvedUrl", url);
+                    result.put("originalUrl", url);
+                    result.put("method", "fallback");
+                }
+            } else {
+                // 两种方式都失败，返回原始 URL
+                log.warn("解析 GIF URL: 代理和直连都失败，返回原始 URL");
+                result.put("success", true);
+                result.put("resolvedUrl", url);
+                result.put("originalUrl", url);
+                result.put("method", "direct-fallback");
+            }
+
+        } catch (Exception e) {
+            log.error("解析 GIF URL 异常: {} - {}", url, e.getMessage());
+            result.put("success", false);
+            result.put("error", e.getMessage());
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 从 HTML 页面内容中提取媒体 URL
+     * 优先提取 .gif，然后 .mp4/.webm
+     */
+    private String extractMediaUrl(String html) {
+        if (html == null || html.isEmpty()) return null;
+
+        // 匹配 https://static*.klipy.com/.../xxx.gif 或 .mp4 等
+        // 先找 GIF URL
+        java.util.regex.Pattern gifPattern = java.util.regex.Pattern.compile(
+                "https?://[^\"'\\s<>]+\\.gif[^\"'\\s<>]*", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher gifMatcher = gifPattern.matcher(html);
+        if (gifMatcher.find()) {
+            String gifUrl = gifMatcher.group(0);
+            // 清理可能的尾部字符
+            gifUrl = gifUrl.replaceAll("[),;\\]]$", "");
+            return gifUrl;
+        }
+
+        // 再找 MP4 URL
+        java.util.regex.Pattern mp4Pattern = java.util.regex.Pattern.compile(
+                "https?://[^\"'\\s<>]+\\.(mp4|webm)[^\"'\\s<>]*", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Matcher mp4Matcher = mp4Pattern.matcher(html);
+        if (mp4Matcher.find()) {
+            String mp4Url = mp4Matcher.group(0);
+            mp4Url = mp4Url.replaceAll("[),;\\]]$", "");
+            return mp4Url;
+        }
+
+        return null;
+    }
+
+    /**
      * 检查域名是否在白名单中
      */
     private boolean isAllowedDomain(String host) {
@@ -293,6 +471,52 @@ public class ProxyController {
             }
             return false;
         } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 检测代理是否可用
+     * 使用缓存机制，每 30 秒检查一次
+     */
+    private boolean isProxyAvailable() {
+        // 如果没有配置代理，直接返回 false
+        if (!proxyConfigured) return false;
+        
+        long now = System.currentTimeMillis();
+        // 如果还在缓存有效期内，直接返回缓存结果
+        if (proxyAvailable != null && (now - lastProxyCheckTime) < 30_000) {
+            return proxyAvailable;
+        }
+        
+        // 执行实际检测
+        try {
+            // 尝试通过代理访问一个已知可用的 URL
+            HttpRequest testRequest = HttpRequest.newBuilder()
+                    .uri(URI.create("https://httpbin.org/ip"))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("User-Agent", "ProxyChecker/1.0")
+                    .GET()
+                    .build();
+            
+            HttpResponse<String> response = httpClient.send(testRequest, HttpResponse.BodyHandlers.ofString());
+            boolean available = response.statusCode() == 200;
+            
+            // 更新缓存
+            proxyAvailable = available;
+            lastProxyCheckTime = now;
+            
+            if (available) {
+                log.info("代理服务器可用");
+            } else {
+                log.warn("代理服务器不可用，将使用直连模式");
+            }
+            return available;
+        } catch (Exception e) {
+            // 检测失败，标记为不可用
+            proxyAvailable = false;
+            lastProxyCheckTime = now;
+            log.warn("代理服务器检测失败: {}，将使用直连模式", e.getMessage());
             return false;
         }
     }

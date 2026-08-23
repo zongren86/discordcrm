@@ -33,7 +33,7 @@ public class AuditService {
             Authentication auth = SecurityContextHolder.getContext().getAuthentication();
             if (auth != null && auth.getPrincipal() instanceof AuthenticatedAgent agent) {
                 log.setOperator(agent.username());
-                log.setOperatorRole(agent.role());
+                log.setOperatorRole(agent.accountType() != null ? agent.accountType().toString() : "1");
             }
 
             log.setModule(module);

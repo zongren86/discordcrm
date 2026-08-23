@@ -14,6 +14,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.security.SecureRandom;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,16 +37,25 @@ public class DiscordUserClient {
             @Value("${discord.proxy.host:}") String proxyHost,
             @Value("${discord.proxy.port:0}") int proxyPort) {
         HttpClient.Builder builder = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(15));
+                .connectTimeout(Duration.ofSeconds(30));
         HttpClient.Builder pollBuilder = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(5));
+                .connectTimeout(Duration.ofSeconds(15));
         try {
-            SSLContext ctx = SSLContext.getInstance("TLS");
-            ctx.init(null, null, null);
+            SSLContext ctx = SSLContext.getInstance("TLSv1.3");
+            ctx.init(null, null, new SecureRandom());
             builder.sslContext(ctx);
             pollBuilder.sslContext(ctx);
+            log.info("DiscordUserClient SSLContext: TLSv1.3");
         } catch (Exception e) {
-            log.warn("自定义 SSLContext 初始化失败，使用默认: {}", e.getMessage());
+            log.warn("TLSv1.3 初始化失败，尝试 TLS: {}", e.getMessage());
+            try {
+                SSLContext ctx = SSLContext.getInstance("TLS");
+                ctx.init(null, null, new SecureRandom());
+                builder.sslContext(ctx);
+                pollBuilder.sslContext(ctx);
+            } catch (Exception e2) {
+                log.warn("自定义 SSLContext 初始化失败，使用默认: {}", e2.getMessage());
+            }
         }
         if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));

@@ -25,6 +25,9 @@ public class AttachmentController {
     @Value("${app.upload.dir:uploads}")
     private String uploadDir;
 
+    @Value("${server.base-url:http://localhost:8090}")
+    private String serverBaseUrl;
+
     @PostMapping("/upload")
     public Map<String, Object> upload(@RequestParam("file") MultipartFile file) {
         Map<String, Object> result = new HashMap<>();
@@ -40,13 +43,13 @@ public class AttachmentController {
                 ext = originalFilename.substring(originalFilename.lastIndexOf("."));
             }
             String newFilename = UUID.randomUUID().toString() + ext;
-            Path dir = Paths.get(uploadDir);
-            if (!Files.exists(dir)) Files.createDirectories(dir);
+            Path dir = Paths.get(uploadDir).toAbsolutePath().normalize();
+            Files.createDirectories(dir);
             Path path = dir.resolve(newFilename);
-            file.transferTo(path.toFile());
+            file.transferTo(path);
             result.put("success", true);
             result.put("filename", originalFilename);
-            result.put("url", "/api/attachments/download/" + newFilename);
+            result.put("url", serverBaseUrl + "/api/attachments/download/" + newFilename);
             result.put("size", file.getSize());
             result.put("contentType", file.getContentType());
         } catch (IOException e) {

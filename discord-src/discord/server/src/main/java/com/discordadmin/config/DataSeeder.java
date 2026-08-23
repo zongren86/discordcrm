@@ -28,7 +28,7 @@ public class DataSeeder implements ApplicationRunner {
     private static final List<String> REQUIRED_FEATURE_CODES = Arrays.asList(
         "dashboard", "chat", "customer", "service", "config", "system", "log",
         "account-numbers", "accounts", "customers", "guilds", "guild-members",
-        "friend-manage", "ai-settings", "users", "roles", "features", "audit"
+        "friend-manage", "friend-list", "friend-config", "ai-settings", "users", "roles", "features", "audit"
     );
 
     @Override
@@ -119,6 +119,9 @@ public class DataSeeder implements ApplicationRunner {
             created += createFeatureIfMissing(existingMap, "guilds", "服务器列表", serviceParentId, "MENU_2", "/guilds", "OfficeBuilding", 1);
             created += createFeatureIfMissing(existingMap, "guild-members", "服务器成员", serviceParentId, "MENU_2", "/guild-members", "User", 2);
             created += createFeatureIfMissing(existingMap, "friend-manage", "好友管理", serviceParentId, "MENU_2", "/emulator", "Monitor", 3);
+            // 好友管理子TAB权限
+            created += createFeatureIfMissing(existingMap, "friend-list", "模拟器列表", serviceParentId, "MENU_2", "/emulator", "Monitor", 4);
+            created += createFeatureIfMissing(existingMap, "friend-config", "好友配置", serviceParentId, "MENU_2", "/emulator", "Setting", 5);
         }
 
         // 配置二级菜单
@@ -183,14 +186,14 @@ public class DataSeeder implements ApplicationRunner {
                 Role.RoleType.PLATFORM, true,
                 Arrays.asList("dashboard", "chat", "customer", "service", "config", "system", "log",
                         "account-numbers", "accounts", "customers", "guilds", "guild-members",
-                        "friend-manage", "ai-settings", "users", "roles", "features", "audit"));
+                        "friend-manage", "friend-list", "friend-config", "ai-settings", "users", "roles", "features", "audit"));
 
         // admin: 除系统管理外的大部分功能
         newRoles += ensureRoleIncremental(featureMap, "admin", "管理员", "系统管理员角色",
                 Role.RoleType.PLATFORM, true,
                 Arrays.asList("dashboard", "chat", "customer", "service", "config", "log",
                         "account-numbers", "accounts", "customers", "guilds", "guild-members",
-                        "friend-manage", "ai-settings", "audit"));
+                        "friend-manage", "friend-list", "friend-config", "ai-settings", "audit"));
 
         // merchant_admin: 商户管理员
         newRoles += ensureRoleIncremental(featureMap, "merchant_admin", "商户管理员",
@@ -198,24 +201,24 @@ public class DataSeeder implements ApplicationRunner {
                 Role.RoleType.MERCHANT, true,
                 Arrays.asList("dashboard", "chat", "customer", "service",
                         "account-numbers", "accounts", "customers", "guilds", "guild-members",
-                        "friend-manage"));
+                        "friend-manage", "friend-list", "friend-config"));
 
         // sales: 业务相关功能
         newRoles += ensureRoleIncremental(featureMap, "sales", "销售", "销售人员角色",
                 Role.RoleType.PLATFORM, true,
                 Arrays.asList("dashboard", "chat", "customer", "service",
-                        "accounts", "customers", "guild-members", "friend-manage", "account-numbers"));
+                        "accounts", "customers", "guild-members", "friend-manage", "friend-list", "account-numbers"));
 
         // service: 客服相关
         newRoles += ensureRoleIncremental(featureMap, "service", "客服", "客服人员角色",
                 Role.RoleType.PLATFORM, true,
                 Arrays.asList("chat", "customer", "service",
-                        "accounts", "customers", "friend-manage", "account-numbers"));
+                        "accounts", "customers", "friend-manage", "friend-list", "account-numbers"));
 
         // read_only: 只读
         newRoles += ensureRoleIncremental(featureMap, "read_only", "只读用户", "只读权限角色",
                 Role.RoleType.PLATFORM, true,
-                Arrays.asList("dashboard", "chat", "guild-members"));
+                Arrays.asList("dashboard", "chat", "guild-members", "friend-list"));
 
         return newRoles;
     }

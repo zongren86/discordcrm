@@ -654,7 +654,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Edit, Delete, Download, DataLine, MagicStick,
@@ -705,6 +705,49 @@ const editDialog = reactive({
     name: ''
   }
 })
+
+// 自动解析 URL（防抖 500ms）
+let parseUrlTimer = null
+let isParsing = false
+watch(
+  () => editDialog.form.guildUrl,
+  async (newUrl) => {
+    if (!newUrl || !newUrl.trim()) return
+    
+    // 检查是否是 Discord URL
+    const url = newUrl.trim()
+    const isDiscordUrl = /discord\.com\/channels\/|discord\.gg\//.test(url)
+    
+    if (!isDiscordUrl) return
+    
+    // 清除之前的定时器
+    if (parseUrlTimer) {
+      clearTimeout(parseUrlTimer)
+    }
+    
+    // 设置防抖定时器
+    parseUrlTimer = setTimeout(async () => {
+      if (isParsing) return
+      isParsing = true
+      try {
+        const result = await guildServers.resolveLink(url, editDialog.form.discordAccountId)
+        if (result.success) {
+          editDialog.form.guildId = result.guildId || editDialog.form.guildId
+          editDialog.form.channelId = result.channelId || editDialog.form.channelId
+          if (result.serverName && !editDialog.form.name) {
+            editDialog.form.name = result.serverName
+          }
+          ElMessage.success('URL 自动解析成功')
+        }
+      } catch (e) {
+        // 静默失败，不显示错误
+        console.debug('自动解析 URL 失败:', e)
+      } finally {
+        isParsing = false
+      }
+    }, 500)
+  }
+)
 
 // 同步 Dialog
 const syncDialog = reactive({
@@ -1854,30 +1897,34 @@ onUnmounted(() => {
 }
 /* Progress dialog - centered, full-height, scrollable body */
 .progress-dialog {
-  max-height: 85vh;
+  max-height: 70vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .progress-dialog :deep(.el-dialog) {
-  max-height: 85vh;
+  max-height: 70vh;
   max-width: 95vw;
   display: flex;
   flex-direction: column;
+  margin: auto;
 }
 
 .progress-dialog :deep(.el-dialog__header) {
   flex-shrink: 0;
-  padding: 16px 20px;
+  padding: 12px 20px;
 }
 
 .progress-dialog :deep(.el-dialog__body) {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 20px;
+  padding: 10px 20px;
 }
 
 .progress-dialog :deep(.el-dialog__footer) {
   flex-shrink: 0;
-  padding: 12px 20px;
+  padding: 10px 20px;
   border-top: 1px solid var(--el-border-color-lighter);
 }
 
@@ -1885,7 +1932,7 @@ onUnmounted(() => {
 @media screen and (max-width: 1200px) {
   .progress-dialog :deep(.el-dialog) {
     width: 95vw !important;
-    max-height: 90vh;
+    max-height: 75vh;
   }
   .progress-stats-enhanced {
     grid-template-columns: repeat(2, 1fr);
@@ -1895,7 +1942,7 @@ onUnmounted(() => {
 @media screen and (max-width: 768px) {
   .progress-dialog :deep(.el-dialog) {
     width: 98vw !important;
-    max-height: 95vh;
+    max-height: 80vh;
   }
   .progress-stats-enhanced {
     grid-template-columns: 1fr;

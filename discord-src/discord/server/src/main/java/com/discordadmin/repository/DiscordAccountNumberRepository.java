@@ -76,4 +76,68 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
                                                      @Param("endTime") Instant endTime,
                                                      @Param("assignedIds") List<Long> assignedIds,
                                                      Pageable pageable);
+
+    /** 按商户ID查询所有编号 */
+    Page<DiscordAccountNumber> findByMerchantId(Long merchantId, Pageable pageable);
+
+    /** 按商户ID+关键字查询 */
+    @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND " +
+           "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    Page<DiscordAccountNumber> searchByKeywordAndMerchantId(@Param("keyword") String keyword,
+                                                              @Param("merchantId") Long merchantId,
+                                                              Pageable pageable);
+
+    /** 按商户ID+关键字+时间范围查询 */
+    @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND " +
+           "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%')) AND " +
+           "n.createdAt BETWEEN :startTime AND :endTime")
+    Page<DiscordAccountNumber> searchByKeywordAndTimeRangeAndMerchantId(@Param("keyword") String keyword,
+                                                                         @Param("startTime") Instant startTime,
+                                                                         @Param("endTime") Instant endTime,
+                                                                         @Param("merchantId") Long merchantId,
+                                                                         Pageable pageable);
+
+    /** 按商户ID+时间范围查询 */
+    @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND n.createdAt BETWEEN :startTime AND :endTime")
+    Page<DiscordAccountNumber> findByTimeRangeAndMerchantId(@Param("startTime") Instant startTime,
+                                                               @Param("endTime") Instant endTime,
+                                                               @Param("merchantId") Long merchantId,
+                                                               Pageable pageable);
+
+    /** 按商户ID+编号ID范围查询（普通用户使用） */
+    @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND n.id IN :assignedIds")
+    Page<DiscordAccountNumber> findByMerchantIdAndIdIn(@Param("merchantId") Long merchantId,
+                                                        @Param("assignedIds") List<Long> assignedIds,
+                                                        Pageable pageable);
+
+    /** 按商户ID+编号ID范围+关键字查询 */
+    @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND n.id IN :assignedIds AND " +
+           "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+    Page<DiscordAccountNumber> searchByKeywordAndMerchantIdAndIdIn(@Param("keyword") String keyword,
+                                                                     @Param("merchantId") Long merchantId,
+                                                                     @Param("assignedIds") List<Long> assignedIds,
+                                                                     Pageable pageable);
+
+    /** 按商户ID+编号ID范围+关键字+时间范围查询 */
+    @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND n.id IN :assignedIds AND " +
+           "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
+           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%')) AND " +
+           "n.createdAt BETWEEN :startTime AND :endTime")
+    Page<DiscordAccountNumber> searchByKeywordAndTimeRangeAndMerchantIdAndIdIn(@Param("keyword") String keyword,
+                                                                                @Param("startTime") Instant startTime,
+                                                                                @Param("endTime") Instant endTime,
+                                                                                @Param("merchantId") Long merchantId,
+                                                                                @Param("assignedIds") List<Long> assignedIds,
+                                                                                Pageable pageable);
+
+    /** 按商户ID+编号ID范围+时间范围查询 */
+    @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND n.id IN :assignedIds AND n.createdAt BETWEEN :startTime AND :endTime")
+    Page<DiscordAccountNumber> findByTimeRangeAndMerchantIdAndIdIn(@Param("startTime") Instant startTime,
+                                                                      @Param("endTime") Instant endTime,
+                                                                      @Param("merchantId") Long merchantId,
+                                                                      @Param("assignedIds") List<Long> assignedIds,
+                                                                      Pageable pageable);
 }

@@ -66,41 +66,6 @@ public class MumuAutoAddProxyService {
         return result;
     }
 
-    public Map<String, Object> startAllAutoAdd() {
-        Map<String, Object> result = new HashMap<>();
-        try {
-            autoAddService.startAll();
-            List<EmulatorInfo> emus = emulatorService.getAllEmulators();
-            int runningCount = 0;
-            for (EmulatorInfo emu : emus) {
-                if (emu.isAutoRunning()) {
-                    runningCount++;
-                }
-            }
-            result.put("status", "SUCCESS");
-            result.put("message", "已启动 " + runningCount + "/" + emus.size() + " 个模拟器的自动加好友");
-        } catch (Exception e) {
-            log.error("启动全部自动加好友失败: {}", e.getMessage());
-            result.put("status", "ERROR");
-            result.put("message", e.getMessage());
-        }
-        return result;
-    }
-
-    public Map<String, Object> stopAllAutoAdd() {
-        Map<String, Object> result = new HashMap<>();
-        try {
-            autoAddService.stopAll();
-            result.put("status", "SUCCESS");
-            result.put("message", "全部自动加好友已停止");
-        } catch (Exception e) {
-            log.error("停止全部自动加好友失败: {}", e.getMessage());
-            result.put("status", "ERROR");
-            result.put("message", e.getMessage());
-        }
-        return result;
-    }
-
     public Map<String, Object> installDiscord(int index) {
         return mumuClientService.installDiscord(index);
     }

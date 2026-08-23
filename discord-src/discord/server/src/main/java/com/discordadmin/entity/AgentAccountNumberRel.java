@@ -16,8 +16,8 @@ public class AgentAccountNumberRel {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 用户ID */
-    @Column(name = "agent_id", nullable = false)
+    /** 用户ID（关联user表） */
+    @Column(name = "user_id", nullable = false)
     private Long agentId;
 
     /** 账号编号ID */

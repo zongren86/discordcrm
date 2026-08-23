@@ -57,6 +57,11 @@ public class GifFavoriteService {
      */
     @Transactional
     public GifFavorite addFavorite(Long accountId, String gifUrl, String title) {
+        return addFavorite(accountId, gifUrl, title, "gif");
+    }
+
+    @Transactional
+    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type) {
         // 规范化 URL
         String normalizedUrl = normalizeGifUrl(gifUrl);
         
@@ -67,7 +72,7 @@ public class GifFavoriteService {
         Optional<GifFavorite> existing = gifFavoriteRepository
                 .findByDiscordAccountIdAndGifUrlHash(accountId, urlHash);
         if (existing.isPresent()) {
-            log.info("GIF 已收藏: accountId={}, url={}", accountId, normalizedUrl);
+            log.info("已收藏: accountId={}, url={}", accountId, normalizedUrl);
             return existing.get();
         }
         
@@ -86,9 +91,10 @@ public class GifFavoriteService {
         favorite.setGifUrlHash(urlHash);
         favorite.setTitle(title);
         favorite.setSourceDomain(sourceDomain);
+        favorite.setType(type != null ? type : "gif");
         
         GifFavorite saved = gifFavoriteRepository.save(favorite);
-        log.info("GIF 收藏成功: id={}, accountId={}, url={}", saved.getId(), accountId, normalizedUrl);
+        log.info("收藏成功: id={}, accountId={}, url={}, type={}", saved.getId(), accountId, normalizedUrl, type);
         
         return saved;
     }

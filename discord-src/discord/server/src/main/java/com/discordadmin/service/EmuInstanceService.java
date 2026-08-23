@@ -199,9 +199,14 @@ public class EmuInstanceService {
                             emu.put("memoryGb", memMb / 1024);
                         }
                         // 合并自动加好友相关字段
-                        Object autoRunning = phys.get("autoRunning");
-                        if (autoRunning != null) {
-                            emu.put("autoRunning", autoRunning);
+                        // 优先使用数据库中的值（autoRunningMap）
+                        Object autoRunningFromPhys = phys.get("autoRunning");
+                        Boolean autoRunningFromDb = autoRunningMap.get(((Number) emu.get("id")).longValue());
+                        // 如果数据库中有值，优先使用数据库的值
+                        if (autoRunningFromDb != null) {
+                            emu.put("autoRunning", autoRunningFromDb);
+                        } else if (autoRunningFromPhys != null) {
+                            emu.put("autoRunning", autoRunningFromPhys);
                         }
                         Object addedCount = phys.get("addedCount");
                         if (addedCount != null) {
@@ -1099,7 +1104,7 @@ public class EmuInstanceService {
             throw new RuntimeException("Discord未在首页，请先跳转到首页");
         }
 
-        // 如果前端传了serverId，保存到实例中，供AutoAddService使用
+        // 如果前端传了serverId，保存到实例中
         if (serverId != null) {
             instance.setGuildServerId(serverId);
         }

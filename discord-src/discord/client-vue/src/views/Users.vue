@@ -35,10 +35,10 @@
         <el-table-column prop="notes" label="备注" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ row.notes || '-' }}</template>
         </el-table-column>
-        <el-table-column label="身份" width="100" align="center">
+        <el-table-column label="账号类型" width="110" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.role === 'PLATFORM_ADMIN'" type="warning" size="small" effect="light">平台</el-tag>
-            <el-tag v-else type="primary" size="small" effect="light">商户</el-tag>
+            <el-tag v-if="row.accountType === 0" type="warning" size="small" effect="light">管理员</el-tag>
+            <el-tag v-else type="primary" size="small" effect="light">普通账号</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="merchantName" label="所属商户" min-width="140">
@@ -103,19 +103,24 @@
         <el-form-item label="备注">
           <el-input v-model="createDialog.form.notes" type="textarea" :rows="2" placeholder="请输入备注" />
         </el-form-item>
-        <el-form-item v-if="!isMerchantUser" label="身份" required>
-          <el-radio-group v-model="createDialog.form.identity" @change="onCreateIdentityChange">
-            <el-radio value="PLATFORM">平台</el-radio>
-            <el-radio value="MERCHANT">商户</el-radio>
+        <el-form-item v-if="!isMerchantUser" label="账号类型" required>
+          <el-radio-group v-model="createDialog.form.accountType">
+            <el-radio :value="0">管理员</el-radio>
+            <el-radio :value="1">普通账号</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="!isMerchantUser && createDialog.form.identity === 'MERCHANT'" label="商户" required>
+        <el-form-item v-if="!isMerchantUser && createDialog.form.accountType === 1" label="商户" required>
           <el-select v-model="createDialog.form.merchantId" placeholder="请选择商户" style="width:100%" :loading="merchantsLoading">
             <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="isMerchantUser" label="身份">
-          <el-tag type="primary" size="small">商户</el-tag>
+        <el-form-item v-if="!isMerchantUser && createDialog.form.accountType === 0" label="商户">
+          <el-select v-model="createDialog.form.merchantId" placeholder="不选则为平台管理员" clearable style="width:100%" :loading="merchantsLoading">
+            <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="isMerchantUser" label="账号类型">
+          <el-tag type="primary" size="small">普通账号</el-tag>
         </el-form-item>
         <el-form-item v-if="isMerchantUser" label="商户">
           <el-tag type="primary" size="small">{{ auth.agent?.merchantName || '-' }}</el-tag>
@@ -142,19 +147,24 @@
         <el-form-item label="备注">
           <el-input v-model="editDialog.form.notes" type="textarea" :rows="2" placeholder="请输入备注" />
         </el-form-item>
-        <el-form-item v-if="!isMerchantUser" label="身份" required>
-          <el-radio-group v-model="editDialog.form.identity" @change="onEditIdentityChange">
-            <el-radio value="PLATFORM">平台</el-radio>
-            <el-radio value="MERCHANT">商户</el-radio>
+        <el-form-item v-if="!isMerchantUser" label="账号类型" required>
+          <el-radio-group v-model="editDialog.form.accountType">
+            <el-radio :value="0">管理员</el-radio>
+            <el-radio :value="1">普通账号</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="!isMerchantUser && editDialog.form.identity === 'MERCHANT'" label="商户" required>
+        <el-form-item v-if="!isMerchantUser && editDialog.form.accountType === 1" label="商户" required>
           <el-select v-model="editDialog.form.merchantId" placeholder="请选择商户" style="width:100%" :loading="merchantsLoading">
             <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="isMerchantUser" label="身份">
-          <el-tag type="primary" size="small">商户</el-tag>
+        <el-form-item v-if="!isMerchantUser && editDialog.form.accountType === 0" label="商户">
+          <el-select v-model="editDialog.form.merchantId" placeholder="不选则为平台管理员" clearable style="width:100%" :loading="merchantsLoading">
+            <el-option v-for="m in merchants" :key="m.id" :label="m.name" :value="m.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="isMerchantUser" label="账号类型">
+          <el-tag type="primary" size="small">普通账号</el-tag>
         </el-form-item>
         <el-form-item v-if="isMerchantUser" label="商户">
           <el-tag type="primary" size="small">{{ auth.agent?.merchantName || '-' }}</el-tag>
@@ -285,41 +295,13 @@ import { api, getUserAccountNumbers, batchLinkAccountNumbers, unlinkAccountNumbe
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
-const isMerchantUser = computed(() => auth.agent?.role !== 'PLATFORM_ADMIN')
+const isMerchantUser = computed(() => auth.agent?.accountType !== 0)
 
 const list = ref([])
 const loading = ref(false)
 const merchants = ref([])
 const merchantsLoading = ref(false)
 const customRoles = ref([])
-
-const platformRoles = [
-  { value: 'PLATFORM_ADMIN', label: '平台管理员' }
-]
-
-const merchantRoles = [
-  { value: 'MERCHANT_ADMIN', label: '商户管理员' },
-  { value: 'MANAGER', label: '主管' },
-  { value: 'SALES', label: '销售' },
-  { value: 'SERVICE', label: '客服' }
-]
-
-function roleLabel(role) {
-  const all = [...platformRoles, ...merchantRoles]
-  const item = all.find(r => r.value === role)
-  return item ? item.label : (role || '-')
-}
-
-function roleTagType(role) {
-  const map = {
-    PLATFORM_ADMIN: 'danger',
-    MERCHANT_ADMIN: 'warning',
-    MANAGER: 'primary',
-    SALES: 'success',
-    SERVICE: 'info'
-  }
-  return map[role] || 'info'
-}
 
 function getRoleName(id) {
   if (!id) return ''
@@ -367,16 +349,10 @@ const createDialog = reactive({
     password: '',
     email: '',
     notes: '',
-    identity: 'MERCHANT',
+    accountType: 1,
     merchantId: null
   }
 })
-
-function onCreateIdentityChange(val) {
-  if (val === 'PLATFORM') {
-    createDialog.form.merchantId = null
-  }
-}
 
 function openCreate() {
   createDialog.visible = true
@@ -387,7 +363,7 @@ function openCreate() {
       password: '',
       email: '',
       notes: '',
-      identity: 'MERCHANT',
+      accountType: 1,
       merchantId: auth.agent?.merchantId || null
     }
   } else {
@@ -397,7 +373,7 @@ function openCreate() {
       password: '',
       email: '',
       notes: '',
-      identity: 'MERCHANT',
+      accountType: 1,
       merchantId: null
     }
   }
@@ -411,7 +387,7 @@ function resetCreateDialog() {
       password: '',
       email: '',
       notes: '',
-      identity: 'MERCHANT',
+      accountType: 1,
       merchantId: auth.agent?.merchantId || null
     }
   } else {
@@ -421,7 +397,7 @@ function resetCreateDialog() {
       password: '',
       email: '',
       notes: '',
-      identity: 'MERCHANT',
+      accountType: 1,
       merchantId: null
     }
   }
@@ -432,7 +408,7 @@ async function saveCreate() {
   if (!createDialog.form.username) { ElMessage.warning('请输入登录账号'); return }
   if (!createDialog.form.displayName) { ElMessage.warning('请输入姓名'); return }
   if (!createDialog.form.password) { ElMessage.warning('请输入密码'); return }
-  if (!isMerchantUser.value && createDialog.form.identity === 'MERCHANT' && !createDialog.form.merchantId) {
+  if (!isMerchantUser.value && createDialog.form.accountType === 1 && !createDialog.form.merchantId) {
     ElMessage.warning('请选择商户'); return
   }
   createDialog.saving = true
@@ -443,12 +419,12 @@ async function saveCreate() {
       password: createDialog.form.password,
       email: createDialog.form.email,
       notes: createDialog.form.notes,
-      role: createDialog.form.identity === 'PLATFORM' ? 'PLATFORM_ADMIN' : 'MERCHANT_ADMIN',
+      accountType: createDialog.form.accountType,
       roleIds: []
     }
     if (isMerchantUser.value) {
       payload.merchantId = auth.agent?.merchantId
-    } else if (createDialog.form.identity === 'MERCHANT') {
+    } else if (createDialog.form.accountType === 1) {
       payload.merchantId = createDialog.form.merchantId
     }
     await api.post('/users', payload)
@@ -467,28 +443,21 @@ const editDialog = reactive({
     displayName: '',
     email: '',
     notes: '',
-    identity: 'MERCHANT',
+    accountType: 1,
     merchantId: null,
     enabled: true
   }
 })
 
-function onEditIdentityChange(val) {
-  if (val === 'PLATFORM') {
-    editDialog.form.merchantId = null
-  }
-}
-
 function openEdit(row) {
   editDialog.visible = true
   editDialog.editId = row.id
-  const isPlatform = row.role === 'PLATFORM_ADMIN'
   editDialog.form = {
     username: row.username || '',
     displayName: row.displayName || '',
     email: row.email || '',
     notes: row.notes || '',
-    identity: isPlatform ? 'PLATFORM' : 'MERCHANT',
+    accountType: row.accountType != null ? row.accountType : 1,
     merchantId: row.merchantId || null,
     enabled: row.enabled !== false
   }
@@ -496,13 +465,13 @@ function openEdit(row) {
 
 function resetEditDialog() {
   editDialog.editId = null
-  editDialog.form = { username: '', displayName: '', email: '', notes: '', identity: 'MERCHANT', merchantId: null, enabled: true }
+  editDialog.form = { username: '', displayName: '', email: '', notes: '', accountType: 1, merchantId: null, enabled: true }
   editDialog.saving = false
 }
 
 async function saveEdit() {
   if (!editDialog.form.displayName) { ElMessage.warning('请输入姓名'); return }
-  if (!isMerchantUser.value && editDialog.form.identity === 'MERCHANT' && !editDialog.form.merchantId) {
+  if (!isMerchantUser.value && editDialog.form.accountType === 1 && !editDialog.form.merchantId) {
     ElMessage.warning('请选择商户'); return
   }
   editDialog.saving = true
@@ -511,11 +480,12 @@ async function saveEdit() {
       displayName: editDialog.form.displayName,
       email: editDialog.form.email,
       notes: editDialog.form.notes,
+      accountType: editDialog.form.accountType,
       enabled: editDialog.form.enabled
     }
     if (isMerchantUser.value) {
       payload.merchantId = auth.agent?.merchantId
-    } else if (editDialog.form.identity === 'MERCHANT') {
+    } else if (editDialog.form.accountType === 1) {
       payload.merchantId = editDialog.form.merchantId
     }
     await api.put(`/users/${editDialog.editId}`, payload)
@@ -574,18 +544,18 @@ const assignRolesDialog = reactive({
   username: '',
   selectedRoleIds: [],
   saving: false,
-  targetRole: '',
+  targetAccountType: 1,
   targetMerchantId: null
 })
 
 const availableRoles = computed(() => {
-  const targetRole = assignRolesDialog.targetRole
+  const targetAccountType = assignRolesDialog.targetAccountType
   const targetMerchantId = assignRolesDialog.targetMerchantId
   
   return customRoles.value.filter(role => {
     if (assignRolesDialog.selectedRoleIds.includes(role.id)) return false
     
-    if (targetRole === 'PLATFORM_ADMIN') {
+    if (targetAccountType === 0) {
       return role.roleType === 'PLATFORM'
     } else {
       if (role.roleType === 'PLATFORM') return false
@@ -603,7 +573,7 @@ function openAssignRoles(row) {
   assignRolesDialog.userId = row.id
   assignRolesDialog.username = row.displayName || row.username || ''
   assignRolesDialog.selectedRoleIds = [...(row.roleIds || [])]
-  assignRolesDialog.targetRole = row.role || ''
+  assignRolesDialog.targetAccountType = row.accountType != null ? row.accountType : 1
   assignRolesDialog.targetMerchantId = row.merchantId || null
 }
 
@@ -612,7 +582,7 @@ function resetAssignRolesDialog() {
   assignRolesDialog.username = ''
   assignRolesDialog.selectedRoleIds = []
   assignRolesDialog.saving = false
-  assignRolesDialog.targetRole = ''
+  assignRolesDialog.targetAccountType = 1
   assignRolesDialog.targetMerchantId = null
 }
 

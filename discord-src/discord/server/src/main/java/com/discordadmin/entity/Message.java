@@ -33,6 +33,7 @@ public class Message {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "conversation_id", nullable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Conversation conversation;
 
     @Column(name = "discord_message_id", length = 32)
@@ -50,6 +51,7 @@ public class Message {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "sender_agent_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Agent senderAgent;
 
     @Column(name = "content", columnDefinition = "TEXT")
@@ -86,6 +88,10 @@ public class Message {
 
     @Column(name = "attachments_json", columnDefinition = "TEXT")
     private String attachmentsJson;
+
+    /** Sticker items JSON array，包含 sticker 的 id、name、format_type 等信息 */
+    @Column(name = "sticker_items_json", columnDefinition = "TEXT")
+    private String stickerItemsJson;
 
     /** 语音转文字(ASR)的原文：语音识别后的原始文字，用于前端"查看原文" */
     @Column(name = "asr_text", columnDefinition = "TEXT")

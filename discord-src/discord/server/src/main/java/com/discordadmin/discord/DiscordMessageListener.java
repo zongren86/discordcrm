@@ -1,7 +1,9 @@
 package com.discordadmin.discord;
 
 import com.discordadmin.service.ConversationService;
+import net.dv8tion.jda.api.entities.Message;
 import net.dv8tion.jda.api.entities.Message.Attachment;
+import net.dv8tion.jda.api.entities.sticker.StickerItem;
 import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import org.slf4j.Logger;
@@ -11,6 +13,7 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Base64;
+import java.util.List;
 import java.util.stream.Collectors;
 
 /**
@@ -39,11 +42,15 @@ public class DiscordMessageListener extends ListenerAdapter {
         var attachments = event.getMessage().getAttachments();
         String attachmentsJson = attachments.isEmpty()
                 ? null
-                : attachments.stream()
-                        .map(a -> a.getFileName() + "(" + (a.getContentType() == null ? "no-mime" : a.getContentType()) + "," + a.getSize() + "B)")
-                        .collect(Collectors.joining(", "));
+                : buildAttachmentsJson(attachments);
 
-        log.info("[DISCORD MSG IN] accountId={} discordMsgId={} isDM={} authorId={} author={} channelId={} attachments=[{}] contentPreview={}",
+        // 提取 sticker items
+        List<StickerItem> stickers = event.getMessage().getStickers();
+        String stickerItemsJson = stickers.isEmpty()
+                ? null
+                : buildStickerItemsJson(stickers);
+
+        log.info("[DISCORD MSG IN] accountId={} discordMsgId={} isDM={} authorId={} author={} channelId={} attachments=[{}] stickers=[{}] contentPreview={}",
                 accountId,
                 event.getMessageId(),
                 !event.isFromGuild(),
@@ -51,6 +58,7 @@ public class DiscordMessageListener extends ListenerAdapter {
                 event.getAuthor().getName(),
                 event.getChannel().getId(),
                 attachmentsJson == null ? "" : attachmentsJson,
+                stickerItemsJson == null ? "" : stickerItemsJson,
                 truncate(event.getMessage().getContentDisplay(), 120));
 
         String messageType = "text";
@@ -58,7 +66,29 @@ public class DiscordMessageListener extends ListenerAdapter {
         String audioMimeType = null;
         Integer audioDuration = null;
         String audioData = null;
+        String gifUrl = null;
         String content = event.getMessage().getContentDisplay();
+
+        // 如果有 sticker，设置 messageType 为 "sticker"
+        if (!stickers.isEmpty()) {
+            messageType = "sticker";
+            // 如果 content 为空，使用 sticker name 作为展示文本
+            if (content == null || content.isBlank()) {
+                content = "[Sticker: " + stickers.get(0).getName() + "]";
+            }
+        }
+
+        // 检测 URL 形式的 GIF/图片/视频消息
+        if ("text".equals(messageType) && content != null && !content.isBlank()) {
+            String trimmedContent = content.trim();
+            if (trimmedContent.matches("^https?://\\S+$")) {
+                if (isGifOrMediaUrl(trimmedContent)) {
+                    messageType = "gif";
+                    gifUrl = trimmedContent;
+                    log.debug("[DISCORD GIF] 检测到URL形式的GIF/媒体消息: accountId={}, url={}", accountId, trimmedContent);
+                }
+            }
+        }
 
         // 检测语音附件（Discord 语音消息通过 attachment 上传，文件名以 "voice-message" 开头）
         if (!attachments.isEmpty()) {
@@ -112,7 +142,9 @@ public class DiscordMessageListener extends ListenerAdapter {
                 audioUrl,
                 audioMimeType,
                 audioDuration,
-                audioData
+                audioData,
+                stickerItemsJson,
+                gifUrl
         );
 
         try {
@@ -176,5 +208,87 @@ public class DiscordMessageListener extends ListenerAdapter {
             log.warn("下载音频数据失败: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 构建附件 JSON 数组，包含 url、contentType、filename
+     */
+    private String buildAttachmentsJson(java.util.List<Attachment> attachments) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        for (Attachment a : attachments) {
+            if (!first) sb.append(",");
+            first = false;
+            sb.append("{");
+            sb.append("\"url\":\"").append(escapeJson(a.getUrl())).append("\",");
+            sb.append("\"contentType\":\"").append(escapeJson(a.getContentType())).append("\",");
+            sb.append("\"filename\":\"").append(escapeJson(a.getFileName())).append("\",");
+            sb.append("\"size\":").append(a.getSize());
+            sb.append("}");
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    /**
+     * 构建 Sticker Items JSON 数组，包含 id、name、formatType、assetUrl 等信息
+     */
+    private String buildStickerItemsJson(List<StickerItem> stickers) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        for (StickerItem s : stickers) {
+            if (!first) sb.append(",");
+            first = false;
+            // 构建 assetUrl: https://cdn.discordapp.com/stickers/{id}.{extension}
+            // StickerFormat: 1=PNG(.png), 2=APNG(.png), 3=LOTTIE(.json), 4=GIF(.gif)
+            String assetUrl;
+            try {
+                assetUrl = "https://cdn.discordapp.com/stickers/" + s.getId() + "." + s.getFormatType().getExtension();
+            } catch (Exception e) {
+                assetUrl = "";
+            }
+            sb.append("{");
+            sb.append("\"id\":\"").append(escapeJson(s.getId())).append("\",");
+            sb.append("\"name\":\"").append(escapeJson(s.getName())).append("\",");
+            sb.append("\"formatType\":").append(s.getFormatType().ordinal() + 1).append(",");
+            sb.append("\"assetUrl\":\"").append(escapeJson(assetUrl)).append("\"");
+            sb.append("}");
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    /**
+     * JSON 字符串转义
+     */
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    /**
+     * 检测 URL 是否指向 GIF/图片/视频资源
+     * 识别常见的图片/视频扩展名和主流媒体域名
+     */
+    private boolean isGifOrMediaUrl(String url) {
+        if (url == null || url.isBlank()) return false;
+        String lowerUrl = url.toLowerCase();
+        
+        // 检查常见的图片/视频扩展名
+        if (lowerUrl.matches(".*\\.(gif|webp|mp4|webm|mov|png|jpg|jpeg|bmp|svg)(\\?|#|$).*")) {
+            return true;
+        }
+        
+        // 检查主流媒体/分享站点域名
+        return lowerUrl.contains("gif") 
+            || lowerUrl.contains("imgur") 
+            || lowerUrl.contains("tenor") 
+            || lowerUrl.contains("giphy") 
+            || lowerUrl.contains("klipy")
+            || lowerUrl.contains("cdn.discordapp.com");
     }
 }

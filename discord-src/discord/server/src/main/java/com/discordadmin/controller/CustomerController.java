@@ -71,7 +71,7 @@ public class CustomerController {
             @RequestParam(required = false) Long accountId) {
         Long merchantId = SecurityUtils.currentMerchantId();
         boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
-        boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(SecurityUtils.currentRole());
+        boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
         List<Conversation> convs;
@@ -170,7 +170,7 @@ public class CustomerController {
     public List<Map<String, Object>> listAccounts() {
         Long merchantId = SecurityUtils.currentMerchantId();
         boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
-        boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(SecurityUtils.currentRole());
+        boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
         List<DiscordAccount> accounts;

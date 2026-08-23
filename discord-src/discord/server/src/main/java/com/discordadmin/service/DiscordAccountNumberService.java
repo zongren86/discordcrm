@@ -44,13 +44,24 @@ public class DiscordAccountNumberService {
 
     /** 分页查询账号编号列表 */
     public Map<String, Object> list(String keyword, Instant startTime, Instant endTime, int page, int size) {
-        String role = SecurityUtils.currentRole();
+        boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
+        boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
-        boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role);
-        boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(role);
+        Long merchantId = SecurityUtils.currentMerchantId();
 
-        // 普通用户：只能看到分配给自己的编号（使用SQL分页，避免内存全表扫描）
-        if (!isPlatformAdmin && !isMerchantAdmin && currentAgentId != null) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
+        Page<DiscordAccountNumber> pageResult;
+
+        // 平台管理员：可以查看所有商户的编号
+        if (isPlatformAdmin) {
+            pageResult = queryAll(keyword, startTime, endTime, pageable);
+        }
+        // 商户管理员：只能看到本商户的编号
+        else if (isMerchantAdmin && merchantId != null) {
+            pageResult = queryByMerchant(keyword, startTime, endTime, merchantId, pageable);
+        }
+        // 普通用户：只能看到分配给自己的编号（且必须属于本商户）
+        else if (currentAgentId != null && merchantId != null) {
             List<Long> assignedNumberIds = relRepository.findAccountNumberIdsByAgentId(currentAgentId);
             Map<String, Object> empty = new HashMap<>();
             empty.put("content", List.of());
@@ -61,39 +72,17 @@ public class DiscordAccountNumberService {
             if (assignedNumberIds.isEmpty()) {
                 return empty;
             }
-
-            Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
-            Page<DiscordAccountNumber> pageResult;
-            if (keyword != null && !keyword.trim().isEmpty() && startTime != null && endTime != null) {
-                pageResult = accountNumberRepository.searchByKeywordAndTimeRangeInIds(keyword, startTime, endTime, assignedNumberIds, pageable);
-            } else if (keyword != null && !keyword.trim().isEmpty()) {
-                pageResult = accountNumberRepository.searchByKeywordInIds(keyword, assignedNumberIds, pageable);
-            } else if (startTime != null && endTime != null) {
-                pageResult = accountNumberRepository.findByTimeRangeInIds(startTime, endTime, assignedNumberIds, pageable);
-            } else {
-                pageResult = accountNumberRepository.findByIdIn(assignedNumberIds, pageable);
-            }
-
-            Map<String, Object> result = new HashMap<>();
-            result.put("content", convertToDTOList(pageResult.getContent()));
-            result.put("totalElements", pageResult.getTotalElements());
-            result.put("totalPages", pageResult.getTotalPages());
-            result.put("number", pageResult.getNumber());
-            result.put("size", pageResult.getSize());
-            return result;
+            pageResult = queryByMerchantAndIds(keyword, startTime, endTime, merchantId, assignedNumberIds, pageable);
         }
-
-        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "id"));
-        Page<DiscordAccountNumber> pageResult;
-
-        if (keyword != null && !keyword.trim().isEmpty() && startTime != null && endTime != null) {
-            pageResult = accountNumberRepository.searchByKeywordAndTimeRange(keyword, startTime, endTime, pageable);
-        } else if (keyword != null && !keyword.trim().isEmpty()) {
-            pageResult = accountNumberRepository.searchByKeyword(keyword, pageable);
-        } else if (startTime != null && endTime != null) {
-            pageResult = accountNumberRepository.findByTimeRange(startTime, endTime, pageable);
-        } else {
-            pageResult = accountNumberRepository.findAll(pageable);
+        // 没有权限的用户返回空
+        else {
+            Map<String, Object> empty = new HashMap<>();
+            empty.put("content", List.of());
+            empty.put("totalElements", 0);
+            empty.put("totalPages", 0);
+            empty.put("number", 0);
+            empty.put("size", size);
+            return empty;
         }
 
         Map<String, Object> result = new HashMap<>();
@@ -103,6 +92,43 @@ public class DiscordAccountNumberService {
         result.put("number", pageResult.getNumber());
         result.put("size", pageResult.getSize());
         return result;
+    }
+
+    /** 平台管理员：查询所有编号 */
+    private Page<DiscordAccountNumber> queryAll(String keyword, Instant startTime, Instant endTime, Pageable pageable) {
+        if (keyword != null && !keyword.trim().isEmpty() && startTime != null && endTime != null) {
+            return accountNumberRepository.searchByKeywordAndTimeRange(keyword, startTime, endTime, pageable);
+        } else if (keyword != null && !keyword.trim().isEmpty()) {
+            return accountNumberRepository.searchByKeyword(keyword, pageable);
+        } else if (startTime != null && endTime != null) {
+            return accountNumberRepository.findByTimeRange(startTime, endTime, pageable);
+        }
+        return accountNumberRepository.findAll(pageable);
+    }
+
+    /** 商户管理员：查询本商户的编号 */
+    private Page<DiscordAccountNumber> queryByMerchant(String keyword, Instant startTime, Instant endTime, Long merchantId, Pageable pageable) {
+        if (keyword != null && !keyword.trim().isEmpty() && startTime != null && endTime != null) {
+            return accountNumberRepository.searchByKeywordAndTimeRangeAndMerchantId(keyword, startTime, endTime, merchantId, pageable);
+        } else if (keyword != null && !keyword.trim().isEmpty()) {
+            return accountNumberRepository.searchByKeywordAndMerchantId(keyword, merchantId, pageable);
+        } else if (startTime != null && endTime != null) {
+            return accountNumberRepository.findByTimeRangeAndMerchantId(startTime, endTime, merchantId, pageable);
+        }
+        return accountNumberRepository.findByMerchantId(merchantId, pageable);
+    }
+
+    /** 普通用户：查询本商户+分配给我的编号 */
+    private Page<DiscordAccountNumber> queryByMerchantAndIds(String keyword, Instant startTime, Instant endTime,
+                                                              Long merchantId, List<Long> assignedIds, Pageable pageable) {
+        if (keyword != null && !keyword.trim().isEmpty() && startTime != null && endTime != null) {
+            return accountNumberRepository.searchByKeywordAndTimeRangeAndMerchantIdAndIdIn(keyword, startTime, endTime, merchantId, assignedIds, pageable);
+        } else if (keyword != null && !keyword.trim().isEmpty()) {
+            return accountNumberRepository.searchByKeywordAndMerchantIdAndIdIn(keyword, merchantId, assignedIds, pageable);
+        } else if (startTime != null && endTime != null) {
+            return accountNumberRepository.findByTimeRangeAndMerchantIdAndIdIn(startTime, endTime, merchantId, assignedIds, pageable);
+        }
+        return accountNumberRepository.findByMerchantIdAndIdIn(merchantId, assignedIds, pageable);
     }
 
     private List<Map<String, Object>> convertToDTOList(List<DiscordAccountNumber> numbers) {
@@ -137,6 +163,7 @@ public class DiscordAccountNumberService {
     @Transactional
     public List<DiscordAccountNumber> batchCreate(List<String> accounts) {
         Long agentId = SecurityUtils.currentAgentId();
+        Long merchantId = SecurityUtils.currentMerchantId();
         Agent currentUser = agentId != null ? agentRepository.findById(agentId)
                 .orElseThrow(() -> new IllegalArgumentException("当前用户不存在")) : null;
         String creatorName = currentUser != null && currentUser.getDisplayName() != null ? currentUser.getDisplayName() : (currentUser != null ? currentUser.getUsername() : "系统");
@@ -147,6 +174,7 @@ public class DiscordAccountNumberService {
             if (!account.isEmpty()) {
                 DiscordAccountNumber num = new DiscordAccountNumber();
                 num.setBoundAccount(account);
+                num.setMerchantId(merchantId);  // 设置商户ID
                 num.setCreatorId(currentUser != null ? currentUser.getId() : null);
                 num.setCreatorName(creatorName);
                 numbers.add(num);
@@ -156,10 +184,8 @@ public class DiscordAccountNumberService {
 
         // 自动关联创建者（普通用户）：确保创建后能在自己的列表中看到
         if (currentUser != null) {
-            String role = SecurityUtils.currentRole();
-            boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role);
-            boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(role);
-            if (!isPlatformAdmin && !isMerchantAdmin) {
+            boolean isAdmin = SecurityUtils.isAdmin();
+            if (!isAdmin) {
                 Instant now = Instant.now();
                 List<com.discordadmin.entity.AgentAccountNumberRel> rels = new ArrayList<>();
                 for (DiscordAccountNumber n : saved) {
@@ -180,6 +206,7 @@ public class DiscordAccountNumberService {
     @Transactional
     public List<DiscordAccountNumber> generate(int quantity) {
         Long agentId = SecurityUtils.currentAgentId();
+        Long merchantId = SecurityUtils.currentMerchantId();
         Agent currentUser = agentId != null ? agentRepository.findById(agentId)
                 .orElseThrow(() -> new IllegalArgumentException("当前用户不存在")) : null;
         String creatorName = currentUser != null && currentUser.getDisplayName() != null ? currentUser.getDisplayName() : (currentUser != null ? currentUser.getUsername() : "系统");
@@ -188,6 +215,7 @@ public class DiscordAccountNumberService {
         for (int i = 0; i < quantity; i++) {
             DiscordAccountNumber num = new DiscordAccountNumber();
             num.setBoundAccount(null);
+            num.setMerchantId(merchantId);  // 设置商户ID
             num.setCreatorId(currentUser != null ? currentUser.getId() : null);
             num.setCreatorName(creatorName);
             numbers.add(num);
@@ -196,10 +224,8 @@ public class DiscordAccountNumberService {
 
         // 自动关联创建者（普通用户）：确保创建后能在自己的列表中看到
         if (currentUser != null) {
-            String role = SecurityUtils.currentRole();
-            boolean isPlatformAdmin = "PLATFORM_ADMIN".equals(role);
-            boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(role);
-            if (!isPlatformAdmin && !isMerchantAdmin) {
+            boolean isAdmin = SecurityUtils.isAdmin();
+            if (!isAdmin) {
                 Instant now = Instant.now();
                 List<com.discordadmin.entity.AgentAccountNumberRel> rels = new ArrayList<>();
                 for (DiscordAccountNumber n : saved) {
@@ -291,8 +317,45 @@ public class DiscordAccountNumberService {
                 .collect(Collectors.toList());
     }
 
+    /** 校验当前用户是否有权访问指定编号 */
+    private void checkAccess(Long numberId) {
+        DiscordAccountNumber num = accountNumberRepository.findById(numberId)
+                .orElseThrow(() -> new IllegalArgumentException("账号编号不存在"));
+        
+        Long merchantId = SecurityUtils.currentMerchantId();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
+        // 平台管理员可以访问所有编号
+        if (SecurityUtils.isPlatformAdmin()) {
+            return;
+        }
+
+        // 商户管理员只能访问本商户的编号
+        if (SecurityUtils.isMerchantAdmin()) {
+            if (merchantId != null && merchantId.equals(num.getMerchantId())) {
+                return;
+            }
+            throw new org.springframework.security.access.AccessDeniedException("无权访问该编号");
+        }
+
+        // 普通用户：只能访问本商户+分配给自己的编号
+        if (currentAgentId != null && merchantId != null) {
+            // 检查是否属于本商户
+            if (!merchantId.equals(num.getMerchantId())) {
+                throw new org.springframework.security.access.AccessDeniedException("无权访问该编号");
+            }
+            // 检查是否分配给自己
+            List<Long> assignedNumberIds = relRepository.findAccountNumberIdsByAgentId(currentAgentId);
+            if (assignedNumberIds.contains(numberId)) {
+                return;
+            }
+        }
+        throw new org.springframework.security.access.AccessDeniedException("无权访问该编号");
+    }
+
     /** 根据ID查询 */
     public DiscordAccountNumber findById(Long id) {
+        checkAccess(id);
         return accountNumberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("账号编号不存在"));
     }
@@ -300,6 +363,7 @@ public class DiscordAccountNumberService {
     /** 解绑账号（清除绑定的DiscordAccount，保留编号记录） */
     @Transactional
     public DiscordAccountNumber unbindAccount(Long id) {
+        checkAccess(id);
         DiscordAccountNumber num = accountNumberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("账号编号不存在"));
         
@@ -331,6 +395,7 @@ public class DiscordAccountNumberService {
     /** 删除账号编号 */
     @Transactional
     public void deleteAccountNumber(Long id) {
+        checkAccess(id);
         DiscordAccountNumber num = accountNumberRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("账号编号不存在"));
         accountNumberRepository.delete(num);

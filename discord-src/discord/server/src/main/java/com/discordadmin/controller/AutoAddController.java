@@ -27,16 +27,4 @@ public class AutoAddController {
         Map<String, Object> res = proxyService.stopAutoAdd(index);
         return ResponseEntity.ok(res);
     }
-
-    @PostMapping("/startAll")
-    public ResponseEntity<Map<String, Object>> startAll() {
-        Map<String, Object> res = proxyService.startAllAutoAdd();
-        return ResponseEntity.ok(res);
-    }
-
-    @PostMapping("/stopAll")
-    public ResponseEntity<Map<String, Object>> stopAll() {
-        Map<String, Object> res = proxyService.stopAllAutoAdd();
-        return ResponseEntity.ok(res);
-    }
 }

@@ -73,9 +73,9 @@ public class UserMessagePoller {
     private final AtomicInteger pollCursor = new AtomicInteger(0);
 
     // 熔断参数（放宽以避免网络抖动导致长时间跳过）
-    private static final int FAIL_THRESHOLD = 8;        // 连续8次失败才触发熔断
-    private static final long COOLDOWN_MS = 5_000;       // 初始冷却5秒
-    private static final long COOLDOWN_STEP_MS = 2_000;  // 每次递增2秒
+    private static final int FAIL_THRESHOLD = 4;        // 连续4次失败才触发熔断
+    private static final long COOLDOWN_MS = 3_000;       // 初始冷却3秒
+    private static final long COOLDOWN_STEP_MS = 1_000;  // 每次递增1秒
     private static final long TRANSLATE_WINDOW_MS = 7L * 24 * 60 * 60 * 1000; // 7天自动翻译窗口
 
     // 任务超时10秒（匹配HTTP 8s + 重试+缓冲）
@@ -107,6 +107,14 @@ public class UserMessagePoller {
 
     /** Token过期账号ID缓存（10分钟内不再尝试） */
     private final Map<Long, Long> tokenExpiredAccountCooldown = new ConcurrentHashMap<>();
+
+    /**
+     * 清除指定账号的Token过期冷却缓存（用于Token续期后立即恢复轮询）
+     */
+    public void clearTokenExpired(Long accountId) {
+        tokenExpiredAccountCooldown.remove(accountId);
+        log.info("账号[id={}] Token过期缓存已清除", accountId);
+    }
 
     @PostConstruct
     public void init() {
@@ -143,14 +151,26 @@ public class UserMessagePoller {
             return;
         }
 
-        // 非阻塞：DM频道同步在独立线程执行，不阻塞消息轮询
-        for (DiscordAccount account : userAccounts) {
-            // Token过期账号跳过DM同步
-            Long tokenExpireUntil = tokenExpiredAccountCooldown.get(account.getId());
-            if (tokenExpireUntil != null && now < tokenExpireUntil) {
-                continue;
-            }
+        // 过滤出 Token 有效的账号（跳过已过期的账号）
+        List<DiscordAccount> validAccounts = userAccounts.stream()
+                .filter(a -> {
+                    // 检查 token_valid 字段（数据库标记）
+                    if (Boolean.FALSE.equals(a.getTokenValid())) {
+                        return false;
+                    }
+                    // 检查内存中的过期缓存（10分钟内不再尝试）
+                    Long expireUntil = tokenExpiredAccountCooldown.get(a.getId());
+                    return expireUntil == null || now >= expireUntil;
+                })
+                .toList();
 
+        if (validAccounts.isEmpty()) {
+            log.debug("所有 USER 账号 Token 均已过期，跳过本次轮询");
+            return;
+        }
+
+        // 非阻塞：DM频道同步在独立线程执行，不阻塞消息轮询
+        for (DiscordAccount account : validAccounts) {
             Long lastSync = lastSyncDmTimeByAccount.get(account.getId());
             boolean needSyncDm = lastSync == null || (now - lastSync) > 30_000;
 
@@ -173,11 +193,11 @@ public class UserMessagePoller {
             }
         }
 
-        // 收集所有活跃会话（扁平化列表，便于分批轮询）
+        // 收集所有活跃会话（只收集 Token 有效账号的会话）
         List<Conversation> allConversations = new ArrayList<>();
         Map<Long, DiscordAccount> convAccountMap = new HashMap<>();
 
-        for (DiscordAccount account : userAccounts) {
+        for (DiscordAccount account : validAccounts) {
             try {
                 List<Conversation> conversations = conversationRepository
                         .findByDiscordAccountAndType(account, Conversation.ConversationType.DM);
@@ -200,6 +220,7 @@ public class UserMessagePoller {
         int startIdx = pollCursor.get();
         List<Conversation> batch = new ArrayList<>();
         int visitedCount = 0;  // 实际遍历的会话数
+        boolean allSkippedByBreaker = true;  // 是否所有会话都被熔断跳过
 
         for (int i = 0; i < totalConversations && batch.size() < MAX_BATCH_SIZE; i++) {
             int idx = (startIdx + i) % totalConversations;
@@ -212,29 +233,58 @@ public class UserMessagePoller {
                 skippedByCircuitBreaker++;
                 continue;
             }
-
-            // 注：不再使用lastMessageId缓存跳过会话
-            // 因为新消息可能在处理完后才到达，缓存会导致新消息被遗漏
-            // pollOneConversation内部会做增量拉取（使用after参数），无需跳过
-
+            allSkippedByBreaker = false;
             batch.add(conv);
+        }
+
+        // 如果所有会话都被熔断跳过，强制提交一个会话进行恢复探测
+        if (allSkippedByBreaker && !allConversations.isEmpty()) {
+            // 选择冷却时间最远已过期的会话
+            Conversation probeConv = null;
+            long oldestCooldownEnd = Long.MAX_VALUE;
+            for (Conversation conv : allConversations) {
+                Long cd = conversationCooldownUntil.get(conv.getId());
+                if (cd == null || cd <= now) {
+                    // 冷却已过期或没有冷却
+                    if (cd != null && cd < oldestCooldownEnd) {
+                        oldestCooldownEnd = cd;
+                        probeConv = conv;
+                    } else if (cd == null && probeConv == null) {
+                        probeConv = conv;
+                    }
+                }
+            }
+            // 如果没有冷却过期的，强制恢复最早进入冷却的（按冷却时间一半计算）
+            if (probeConv == null) {
+                long earliestCooldown = Long.MAX_VALUE;
+                for (Conversation conv : allConversations) {
+                    Long cd = conversationCooldownUntil.get(conv.getId());
+                    if (cd != null && cd < earliestCooldown) {
+                        earliestCooldown = cd;
+                        probeConv = conv;
+                    }
+                }
+                if (probeConv != null) {
+                    // 强制清除冷却，允许这次探测
+                    conversationCooldownUntil.remove(probeConv.getId());
+                    log.info("强制恢复探测（清除冷却）: convId={}", probeConv.getId());
+                }
+            } else {
+                log.info("所有会话都在熔断冷却中，强制恢复探测: convId={}", probeConv.getId());
+            }
+            if (probeConv != null) {
+                batch.clear();
+                batch.add(probeConv);
+            }
         }
 
         // 根据实际遍历的会话数更新游标（确保每个会话都能被轮询到）
         pollCursor.set((startIdx + Math.max(visitedCount, 1)) % totalConversations);
 
-        // 提交批次到线程池
-        long nowMs = System.currentTimeMillis();
+        // 提交批次到线程池（此时所有会话都来自 Token 有效账号，无需再检查）
         for (Conversation conv : batch) {
             DiscordAccount account = convAccountMap.get(conv.getId());
             if (account == null) continue;
-
-            // Token过期账号跳过（10分钟内不再尝试，避免反复触发熔断）
-            Long tokenExpireUntil = tokenExpiredAccountCooldown.get(account.getId());
-            if (tokenExpireUntil != null && nowMs < tokenExpireUntil) {
-                log.debug("账号[{}] Token已过期，跳过会话[convId={}]", account.getName(), conv.getId());
-                continue;
-            }
 
             submitted++;
             CompletableFuture.runAsync(() -> {
@@ -342,10 +392,11 @@ public class UserMessagePoller {
         } catch (DiscordUserClient.DiscordUserApiException e) {
             if (e.statusCode == 401) {
                 account.setLastError("Token 已过期，请用 Chrome 插件重新导入 Token 续期");
+                account.setTokenValid(false);  // 标记Token失效，持久化到数据库
                 accountRepository.save(account);
                 // 标记账号Token过期，10分钟内不再尝试
                 tokenExpiredAccountCooldown.put(account.getId(), System.currentTimeMillis() + 10 * 60 * 1000L);
-                log.warn("账号[{}](id={}) Token 已过期（同步DM频道失败），已标记为10分钟内跳过", account.getName(), account.getId());
+                log.warn("账号[{}](id={}) Token 已过期（同步DM频道失败），已标记为失效", account.getName(), account.getId());
             }
             log.warn("同步DM频道 API 失败: account={} status={} err={}", account.getName(), e.statusCode, e.getMessage());
             return 0;
@@ -463,13 +514,14 @@ public class UserMessagePoller {
         } catch (DiscordUserClient.DiscordUserApiException e) {
             if (e.statusCode == 401) {
                 account.setLastError("Token 已过期，请用 Chrome 插件重新导入 Token 续期");
+                account.setTokenValid(false);  // 标记Token失效，持久化到数据库
                 transactionTemplate.execute(status -> {
                     accountRepository.save(account);
                     return null;
                 });
                 // 标记账号Token过期，10分钟内不再尝试（避免反复触发熔断）
                 tokenExpiredAccountCooldown.put(account.getId(), System.currentTimeMillis() + 10 * 60 * 1000L);
-                log.warn("账号[{}](id={}) Token 已过期，已标记为10分钟内跳过", account.getName(), account.getId());
+                log.warn("账号[{}](id={}) Token 已过期，已标记为失效", account.getName(), account.getId());
             } else {
                 log.warn("拉取频道消息失败: status={}, channelId={}", e.statusCode, channelId);
             }
@@ -487,8 +539,14 @@ public class UserMessagePoller {
             return 0;
         }
 
-        // 更新用户活跃度（轻量DB操作）
+        // 更新用户活跃度和在线状态（轻量DB操作）
         user.setLastActiveAt(Instant.now());
+        // 如果用户发送了消息，更新presence为online（兜底逻辑）
+        // 因为Discord USER Token API可能不返回Presence，通过消息活动判断
+        if (user.getPresence() == null || !"online".equals(user.getPresence())) {
+            user.setPresence("online");
+            user.setPresenceUpdatedAt(Instant.now());
+        }
         transactionTemplate.execute(status -> {
             discordUserRepository.save(user);
             return null;
@@ -553,9 +611,10 @@ public class UserMessagePoller {
 
         // 会话更新 + lastDiscordMessageId持久化（在独立事务中执行）
         final int finalTotalNew = totalNew;
-        // 关键点：只有当实际保存了新消息时，才更新lastDiscordMessageId
-        // 如果保存失败（finalTotalNew=0），不应该推进游标，否则失败的消息会被永久跳过
-        final String finalNewestId = (totalNew > 0) ? newestId : null;
+        // 修复：只要拉取成功获取到消息，就推进lastDiscordMessageId
+        // 即使totalNew=0（所有消息已存在），也应该推进游标，否则会一直拉取重复的消息
+        // 只有newestId为null时才不更新（表示Discord返回了空列表）
+        final String finalNewestId = newestId;
         final long elapsedMs = System.currentTimeMillis() - convStart;
 
         transactionTemplate.execute(status -> {
@@ -563,6 +622,7 @@ public class UserMessagePoller {
             Conversation convRef = conversationRepository.findById(conv.getId()).orElse(conv);
             
             // 持久化最后处理的Discord消息ID
+            // 关键修复：只要成功拉取到消息（newestId不为null），就更新lastDiscordMessageId
             if (finalNewestId != null && !finalNewestId.isBlank()) {
                 convRef.setLastDiscordMessageId(finalNewestId);
             }
@@ -653,18 +713,26 @@ public class UserMessagePoller {
             // 解析附件（网络调用：下载语音数据在此处完成，不在事务内）
             JsonNode attachments = msgNode.get("attachments");
             String attachmentsJson = null;
+            String stickerItemsJson = null;
             String resolvedMessageType = "text";
             String resolvedAudioUrl = null;
             String resolvedAudioMime = null;
             Integer resolvedAudioDuration = null;
             String resolvedAudioData = null;
 
+            // 解析 sticker items
+            JsonNode stickerItems = msgNode.get("sticker_items");
+            if (stickerItems != null && stickerItems.isArray() && !stickerItems.isEmpty()) {
+                stickerItemsJson = buildStickerItemsJsonFromNode(stickerItems);
+                resolvedMessageType = "sticker";
+                if (content == null || content.isBlank()) {
+                    content = "[Sticker: " + stickerItems.get(0).path("name").asText("unknown") + "]";
+                }
+            }
+
             if (attachments != null && attachments.isArray() && !attachments.isEmpty()) {
-                List<String> urls = new ArrayList<>();
                 JsonNode voiceAtt = null;
                 for (JsonNode a : attachments) {
-                    String u = a.path("url").asText(null);
-                    if (u != null) urls.add(u);
                     String fn = a.path("filename").asText("").toLowerCase();
                     boolean isAudioByCt = a.path("content_type").asText("").toLowerCase().startsWith("audio/");
                     boolean hasVoiceName = fn.startsWith("voice-message");
@@ -673,7 +741,7 @@ public class UserMessagePoller {
                         voiceAtt = a;
                     }
                 }
-                attachmentsJson = String.join(",", urls);
+                attachmentsJson = buildAttachmentsJsonFromNode(attachments);
                 if (voiceAtt != null) {
                     resolvedMessageType = "voice";
                     String url = voiceAtt.path("url").asText(null);
@@ -691,8 +759,22 @@ public class UserMessagePoller {
                 }
             }
 
+            // 检测 URL 形式的 GIF/图片/视频消息
+            if ("text".equals(resolvedMessageType) && content != null && !content.isBlank()) {
+                String trimmedContent = content.trim();
+                if (trimmedContent.matches("^https?://\\S+$")) {
+                    // 检查是否是 GIF/图片/视频 URL
+                    if (isGifOrMediaUrl(trimmedContent)) {
+                        resolvedMessageType = "gif";
+                        msgEntity.setGifUrl(trimmedContent);
+                        log.debug("检测到URL形式的GIF/媒体消息: conv={}, url={}", conv.getId(), trimmedContent);
+                    }
+                }
+            }
+            
             msgEntity.setContent(content);
             msgEntity.setAttachmentsJson(attachmentsJson);
+            msgEntity.setStickerItemsJson(stickerItemsJson);
             msgEntity.setMessageType(resolvedMessageType);
             if ("voice".equals(resolvedMessageType)) {
                 msgEntity.setAudioUrl(resolvedAudioUrl);
@@ -830,6 +912,76 @@ public class UserMessagePoller {
         return "audio/ogg";
     }
 
+    /**
+     * 从 JSON 节点构建附件 JSON 数组，包含 url、contentType、filename
+     */
+    private String buildAttachmentsJsonFromNode(JsonNode attachments) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        for (JsonNode a : attachments) {
+            if (!first) sb.append(",");
+            first = false;
+            sb.append("{");
+            sb.append("\"url\":\"").append(escapeJson(a.path("url").asText(""))).append("\",");
+            sb.append("\"contentType\":\"").append(escapeJson(a.path("content_type").asText(""))).append("\",");
+            sb.append("\"filename\":\"").append(escapeJson(a.path("filename").asText(""))).append("\",");
+            sb.append("\"size\":").append(a.path("size").asLong(0));
+            sb.append("}");
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    /**
+     * 从 JSON 节点构建 Sticker Items 数组
+     */
+    private String buildStickerItemsJsonFromNode(JsonNode stickerItems) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        for (JsonNode s : stickerItems) {
+            if (!first) sb.append(",");
+            first = false;
+            String id = s.path("id").asText("");
+            String name = s.path("name").asText("");
+            int formatType = s.path("format_type").asInt(0);
+            // 优先使用 asset_url 或 icon_url，若都为空则根据 ID 和格式构建
+            String assetUrl = s.path("asset_url").asText("");
+            if (assetUrl.isEmpty()) {
+                assetUrl = s.path("icon_url").asText("");
+            }
+            if (assetUrl.isEmpty() && !id.isEmpty()) {
+                // 根据 format_type 确定扩展名: 1=png, 2=png, 3=json, 4=gif
+                String ext = switch (formatType) {
+                    case 1, 2 -> "png";
+                    case 3 -> "json";
+                    case 4 -> "gif";
+                    default -> "png";
+                };
+                assetUrl = "https://cdn.discordapp.com/stickers/" + id + "." + ext;
+            }
+            sb.append("{");
+            sb.append("\"id\":\"").append(escapeJson(id)).append("\",");
+            sb.append("\"name\":\"").append(escapeJson(name)).append("\",");
+            sb.append("\"formatType\":").append(formatType).append(",");
+            sb.append("\"assetUrl\":\"").append(escapeJson(assetUrl)).append("\"");
+            sb.append("}");
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    /**
+     * JSON 字符串转义
+     */
+    private String escapeJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
     /** 预加载的会话数据（在短事务中完成加载，供后续HTTP调用使用） */
     private record LoadedConversationData(
             DiscordAccount account,
@@ -878,5 +1030,27 @@ public class UserMessagePoller {
         } catch (Exception e) {
             log.warn("翻译补偿任务执行失败: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 检测 URL 是否指向 GIF/图片/视频资源
+     * 识别常见的图片/视频扩展名和主流媒体域名
+     */
+    private boolean isGifOrMediaUrl(String url) {
+        if (url == null || url.isBlank()) return false;
+        String lowerUrl = url.toLowerCase();
+        
+        // 检查常见的图片/视频扩展名
+        if (lowerUrl.matches(".*\\.(gif|webp|mp4|webm|mov|png|jpg|jpeg|bmp|svg)(\\?|#|$).*")) {
+            return true;
+        }
+        
+        // 检查主流媒体/分享站点域名
+        return lowerUrl.contains("gif") 
+            || lowerUrl.contains("imgur") 
+            || lowerUrl.contains("tenor") 
+            || lowerUrl.contains("giphy") 
+            || lowerUrl.contains("klipy")
+            || lowerUrl.contains("cdn.discordapp.com");
     }
 }

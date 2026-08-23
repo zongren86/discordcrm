@@ -31,7 +31,12 @@ public class GifFavorite {
     /** 关联的 Discord 账号（按账号隔离收藏） */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "discord_account_id", nullable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private DiscordAccount discordAccount;
+
+    /** 直接存储 accountId 以避免懒加载问题 */
+    @Column(name = "discord_account_id", insertable = false, updatable = false)
+    private Long discordAccountId;
 
     /** GIF 原始 URL */
     @Column(name = "gif_url", nullable = false, length = 2048)
@@ -48,6 +53,10 @@ public class GifFavorite {
     /** GIF 来源域名 */
     @Column(name = "source_domain", length = 128)
     private String sourceDomain;
+
+    /** 收藏类型：gif=GIF动画, sticker=贴纸/Lottie */
+    @Column(name = "type", length = 32)
+    private String type = "gif";
 
     /** 收藏时间 */
     @Column(name = "created_at")

@@ -33,19 +33,217 @@
         </template>
       </el-alert>
 
-      <el-row :gutter="12">
-        <!-- 左侧：控制面板 -->
-        <el-col :span="6">
-          <el-card class="panel" shadow="hover">
-            <template #header>
-              <div class="panel-header">
-                <el-icon><Setting /></el-icon>
-                <span>模拟器控制</span>
-                <el-button type="primary" size="small" link @click="syncPhysical" :disabled="emuLoading">
-                  🔄 同步
+      <!-- TAB结构 -->
+      <el-tabs v-model="activeTab" type="border-card">
+        <!-- 模拟器列表 TAB -->
+        <el-tab-pane v-if="hasListPermission" label="模拟器列表" name="list">
+          <!-- 批量操作工具栏 -->
+          <div class="batch-toolbar">
+            <div class="batch-actions">
+              <el-button type="primary" size="small" @click="batchAction('start')" :disabled="!canBatchStart || !physicalStatus.available">
+                批量启动
+              </el-button>
+              <el-button type="primary" size="small" @click="batchAction('stop')" :disabled="!canBatchStop || !physicalStatus.available">
+                批量停止
+              </el-button>
+              <el-button type="primary" size="small" @click="batchAction('restart')" :disabled="!canBatchRestart || !physicalStatus.available">
+                批量重启
+              </el-button>
+              <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall || !physicalStatus.available">
+                全部安装DS
+              </el-button>
+              <el-button v-if="!autoAddTaskRunning" type="primary" size="small" @click="startAutoAll">
+                全部开始加好友
+              </el-button>
+              <el-button v-else type="danger" size="small" @click="stopAutoAll">
+                全部停止加好友
+              </el-button>
+              <el-button type="primary" size="small" @click="batchAction('startAuto')" :disabled="!canBatchStartAuto">
+                选中启动加好友
+              </el-button>
+              <el-button type="primary" size="small" @click="batchAction('stopAuto')" :disabled="!canBatchStopAuto">
+                选中停止添加
+              </el-button>
+              <el-button type="primary" size="small" @click="batchAction('delete')" :disabled="selectedEmulators.length === 0 || !physicalStatus.available">
+                批量删除
+              </el-button>
+            </div>
+            <div class="toolbar-right">
+              <el-button type="primary" size="small" :icon="Setting" @click="showConfigDialog = true">
+                配置
+              </el-button>
+            </div>
+          </div>
+
+          <!-- 模拟器列表 -->
+          <el-table 
+            v-if="emulators.length > 0" 
+            :data="sortedEmulators" 
+            style="margin-top: 8px; width: 100%"
+            max-height="calc(100vh - 560px)"
+            @selection-change="handleSelectionChange"
+            :row-class-name="rowClassName"
+            size="small"
+          >
+            <el-table-column type="selection" width="40" class-name="checkbox-column" />
+            <el-table-column label="ID" width="45">
+              <template #default="{ row }">
+                <span>{{ row.index }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="350">
+              <template #default="{ row }">
+                <template v-if="row.status !== 'RUNNING'">
+                  <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="startEmulator(row.index)">
+                    {{ isOperating(row.index) ? '启动中...' : '启动' }}
+                  </el-button>
+                </template>
+                <template v-else>
+                  <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="stopEmulator(row.index)">
+                    {{ isOperating(row.index) ? '停止中...' : '停止' }}
+                  </el-button>
+                  <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="restartEmulator(row.index)">
+                    {{ isOperating(row.index) ? '重启中...' : '重启' }}
+                  </el-button>
+                </template>
+                <el-button 
+                  v-if="row.damaged || row.status === 'DAMAGED'"
+                  size="small" 
+                  link 
+                  type="warning" 
+                  :disabled="isOperating(row.index)" 
+                  @click="repairEmulator(row.index)"
+                >一键修复</el-button>
+                <el-button
+                  v-if="!row.autoRunning && row.discordInstalled && !isAutoStarting(row.index)"
+                  size="small" link type="primary"
+                  @click="startAuto(row.index)"
+                >自动加好友</el-button>
+                <el-button
+                  v-else-if="!row.autoRunning && row.discordInstalled && isAutoStarting(row.index)"
+                  size="small" link type="primary" disabled
+                >加好友启动中</el-button>
+                <el-button
+                  v-else-if="row.autoRunning"
+                  size="small" link type="primary"
+                  @click="stopAuto(row.index)"
+                >停止添加</el-button>
+                <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="deleteEmulator(row.index)">删除</el-button>
+              </template>
+            </el-table-column>
+            <el-table-column label="名称" width="110">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="showEmuDetail(row)" style="font-size: 13px; padding: 0; height: auto; text-align: left">
+                  {{ row.name || `模拟器${row.index}` }}
                 </el-button>
-              </div>
-            </template>
+              </template>
+            </el-table-column>
+            <el-table-column label="CPU/内存" width="90">
+              <template #default="{ row }">
+                <span v-if="row.cpuCores || row.memoryGb">{{ row.cpuCores || '-' }}核/{{ row.memoryGb || 0 }}G</span>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="95">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status)" size="small" style="white-space: nowrap; display: inline-flex; align-items: center; max-width: 100%;">
+                  {{ statusText(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Discord账号编号" width="130">
+              <template #default="{ row }">
+                <div style="display: flex; align-items: center; gap: 4px">
+                  <el-input-number
+                    v-if="editingAccountNumberIdx === row.index"
+                    v-model="editingAccountNumberValue"
+                    :min="1"
+                    :max="999999"
+                    size="small"
+                    style="width: 80px"
+                  />
+                  <span v-else style="font-weight: 600; color: #303133">
+                    {{ (row.discordAccountNumber ? 'V' + String(row.discordAccountNumber).padStart(3, '0') : '—') }}
+                  </span>
+                  <el-tooltip v-if="row.discordAccountNumberExplicit" content="已显式绑定（非默认）" placement="top">
+                    <el-icon :size="12" style="color: #409eff"><Flag /></el-icon>
+                  </el-tooltip>
+                  <el-button
+                    v-if="editingAccountNumberIdx !== row.index"
+                    size="small" link type="primary" :icon="Edit"
+                    @click="startEditAccountNumber(row)"
+                  ></el-button>
+                  <template v-else>
+                    <el-button size="small" link type="success" :icon="Check" @click="saveEditAccountNumber(row.index)"></el-button>
+                    <el-button size="small" link @click="cancelEditAccountNumber"><el-icon><Close /></el-icon></el-button>
+                  </template>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="Discord账号" width="140">
+              <template #default="{ row }">
+                <span v-if="row.discordLoggedIn && row.discordAccount">{{ row.discordAccount }}</span>
+                <span v-else-if="row.discordLoggedIn" style="color: #e6a23c">未获取</span>
+                <span v-else style="color: #f56c6c">未登录</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Discord状态" width="100">
+              <template #default="{ row }">
+                <div v-if="row.discordInstalled">
+                  <el-tag type="success" size="small">已安装</el-tag>
+                  <el-tag v-if="row.discordOnHome" type="success" size="small" style="margin-left: 2px">首页</el-tag>
+                </div>
+                <el-tag v-else-if="row.status === 'RUNNING'" type="warning" size="small">未安装</el-tag>
+                <span v-else style="color: #909399">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="下次添加时间" width="110">
+              <template #default="{ row }">
+                <span v-if="row.nextAddAt && row.nextAddAt > 0" style="color: #409eff; font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
+                <span v-else style="color: #909399; font-size: 12px">-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="加好友状态" width="200">
+              <template #default="{ row }">
+                <div class="friend-status-cell">
+                  <div v-if="row.autoRunning" style="color: #67c23a">
+                    运行中
+                  </div>
+                  <div class="fs-stats">
+                    <span class="fs-tag fs-assigned">已分配: {{ row.assignedCount || 0 }}</span>
+                    <span class="fs-tag fs-success">成功: {{ row.successCount || 0 }}</span>
+                    <span class="fs-tag fs-failed">失败: {{ row.failedCount || 0 }}</span>
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="最后添加结果" width="160">
+              <template #default="{ row }">
+                <span v-if="row.autoLastResult" style="color: #409eff; font-size: 12px">{{ row.autoLastResult }}</span>
+                <span v-else-if="row.lastError" style="color: #f56c6c; font-size: 12px">{{ row.lastError }}</span>
+                <span v-else style="color: #909399; font-size: 12px">-</span>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <el-empty v-else-if="!loading" description="暂无模拟器，在上方设置数量后点击「新增」创建" />
+        </el-tab-pane>
+
+        <!-- 配置 TAB -->
+        <el-tab-pane v-if="hasConfigPermission" label="配置" name="config">
+          <el-row :gutter="12">
+            <!-- 左侧：控制面板 -->
+            <el-col :span="6">
+              <el-card class="panel" shadow="hover">
+                <template #header>
+                  <div class="panel-header">
+                    <el-icon><Setting /></el-icon>
+                    <span>模拟器控制</span>
+                    <el-button type="primary" size="small" link @click="syncPhysical" :disabled="emuLoading">
+                      🔄 同步
+                    </el-button>
+                  </div>
+                </template>
             <div class="panel-body">
               <div class="form-row">
                 <label>数量</label>
@@ -108,94 +306,6 @@
                 <el-button type="primary" size="small" @click="installAllDiscord" :disabled="emuLoading">
                   全部安装DS
                 </el-button>
-              </div>
-            </div>
-          </el-card>
-
-          <!-- 自动加好友配置 -->
-          <el-card class="panel" shadow="hover" style="margin-top: 8px">
-            <template #header>
-              <div class="panel-header">
-                <el-icon><Promotion /></el-icon>
-                <span>自动加好友配置</span>
-              </div>
-            </template>
-            <div class="panel-body">
-              <!-- 加好友时段 -->
-              <div class="form-row">
-                <label>加好友时段</label>
-                <el-time-picker
-                  v-model="autoConfig.addStartTime"
-                  format="HH:mm"
-                  value-format="HH:mm"
-                  style="width: 120px"
-                  size="small"
-                  placeholder="开始"
-                />
-                <span>~</span>
-                <el-time-picker
-                  v-model="autoConfig.addEndTime"
-                  format="HH:mm"
-                  value-format="HH:mm"
-                  style="width: 120px"
-                  size="small"
-                  placeholder="结束"
-                />
-              </div>
-              <!-- 每天可加人数 -->
-              <div class="form-row">
-                <label>每天可加人数</label>
-                <el-input-number v-model="autoConfig.dailyLimit" :min="1" :max="10000" size="small" style="width: 120px" />
-                <span class="unit">人</span>
-              </div>
-              <!-- 自动计算的间隔时间（只读） -->
-              <div class="form-row">
-                <label>间隔时间</label>
-                <el-input-number 
-                  v-model="autoConfig.calculatedIntervalMinutes" 
-                  :min="1" 
-                  :max="999999" 
-                  size="small" 
-                  style="width: 120px"
-                  :disabled="true"
-                />
-                <span class="unit">分钟(自动计算)</span>
-              </div>
-              <!-- 并发 -->
-              <div class="form-row">
-                <label>同时启动</label>
-                <el-input-number v-model="autoConfig.maxConcurrentEmulators" :min="1" :max="200" size="small" style="width: 120px" />
-                <span class="unit">台</span>
-              </div>
-              <!-- 启动间隔 -->
-              <div class="form-row">
-                <label>启动间隔</label>
-                <el-input-number v-model="autoConfig.emulatorStartIntervalSec" :min="1" :max="3600" size="small" style="width: 120px" />
-                <span class="unit">秒</span>
-              </div>
-              <!-- 预估单机完成时长 -->
-              <div class="form-row">
-                <label>预估单机时长</label>
-                <el-input-number v-model="autoConfig.estimatedSingleDurationMin" :min="1" :max="1440" size="small" style="width: 120px" />
-                <span class="unit">分钟</span>
-              </div>
-              <!-- 延迟 -->
-              <div class="form-row">
-                <label>随机延迟</label>
-                <el-input-number v-model="autoConfig.delayMinMinutes" :min="0" :max="999999" size="small" style="width: 120px" />
-                <span>~</span>
-                <el-input-number v-model="autoConfig.delayMaxMinutes" :min="0" :max="999999" size="small" style="width: 120px" />
-                <span class="unit">分钟</span>
-              </div>
-              <!-- 测试模式 -->
-              <div class="form-row inline-row">
-                <label>测试模式</label>
-                <el-switch v-model="autoConfig.testModeEnabled" size="small" />
-                <span class="hint-sm" style="margin-left: 6px; color: #e6a23c">默认开启，只测试不添加好友</span>
-              </div>
-              <!-- 保存配置 -->
-              <div class="form-row">
-                <el-button type="primary" size="small" @click="saveAutoConfig">保存配置</el-button>
               </div>
             </div>
           </el-card>
@@ -310,193 +420,8 @@
           </el-card>
         </el-col>
       </el-row>
-
-      <!-- 批量操作工具栏 -->
-      <div class="batch-toolbar">
-        <div class="batch-actions">
-          <el-button type="primary" size="small" @click="batchAction('start')" :disabled="!canBatchStart || !physicalStatus.available">
-            批量启动
-          </el-button>
-          <el-button type="primary" size="small" @click="batchAction('stop')" :disabled="!canBatchStop || !physicalStatus.available">
-            批量停止
-          </el-button>
-          <el-button type="primary" size="small" @click="batchAction('restart')" :disabled="!canBatchRestart || !physicalStatus.available">
-            批量重启
-          </el-button>
-          <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall || !physicalStatus.available">
-            批量安装DS
-          </el-button>
-          <el-button v-if="!autoAddTaskRunning" type="primary" size="small" @click="startAutoAll">
-            全部开始加好友
-          </el-button>
-          <el-button v-else type="danger" size="small" @click="stopAutoAll">
-            全部停止加好友
-          </el-button>
-          <el-button type="primary" size="small" @click="batchAction('startAuto')" :disabled="!canBatchStartAuto">
-            选中启动加好友
-          </el-button>
-          <el-button type="primary" size="small" @click="batchAction('stopAuto')" :disabled="!canBatchStopAuto">
-            选中停止添加
-          </el-button>
-          <el-button type="primary" size="small" @click="batchAction('delete')" :disabled="selectedEmulators.length === 0 || !physicalStatus.available">
-            批量删除
-          </el-button>
-        </div>
-      </div>
-
-      <!-- 模拟器列表 -->
-      <el-table 
-        v-if="emulators.length > 0" 
-        :data="sortedEmulators" 
-        style="margin-top: 8px; width: 100%"
-        max-height="calc(100vh - 560px)"
-        @selection-change="handleSelectionChange"
-        :row-class-name="rowClassName"
-        size="small"
-      >
-        <el-table-column type="selection" width="40" class-name="checkbox-column" />
-        <el-table-column label="ID" width="45">
-          <template #default="{ row }">
-            <span>{{ row.index }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="350">
-          <template #default="{ row }">
-            <template v-if="row.status !== 'RUNNING'">
-              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="startEmulator(row.index)">
-                {{ isOperating(row.index) ? '启动中...' : '启动' }}
-              </el-button>
-            </template>
-            <template v-else>
-              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="stopEmulator(row.index)">
-                {{ isOperating(row.index) ? '停止中...' : '停止' }}
-              </el-button>
-              <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="restartEmulator(row.index)">
-                {{ isOperating(row.index) ? '重启中...' : '重启' }}
-              </el-button>
-            </template>
-            <el-button 
-              v-if="row.damaged || row.status === 'DAMAGED'"
-              size="small" 
-              link 
-              type="warning" 
-              :disabled="isOperating(row.index)" 
-              @click="repairEmulator(row.index)"
-            >一键修复</el-button>
-            <el-button
-              v-if="!row.autoRunning && row.discordInstalled && !isAutoStarting(row.index)"
-              size="small" link type="primary"
-              @click="startAuto(row.index)"
-            >自动加好友</el-button>
-            <el-button
-              v-else-if="!row.autoRunning && row.discordInstalled && isAutoStarting(row.index)"
-              size="small" link type="primary" disabled
-            >加好友启动中</el-button>
-            <el-button
-              v-else-if="row.autoRunning"
-              size="small" link type="primary"
-              @click="stopAuto(row.index)"
-            >停止添加</el-button>
-            <el-button size="small" link type="primary" :disabled="isOperating(row.index)" @click="deleteEmulator(row.index)">删除</el-button>
-          </template>
-        </el-table-column>
-        <el-table-column label="名称" width="110">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="showEmuDetail(row)" style="font-size: 13px; padding: 0; height: auto; text-align: left">
-              {{ row.name || `模拟器${row.index}` }}
-            </el-button>
-          </template>
-        </el-table-column>
-        <el-table-column label="CPU/内存" width="90">
-          <template #default="{ row }">
-            <span v-if="row.cpuCores || row.memoryGb">{{ row.cpuCores || '-' }}核/{{ row.memoryGb || 0 }}G</span>
-            <span v-else>-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="95">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small" style="white-space: nowrap; display: inline-flex; align-items: center; max-width: 100%;">
-              {{ statusText(row.status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Discord账号编号" width="130">
-          <template #default="{ row }">
-            <div style="display: flex; align-items: center; gap: 4px">
-              <el-input-number
-                v-if="editingAccountNumberIdx === row.index"
-                v-model="editingAccountNumberValue"
-                :min="1"
-                :max="999999"
-                size="small"
-                style="width: 80px"
-              />
-              <span v-else style="font-weight: 600; color: #303133">
-                {{ (row.discordAccountNumber ? 'V' + String(row.discordAccountNumber).padStart(3, '0') : '—') }}
-              </span>
-              <el-tooltip v-if="row.discordAccountNumberExplicit" content="已显式绑定（非默认）" placement="top">
-                <el-icon :size="12" style="color: #409eff"><Flag /></el-icon>
-              </el-tooltip>
-              <el-button
-                v-if="editingAccountNumberIdx !== row.index"
-                size="small" link type="primary" :icon="Edit"
-                @click="startEditAccountNumber(row)"
-              ></el-button>
-              <template v-else>
-                <el-button size="small" link type="success" :icon="Check" @click="saveEditAccountNumber(row.index)"></el-button>
-                <el-button size="small" link @click="cancelEditAccountNumber"><el-icon><Close /></el-icon></el-button>
-              </template>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="Discord账号" width="140">
-          <template #default="{ row }">
-            <span v-if="row.discordLoggedIn && row.discordAccount">{{ row.discordAccount }}</span>
-            <span v-else-if="row.discordLoggedIn" style="color: #e6a23c">未获取</span>
-            <span v-else style="color: #f56c6c">未登录</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Discord状态" width="100">
-          <template #default="{ row }">
-            <div v-if="row.discordInstalled">
-              <el-tag type="success" size="small">已安装</el-tag>
-              <el-tag v-if="row.discordOnHome" type="success" size="small" style="margin-left: 2px">首页</el-tag>
-            </div>
-            <el-tag v-else-if="row.status === 'RUNNING'" type="warning" size="small">未安装</el-tag>
-            <span v-else style="color: #909399">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="下次添加时间" width="110">
-          <template #default="{ row }">
-            <span v-if="row.nextAddAt && row.autoRunning" style="color: #409eff; font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
-            <span v-else-if="row.nextAddAt" style="font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
-            <span v-else style="color: #909399; font-size: 12px">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="加好友状态" width="200">
-          <template #default="{ row }">
-            <div class="friend-status-cell">
-              <div v-if="row.autoRunning" style="color: #67c23a">
-                运行中
-              </div>
-              <div class="fs-stats">
-                <span class="fs-tag fs-assigned">已分配: {{ row.assignedCount || 0 }}</span>
-                <span class="fs-tag fs-success">成功: {{ row.successCount || 0 }}</span>
-                <span class="fs-tag fs-failed">失败: {{ row.failedCount || 0 }}</span>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="最后添加结果" width="160">
-          <template #default="{ row }">
-            <span v-if="row.autoLastResult" style="color: #409eff; font-size: 12px">{{ row.autoLastResult }}</span>
-            <span v-else-if="row.lastError" style="color: #f56c6c; font-size: 12px">{{ row.lastError }}</span>
-            <span v-else style="color: #909399; font-size: 12px">-</span>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-empty v-else-if="!loading" description="暂无模拟器，在上方设置数量后点击「新增」创建" />
+        </el-tab-pane>
+      </el-tabs>
     </div>
 
     <!-- 添加服务器弹窗 -->
@@ -605,6 +530,93 @@
       </div>
     </el-dialog>
 
+    <!-- 配置对话框 -->
+    <el-dialog 
+      v-model="showConfigDialog" 
+      title="自动加好友配置" 
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <div class="config-dialog-content">
+        <!-- 加好友时段 -->
+        <div class="config-row">
+          <label>加好友时段</label>
+          <el-time-picker
+            v-model="autoConfig.addStartTime"
+            format="HH:mm"
+            value-format="HH:mm"
+            style="width: 120px"
+            size="small"
+            placeholder="开始"
+          />
+          <span class="config-sep">~</span>
+          <el-time-picker
+            v-model="autoConfig.addEndTime"
+            format="HH:mm"
+            value-format="HH:mm"
+            style="width: 120px"
+            size="small"
+            placeholder="结束"
+          />
+        </div>
+        <!-- 每天可加人数 -->
+        <div class="config-row">
+          <label>每天可加人数</label>
+          <el-input-number v-model="autoConfig.dailyLimit" :min="1" :max="10000" size="small" style="width: 120px" />
+          <span class="config-unit">人</span>
+        </div>
+        <!-- 自动计算的间隔时间（只读） -->
+        <div class="config-row">
+          <label>间隔时间</label>
+          <el-input-number 
+            v-model="autoConfig.calculatedIntervalMinutes" 
+            :min="1" 
+            :max="999999" 
+            size="small" 
+            style="width: 120px"
+            :disabled="true"
+          />
+          <span class="config-unit">分钟(自动计算)</span>
+        </div>
+        <!-- 并发 -->
+        <div class="config-row">
+          <label>同时启动</label>
+          <el-input-number v-model="autoConfig.maxConcurrentEmulators" :min="1" :max="200" size="small" style="width: 120px" />
+          <span class="config-unit">台</span>
+        </div>
+        <!-- 启动间隔 -->
+        <div class="config-row">
+          <label>启动间隔</label>
+          <el-input-number v-model="autoConfig.emulatorStartIntervalSec" :min="1" :max="3600" size="small" style="width: 120px" />
+          <span class="config-unit">秒</span>
+        </div>
+        <!-- 预估单机完成时长 -->
+        <div class="config-row">
+          <label>预估单机时长</label>
+          <el-input-number v-model="autoConfig.estimatedSingleDurationMin" :min="1" :max="1440" size="small" style="width: 120px" />
+          <span class="config-unit">分钟</span>
+        </div>
+        <!-- 延迟 -->
+        <div class="config-row">
+          <label>随机延迟</label>
+          <el-input-number v-model="autoConfig.delayMinMinutes" :min="0" :max="999999" size="small" style="width: 120px" />
+          <span class="config-sep">~</span>
+          <el-input-number v-model="autoConfig.delayMaxMinutes" :min="0" :max="999999" size="small" style="width: 120px" />
+          <span class="config-unit">分钟</span>
+        </div>
+        <!-- 测试模式 -->
+        <div class="config-row inline-row">
+          <label>测试模式</label>
+          <el-switch v-model="autoConfig.testModeEnabled" size="small" />
+          <span class="config-hint">默认开启，只测试不添加好友</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showConfigDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveAutoConfig">保存配置</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 全屏加载遮罩 -->
     <div v-if="globalLoading.show" class="global-loading-mask">
       <div class="global-loading-content">
@@ -625,6 +637,24 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { config } from '@/config'
+import { useAuthStore } from '@/stores/auth'
+
+const authStore = useAuthStore()
+
+// TAB权限检查
+const hasListPermission = computed(() => authStore.hasPermission('friend-list'))
+const hasConfigPermission = computed(() => authStore.hasPermission('friend-config'))
+// 默认显示的TAB
+const activeTab = ref('list')
+
+// 根据权限确定默认TAB
+watch([hasListPermission, hasConfigPermission], ([list, config]) => {
+  if (!list && config.value) {
+    activeTab.value = 'config'
+  } else if (list.value) {
+    activeTab.value = 'list'
+  }
+}, { immediate: true })
 
 const loading = ref(true)
 const backendAvailable = ref(false)
@@ -670,6 +700,9 @@ const autoConfig = ref({
   // 计算字段
   calculatedIntervalMinutes: 15
 })
+
+// 配置对话框
+const showConfigDialog = ref(false)
 
 // 自动加好友任务状态
 const autoAddTaskRunning = ref(false)
@@ -957,6 +990,9 @@ async function batchAction(action) {
 }
 
 onMounted(async () => {
+  // 每次进入页面重置清理标志
+  cleanupDone = false
+  
   // 并行执行所有加载，不等待服务检查
   const loadTasks = [
     fetchEmulators(),
@@ -1551,6 +1587,7 @@ async function saveAutoConfig() {
     }
     await friendApi.post('/data/autoconfig', configToSave)
     ElMessage.success('自动加好友配置已保存')
+    showConfigDialog.value = false
   } catch (e) {
     ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))
   }
@@ -1651,9 +1688,28 @@ async function fetchAutoAddStatus() {
     if (resp.data) {
       autoAddTaskStatus.value = resp.data
       autoAddTaskRunning.value = resp.data.isRunning || false
+      
+      // 如果任务没有运行，检查并清理残留的 autoRunning 状态
+      if (!resp.data.isRunning) {
+        await cleanupStaleAutoRunning()
+      }
     }
   } catch (e) {
     console.error('获取任务状态失败', e)
+  }
+}
+
+// 清理残留的 autoRunning 状态（任务未运行但数据库中存在 auto_running=true 的记录）
+let cleanupDone = false
+async function cleanupStaleAutoRunning() {
+  if (cleanupDone) return // 只清理一次
+  try {
+    await friendApi.post('/emu/autoadd/reset')
+    cleanupDone = true
+    // 清理后刷新模拟器列表
+    await fetchEmulators()
+  } catch (e) {
+    console.error('清理残留状态失败', e)
   }
 }
 
@@ -1971,6 +2027,46 @@ function formatCountdown(timestamp) {
 .batch-count { font-size: 13px; color: #606266; }
 
 .batch-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.toolbar-right { display: flex; gap: 8px; margin-left: auto; }
+
+/* 配置对话框样式 */
+.config-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-row label {
+  width: 100px;
+  text-align: right;
+  font-size: 14px;
+  color: #606266;
+}
+
+.config-row.inline-row {
+  flex-wrap: nowrap;
+}
+
+.config-sep {
+  color: #909399;
+}
+
+.config-unit {
+  font-size: 13px;
+  color: #606266;
+}
+
+.config-hint {
+  font-size: 12px;
+  color: #e6a23c;
+}
 
 .emu-name { font-weight: 600; font-size: 13px; }
 

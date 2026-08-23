@@ -37,11 +37,38 @@ public final class SecurityUtils {
 
     public static String currentRole() {
         JwtAuthFilter.AuthenticatedAgent agent = currentAgent();
-        return agent != null ? agent.role() : null;
+        if (agent == null) return null;
+        if (agent.accountType() != null && agent.accountType() == 0) {
+            return agent.merchantId() != null ? "MERCHANT_ADMIN" : "PLATFORM_ADMIN";
+        }
+        return "USER";
     }
 
+    public static Integer currentAccountType() {
+        JwtAuthFilter.AuthenticatedAgent agent = currentAgent();
+        return agent != null ? agent.accountType() : null;
+    }
+
+    /**
+     * 判断是否为管理员（account_type = 0）
+     */
+    public static boolean isAdmin() {
+        Integer accountType = currentAccountType();
+        return accountType != null && accountType == 0;
+    }
+
+    /**
+     * 判断是否为平台管理员（管理员 + 无商户）
+     */
     public static boolean isPlatformAdmin() {
-        return "PLATFORM_ADMIN".equals(currentRole());
+        return isAdmin() && currentMerchantId() == null;
+    }
+
+    /**
+     * 判断是否为商户管理员（管理员 + 有商户）
+     */
+    public static boolean isMerchantAdmin() {
+        return isAdmin() && currentMerchantId() != null;
     }
 
     /**
@@ -53,7 +80,7 @@ public final class SecurityUtils {
         if (isPlatformAdmin()) return;
         Long merchantId = currentMerchantId();
         // 商户管理员：可访问本商户资源及无商户归属的资源（向后兼容）
-        if ("MERCHANT_ADMIN".equals(currentRole())) {
+        if (isMerchantAdmin()) {
             if (resourceMerchantId == null || merchantId == null || merchantId.equals(resourceMerchantId)) {
                 return;
             }

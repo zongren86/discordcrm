@@ -37,11 +37,13 @@ public class Conversation {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "discord_user_id", nullable = false)
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private DiscordUser discordUser;
 
     /** 该会话归属的 Discord 账号，用于出站消息路由 */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "discord_account_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private DiscordAccount discordAccount;
 
     @Column(name = "guild_id", length = 32)
@@ -66,6 +68,7 @@ public class Conversation {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "assigned_agent_id")
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private Agent assignedAgent;
 
     @Column(name = "last_message_preview", length = 256)

@@ -13,6 +13,7 @@ import com.discordadmin.repository.GuildMemberRepository;
 import com.discordadmin.repository.GuildServerRepository;
 import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.*;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -332,6 +333,20 @@ public class EmuManagementController {
     @GetMapping("/autoadd/status")
     public Map<String, Object> getAutoAddStatus() {
         return autoAddDispatcher.getTaskStatus();
+    }
+
+    /**
+     * 重置所有模拟器的 autoRunning 状态（清理残留状态）
+     */
+    @PostMapping("/autoadd/reset")
+    public Map<String, Object> resetAutoRunning(HttpServletRequest request) {
+        Long merchantId = (Long) request.getAttribute("merchantId");
+        String userId = (String) request.getAttribute("userId");
+        autoAddDispatcher.resetAllAutoRunning(merchantId, userId);
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("message", "已重置所有模拟器的加好友状态");
+        return result;
     }
 
     /**

@@ -13,10 +13,10 @@ ALTER TABLE discord_accounts ADD INDEX idx_discord_id (discord_id);
 ALTER TABLE discord_accounts ADD INDEX idx_email (email);
 ALTER TABLE discord_accounts ADD INDEX idx_merchant_status_type (merchant_id, status, account_type);
 
--- agents 表索引
-ALTER TABLE agents ADD INDEX idx_agent_merchant_id (merchant_id);
-ALTER TABLE agents ADD INDEX idx_agent_role (role);
-ALTER TABLE agents ADD INDEX idx_agent_merchant_enabled (merchant_id, enabled);
+-- user 表索引
+ALTER TABLE user ADD INDEX idx_user_merchant_id (merchant_id);
+ALTER TABLE user ADD INDEX idx_user_account_type (account_type);
+ALTER TABLE user ADD INDEX idx_user_merchant_enabled (merchant_id, enabled);
 
 -- guild_servers 表索引
 ALTER TABLE guild_servers ADD INDEX idx_guild_merchant_id (merchant_id);
@@ -64,9 +64,9 @@ ALTER TABLE guild_members ADD INDEX idx_gm_guild_user (guild_server_id, user_id)
 -- 关联表索引
 -- ================================================
 
--- agent_discord_accounts 关联表索引
-ALTER TABLE agent_discord_accounts ADD INDEX idx_ada_agent_id (agent_id);
-ALTER TABLE agent_discord_accounts ADD INDEX idx_ada_account_id (discord_account_id);
+-- user_discord_accounts 关联表索引
+ALTER TABLE user_discord_accounts ADD INDEX idx_uda_user_id (user_id);
+ALTER TABLE user_discord_accounts ADD INDEX idx_uda_account_id (discord_account_id);
 
--- agent_role_ids 关联表索引
-ALTER TABLE agent_role_ids ADD INDEX idx_ari_agent_id (agent_id);
+-- user_role_ids 关联表索引
+ALTER TABLE user_role_ids ADD INDEX idx_ari_user_id (user_id);

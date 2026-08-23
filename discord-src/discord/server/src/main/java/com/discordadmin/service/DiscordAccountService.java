@@ -2,6 +2,7 @@ package com.discordadmin.service;
 
 import com.discordadmin.discord.DiscordBotManager;
 import com.discordadmin.discord.DiscordUserClient;
+import com.discordadmin.discord.UserMessagePoller;
 import com.discordadmin.dto.DiscordAccountDtos.*;
 import com.discordadmin.entity.Agent;
 import com.discordadmin.entity.AgentAccountNumberRel;
@@ -22,6 +23,8 @@ import com.discordadmin.security.SecurityUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -69,6 +72,9 @@ public class DiscordAccountService {
     private final DiscordAccountNumberRepository accountNumberRepository;
     private final AgentAccountNumberRelRepository relRepository;
     private final PlatformTransactionManager transactionManager;
+
+    @Autowired @Lazy
+    private UserMessagePoller userMessagePoller;
 
     public DiscordAccountService(DiscordAccountRepository accountRepository,
                                  DiscordBotManager botManager,
@@ -1015,6 +1021,7 @@ public class DiscordAccountService {
 
             // 更新账号
             account.setToken(token);
+            account.setTokenValid(true);  // 重置Token有效性
             account.setLastError(null);
             // 设置 Token 过期时间（Discord USER token 默认 24 小时有效期）
             account.setTokenExpiresAt(Instant.now().plusSeconds(24 * 60 * 60));
@@ -1042,6 +1049,9 @@ public class DiscordAccountService {
             }
 
             account = accountRepository.save(account);
+
+            // 清除Token过期冷却缓存，确保立即恢复消息轮询
+            userMessagePoller.clearTokenExpired(id);
 
             // 同步好友关系
             try {

@@ -180,15 +180,21 @@ public class ConversationService {
         message.setSenderDiscordUserId(inbound.authorUserId());
         message.setContent(inbound.content());
         message.setAttachmentsJson(inbound.attachmentsJson());
+        message.setStickerItemsJson(inbound.stickerItemsJson());
 
         // 语音消息字段
         boolean isVoice = "voice".equals(inbound.messageType());
-        message.setMessageType(isVoice ? "voice" : "text");
+        message.setMessageType(isVoice ? "voice" : inbound.messageType());
         if (isVoice) {
             message.setAudioUrl(inbound.audioUrl());
             message.setAudioMimeType(inbound.audioMimeType());
             message.setAudioDuration(inbound.audioDuration());
             message.setAudioData(inbound.audioData());
+        }
+        
+        // GIF 消息字段
+        if ("gif".equals(inbound.messageType()) && inbound.gifUrl() != null) {
+            message.setGifUrl(inbound.gifUrl());
         }
 
         // 自动检测语言并保存
@@ -259,16 +265,15 @@ public class ConversationService {
                     discordAccountNumberRepository.findByDiscordAccountId(discordAccountId);
             if (numbers.isEmpty()) return null;
 
-            // 2. 收集所有关联的Agent ID，过滤掉商户管理员和平台管理员
+            // 2. 收集所有关联的用户ID，过滤掉管理员（accountType=0）
             java.util.Set<Long> nonAdminAgentIds = new java.util.LinkedHashSet<>();
             for (DiscordAccountNumber num : numbers) {
                 List<AgentAccountNumberRel> rels =
                         agentAccountNumberRelRepository.findByAccountNumberId(num.getId());
                 for (AgentAccountNumberRel rel : rels) {
                     Agent agent = agentRepository.findById(rel.getAgentId()).orElse(null);
-                    if (agent != null && agent.getRole() != null
-                            && agent.getRole() != Agent.AgentRole.MERCHANT_ADMIN
-                            && agent.getRole() != Agent.AgentRole.PLATFORM_ADMIN) {
+                    if (agent != null && agent.getAccountType() != null
+                            && agent.getAccountType() == 1) {
                         nonAdminAgentIds.add(agent.getId());
                     }
                 }
@@ -513,7 +518,7 @@ public class ConversationService {
 
     private List<Conversation> queryConversations(Long accountId, String stage, Long merchantId) {
         boolean isPlatform = SecurityUtils.isPlatformAdmin();
-        boolean isMerchantAdmin = "MERCHANT_ADMIN".equals(SecurityUtils.currentRole());
+        boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
         // 平台管理员：查看所有商户的会话（不按merchantId过滤）
@@ -598,16 +603,15 @@ public class ConversationService {
             return conversation;
         }
 
-        // 普通用户：可访问 ownerAgentId = 当前用户ID 的会话 或 ownerAgentId为空且在分配账号下的会话
+        // 普通用户：可访问 ownerAgentId = 当前用户ID 的会话 或 账号在分配列表中的会话
         if (currentAgentId != null) {
             // 检查ownerAgentId
             if (currentAgentId.equals(conversation.getOwnerAgentId())) {
                 return conversation;
             }
-            // 检查是否是未分配的会话且在分配账号下
+            // 检查账号是否在分配列表中（无论ownerAgentId是谁）
             Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
-            if (conversation.getOwnerAgentId() == null
-                    && conversation.getDiscordAccount() != null
+            if (conversation.getDiscordAccount() != null
                     && assignedAccountIds.contains(conversation.getDiscordAccount().getId())) {
                 return conversation;
             }
@@ -645,10 +649,11 @@ public class ConversationService {
 
     public MessageDto sendMessage(Long id, String content, String targetLanguage,
                                    String messageType, String audioData, String audioMimeType,
-                                   Integer audioDuration, String audioFileName, String senderName) {
+                                   Integer audioDuration, String audioFileName, String senderName,
+                                   java.util.List<java.util.Map<String, String>> attachments) {
         loadOwnedConversation(id);
         return MessageDto.from(messageService.sendReply(id, content, targetLanguage,
-                messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName));
+                messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName, attachments));
     }
 
     public MessageDto sendGifMessage(Long id, String gifUrl, String title) {
@@ -734,7 +739,8 @@ public class ConversationService {
             item.put("id", a.getId());
             item.put("username", a.getUsername());
             item.put("displayName", a.getDisplayName());
-            item.put("role", a.getRole().name());
+            item.put("accountType", a.getAccountType() != null ? a.getAccountType() : 1);
+            item.put("roleLabel", a.isAdmin() ? "管理员" : "普通账号");
             item.put("enabled", a.getEnabled());
             return item;
         }).toList();

@@ -44,6 +44,8 @@ public class PresenceSyncScheduler {
         List<DiscordAccount> userAccounts = accountRepository.findByStatus(DiscordAccount.AccountStatus.ACTIVE)
                 .stream()
                 .filter(a -> a.getAccountType() == DiscordAccount.AccountType.USER)
+                // 只同步 Token 有效的账号
+                .filter(a -> Boolean.TRUE.equals(a.getTokenValid()))
                 .toList();
 
         if (userAccounts.isEmpty()) return;
@@ -72,9 +74,28 @@ public class PresenceSyncScheduler {
                     String userId = user.path("id").asText(null);
                     if (userId == null) continue;
 
-                    String status = rel.has("presence")
-                            ? rel.path("presence").path("status").asText(null)
-                            : null;
+                    // 尝试多种可能的 Presence 字段位置
+                    String status = null;
+                    // 1. 直接在 rel 中查找 presence
+                    if (rel.has("presence")) {
+                        status = rel.path("presence").path("status").asText(null);
+                    }
+                    // 2. 在 user 对象中查找 presence
+                    if (status == null && user.has("presence")) {
+                        status = user.path("presence").path("status").asText(null);
+                    }
+                    // 3. 检查 status 字段是否直接在 rel 或 user 中
+                    if (status == null && rel.has("status")) {
+                        status = rel.path("status").asText(null);
+                    }
+                    if (status == null && user.has("status")) {
+                        status = user.path("status").asText(null);
+                    }
+                    // 4. 记录调试信息（只记录一次）
+                    if (status == null && updated == 0) {
+                        log.debug("Presence 字段位置检查: rel.has(presence)={}, user.has(presence)={}, rel.has(status)={}, user.has(status)={}",
+                                rel.has("presence"), user.has("presence"), rel.has("status"), user.has("status"));
+                    }
 
                     DiscordUser du = existingMap.get(userId);
                     if (du == null) {
@@ -90,6 +111,8 @@ public class PresenceSyncScheduler {
                         du.setPresenceUpdatedAt(now);
                     } else if (du.getPresenceUpdatedAt() == null
                             || now.getEpochSecond() - du.getPresenceUpdatedAt().getEpochSecond() > 3600) {
+                        // 只有当确实无法获取到状态时，才标记为 offline
+                        // 并且只在超过1小时没有更新时才这样做
                         du.setPresence("offline");
                         du.setPresenceUpdatedAt(now);
                     }

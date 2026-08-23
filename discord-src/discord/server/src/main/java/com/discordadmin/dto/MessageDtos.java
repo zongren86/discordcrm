@@ -16,7 +16,7 @@ public class MessageDtos {
                               String messageType, String audioUrl, Integer audioDuration, String audioMimeType,
                               String audioData,
                               String asrText, String asrTranslated, String asrLanguage, String asrStatus, String asrError,
-                              String gifUrl) {
+                              String gifUrl, String stickerItemsJson) {
 
         public static MessageDto from(Message m) {
             String avatarUrl = resolveAvatarUrl(m);
@@ -48,7 +48,8 @@ public class MessageDtos {
                     m.getAsrLanguage(),
                     m.getAsrStatus(),
                     m.getAsrError(),
-                    m.getGifUrl()
+                    m.getGifUrl(),
+                    m.getStickerItemsJson()
             );
         }
 
@@ -82,7 +83,8 @@ public class MessageDtos {
                     m.getAsrLanguage(),
                     m.getAsrStatus(),
                     m.getAsrError(),
-                    m.getGifUrl()
+                    m.getGifUrl(),
+                    m.getStickerItemsJson()
             );
         }
 
@@ -107,6 +109,7 @@ public class MessageDtos {
     }
 
     public record SendMessageRequest(String content, String targetLanguage, String messageType,
-                                      String audioData, String audioMimeType, Integer audioDuration, String audioFileName) {
+                                      String audioData, String audioMimeType, Integer audioDuration, String audioFileName,
+                                      java.util.List<java.util.Map<String, String>> attachments) {
     }
 }

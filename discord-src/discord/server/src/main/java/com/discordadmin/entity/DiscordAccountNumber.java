@@ -24,6 +24,10 @@ public class DiscordAccountNumber {
     @Column(name = "bound_account", length = 256)
     private String boundAccount;
 
+    /** 商户ID（所属商户） */
+    @Column(name = "merchant_id")
+    private Long merchantId;
+
     /** 创建人ID */
     @Column(name = "creator_id")
     private Long creatorId;

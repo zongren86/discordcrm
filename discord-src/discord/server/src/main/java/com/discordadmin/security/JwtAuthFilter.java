@@ -41,14 +41,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             try {
                 Claims claims = jwtUtil.parseClaims(token);
                 String username = claims.getSubject();
-                String role = claims.get("role", String.class);
+                Integer accountType = claims.get("accountType", Integer.class);
                 Long agentId = claims.get("agentId", Long.class);
                 Long merchantId = claims.get("merchantId", Long.class);
 
                 var authToken = new UsernamePasswordAuthenticationToken(
-                        new AuthenticatedAgent(agentId, username, role, merchantId),
+                        new AuthenticatedAgent(agentId, username, accountType, merchantId),
                         null,
-                        List.of(new SimpleGrantedAuthority("ROLE_" + role))
+                        List.of(new SimpleGrantedAuthority("ROLE_" + (accountType == 0 ? "ADMIN" : "USER")))
                 );
                 SecurityContextHolder.getContext().setAuthentication(authToken);
                 log.debug("JWT 验证成功: 用户={}, URI={}", username, uri);
@@ -62,6 +62,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    public record AuthenticatedAgent(Long agentId, String username, String role, Long merchantId) {
+    public record AuthenticatedAgent(Long agentId, String username, Integer accountType, Long merchantId) {
     }
 }

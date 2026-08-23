@@ -22,13 +22,13 @@ public class JwtUtil {
         this.expireMillis = expireHours * 3600 * 1000;
     }
 
-    public String generateToken(Long agentId, String username, String role, Long merchantId) {
+    public String generateToken(Long agentId, String username, Integer accountType, Long merchantId) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + expireMillis);
         var builder = Jwts.builder()
                 .subject(username)
                 .claim("agentId", agentId)
-                .claim("role", role)
+                .claim("accountType", accountType)
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(key);

@@ -136,17 +136,17 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
     /** 按商户ID+账号ID列表+阶段查找会话（普通用户权限过滤用） */
     List<Conversation> findByMerchantIdAndDiscordAccount_IdInAndStageOrderByLastMessageAtDesc(Long merchantId, List<Long> accountIds, Conversation.Stage stage);
 
-    /** 普通用户权限过滤：ownerAgentId=自己的 或 ownerAgentId为空且账号在分配列表中的会话 */
+    /** 普通用户权限过滤：ownerAgentId=自己的 或 账号在分配列表中的会话 */
     @Query("SELECT c FROM Conversation c WHERE (c.merchantId = :merchantId OR (c.merchantId IS NULL AND :merchantId IS NULL)) " +
-            "AND (c.ownerAgentId = :agentId OR (c.ownerAgentId IS NULL AND c.discordAccount.id IN :accountIds)) " +
+            "AND (c.ownerAgentId = :agentId OR c.discordAccount.id IN :accountIds) " +
             "ORDER BY c.pinned DESC, c.lastMessageAt DESC, c.id DESC")
     List<Conversation> findByMerchantIdAndAccountIds(@Param("merchantId") Long merchantId,
                                                      @Param("accountIds") List<Long> accountIds,
                                                      @Param("agentId") Long agentId);
 
-    /** 普通用户权限过滤：ownerAgentId=自己的 或 ownerAgentId为空且账号在分配列表中的会话（带阶段过滤） */
+    /** 普通用户权限过滤：ownerAgentId=自己的 或 账号在分配列表中的会话（带阶段过滤） */
     @Query("SELECT c FROM Conversation c WHERE (c.merchantId = :merchantId OR (c.merchantId IS NULL AND :merchantId IS NULL)) " +
-            "AND (c.ownerAgentId = :agentId OR (c.ownerAgentId IS NULL AND c.discordAccount.id IN :accountIds)) " +
+            "AND (c.ownerAgentId = :agentId OR c.discordAccount.id IN :accountIds) " +
             "AND (:stage IS NULL OR c.stage = :stage) " +
             "ORDER BY c.pinned DESC, c.lastMessageAt DESC, c.id DESC")
     List<Conversation> findByMerchantIdAndAccountIdsAndStage(@Param("merchantId") Long merchantId,

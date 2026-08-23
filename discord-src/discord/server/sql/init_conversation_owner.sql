@@ -1,7 +1,7 @@
 -- 历史数据初始化脚本：将会话的 owner_agent_id 设置为其所属 Discord 账号关联的第一个非管理员用户
 -- 执行说明：
 --   1. 仅更新 owner_agent_id 为 NULL 的会话
---   2. 优先选择 discord_account_id 关联的非管理员用户（role 不是 PLATFORM_ADMIN 或 MERCHANT_ADMIN）
+--   2. 优先选择 discord_account_id 关联的非管理员用户（account_type = 1，即普通账号）
 --   3. 如果没有关联用户，则不更新
 
 -- 第一步：查看需要初始化的会话数量
@@ -11,10 +11,10 @@ WHERE owner_agent_id IS NULL
   AND discord_account_id IS NOT NULL;
 
 -- 第二步：查看关联关系（用于确认数据）
--- SELECT c.id as conv_id, c.discord_account_id, daa.agent_id, a.username, a.role
+-- SELECT c.id as conv_id, c.discord_account_id, daa.user_id, a.username, a.account_type
 -- FROM conversations c
--- JOIN agent_discord_accounts daa ON c.discord_account_id = daa.discord_account_id
--- JOIN agents a ON daa.agent_id = a.id
+-- JOIN user_discord_accounts daa ON c.discord_account_id = daa.discord_account_id
+-- JOIN user a ON daa.user_id = a.id
 -- WHERE c.owner_agent_id IS NULL
 --   AND c.discord_account_id IS NOT NULL
 -- ORDER BY c.id, a.id;
@@ -23,13 +23,13 @@ WHERE owner_agent_id IS NULL
 -- 注意：此脚本使用窗口函数选择每个 discord_account_id 下的第一个非管理员用户
 UPDATE conversations c
 SET owner_agent_id = (
-    SELECT sub.agent_id
+    SELECT sub.user_id
     FROM (
-        SELECT daa.discord_account_id, daa.agent_id,
-               ROW_NUMBER() OVER (PARTITION BY daa.discord_account_id ORDER BY daa.agent_id) as rn
-        FROM agent_discord_accounts daa
-        JOIN agents a ON daa.agent_id = a.id
-        WHERE a.role NOT IN ('PLATFORM_ADMIN', 'MERCHANT_ADMIN')
+        SELECT daa.discord_account_id, daa.user_id,
+               ROW_NUMBER() OVER (PARTITION BY daa.discord_account_id ORDER BY daa.user_id) as rn
+        FROM user_discord_accounts daa
+        JOIN user a ON daa.user_id = a.id
+        WHERE a.account_type = 1
     ) sub
     WHERE sub.discord_account_id = c.discord_account_id
       AND sub.rn = 1
@@ -39,10 +39,10 @@ WHERE c.owner_agent_id IS NULL
   AND c.discord_account_id IS NOT NULL
   AND EXISTS (
       SELECT 1
-      FROM agent_discord_accounts daa
-      JOIN agents a ON daa.agent_id = a.id
+      FROM user_discord_accounts daa
+      JOIN user a ON daa.user_id = a.id
       WHERE daa.discord_account_id = c.discord_account_id
-        AND a.role NOT IN ('PLATFORM_ADMIN', 'MERCHANT_ADMIN')
+        AND a.account_type = 1
   );
 
 -- 第四步：查看初始化结果
@@ -57,8 +57,8 @@ WHERE c.owner_agent_id IS NULL
   AND c.discord_account_id IS NOT NULL
   AND NOT EXISTS (
       SELECT 1
-      FROM agent_discord_accounts daa
-      JOIN agents a ON daa.agent_id = a.id
+      FROM user_discord_accounts daa
+      JOIN user a ON daa.user_id = a.id
       WHERE daa.discord_account_id = c.discord_account_id
-        AND a.role NOT IN ('PLATFORM_ADMIN', 'MERCHANT_ADMIN')
+        AND a.account_type = 1
   );

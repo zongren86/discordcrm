@@ -128,7 +128,8 @@ public class StatsController {
             if (agentObj instanceof com.discordadmin.entity.Agent agent) {
                 item.put("agentId", agent.getId());
                 item.put("agentName", agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername());
-                item.put("role", agent.getRole().name());
+                item.put("accountType", agent.getAccountType() != null ? agent.getAccountType() : 1);
+                item.put("roleLabel", agent.isAdmin() ? "管理员" : "普通账号");
                 item.put("conversationCount", row[1]);
 
                 long msgCount = 0;
@@ -141,7 +142,8 @@ public class StatsController {
             } else if (agentObj == null) {
                 item.put("agentId", null);
                 item.put("agentName", "未分配");
-                item.put("role", "-");
+                item.put("accountType", null);
+                item.put("roleLabel", "-");
                 item.put("conversationCount", row[1]);
                 item.put("messageCount", 0);
             }

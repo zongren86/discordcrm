@@ -54,7 +54,7 @@ public class UserService {
                     map.put("displayName", agent.getDisplayName());
                     map.put("email", agent.getEmail());
                     map.put("notes", agent.getNotes());
-                    map.put("role", agent.getRole() != null ? agent.getRole().name() : null);
+                    map.put("accountType", agent.getAccountType());
                     map.put("merchantId", agent.getMerchantId());
                     map.put("merchantName", agent.getMerchantId() != null ? 
                             merchantNames.getOrDefault(agent.getMerchantId(), "未知商户") : null);
@@ -78,7 +78,7 @@ public class UserService {
         agent.setDisplayName(req.displayName());
         agent.setEmail(req.email());
         agent.setNotes(req.notes());
-        agent.setRole(Agent.AgentRole.valueOf(req.role()));
+        agent.setAccountType(req.accountType() != null ? req.accountType() : 1);
         agent.setMerchantId(merchantId);
         agent.setEnabled(true);
         
@@ -91,13 +91,17 @@ public class UserService {
 
     private Long resolveMerchantId(UserRequest req) {
         if (SecurityUtils.isPlatformAdmin()) {
-            Agent.AgentRole role = Agent.AgentRole.valueOf(req.role());
-            if (role == Agent.AgentRole.PLATFORM_ADMIN) {
-                return null;
-            } else if (req.merchantId() != null) {
+            Integer accountType = req.accountType();
+            if (accountType != null && accountType == 0) {
+                // 管理员身份：如果指定了商户则使用指定商户，否则为平台管理员（无商户）
                 return req.merchantId();
             } else {
-                throw new IllegalArgumentException("商户身份的用户必须选择商户");
+                // 普通账号：必须选择商户
+                if (req.merchantId() != null) {
+                    return req.merchantId();
+                } else {
+                    throw new IllegalArgumentException("普通账号必须选择商户");
+                }
             }
         }
         return SecurityUtils.currentMerchantId();
@@ -111,7 +115,7 @@ public class UserService {
         if (req.displayName() != null) agent.setDisplayName(req.displayName());
         if (req.email() != null) agent.setEmail(req.email());
         if (req.notes() != null) agent.setNotes(req.notes());
-        if (req.role() != null) agent.setRole(Agent.AgentRole.valueOf(req.role()));
+        if (req.accountType() != null) agent.setAccountType(req.accountType());
         if (req.enabled() != null) agent.setEnabled(req.enabled());
         if (req.password() != null && !req.password().isBlank()) {
             agent.setPasswordHash(passwordEncoder.encode(req.password()));
@@ -125,9 +129,9 @@ public class UserService {
         if (SecurityUtils.isPlatformAdmin() && req.merchantId() != null) {
             agent.setMerchantId(req.merchantId());
         }
-        if (SecurityUtils.isPlatformAdmin() && req.role() != null) {
-            Agent.AgentRole role = Agent.AgentRole.valueOf(req.role());
-            if (role == Agent.AgentRole.PLATFORM_ADMIN) {
+        if (SecurityUtils.isPlatformAdmin() && req.accountType() != null) {
+            // 如果设为管理员且未指定商户，则为平台管理员
+            if (req.accountType() == 0 && req.merchantId() == null) {
                 agent.setMerchantId(null);
             }
         }
@@ -206,6 +210,6 @@ public class UserService {
 
     public record UserRequest(String username, String password, String displayName,
                                String email, String notes,
-                               String role, Long merchantId, Boolean enabled,
+                               Integer accountType, Long merchantId, Boolean enabled,
                                List<Long> roleIds, Boolean clearRoles) {}
 }

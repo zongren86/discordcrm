@@ -55,7 +55,8 @@ public class RelationshipSyncService {
     @Scheduled(fixedDelay = 10 * 60 * 1000L, initialDelay = 30 * 1000L)
     public void autoSyncAll() {
         for (DiscordAccount acc : accountRepository.findByStatus(DiscordAccount.AccountStatus.ACTIVE)) {
-            if (acc.getAccountType() == DiscordAccount.AccountType.USER) {
+            if (acc.getAccountType() == DiscordAccount.AccountType.USER
+                    && Boolean.TRUE.equals(acc.getTokenValid())) {
                 try {
                     syncOne(acc.getId());
                 } catch (Exception e) {

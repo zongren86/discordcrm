@@ -63,7 +63,7 @@ public class GuildServerController {
         List<GuildServer> servers;
 
         // 普通用户：只能看到分配给自己账号的服务器
-        if (!SecurityUtils.isPlatformAdmin() && !"MERCHANT_ADMIN".equals(role) && currentAgentId != null) {
+        if (!SecurityUtils.isPlatformAdmin() && !SecurityUtils.isMerchantAdmin() && currentAgentId != null) {
             Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
             if (assignedAccountIds.isEmpty()) {
                 return List.of();

@@ -8,7 +8,7 @@ public class AuthDtos {
     }
 
     public record LoginResponse(String token, Long agentId, String username, String displayName,
-                                 String role, Long merchantId, String merchantName,
+                                 Integer accountType, Long merchantId, String merchantName,
                                  List<String> permissions) {
     }
 }

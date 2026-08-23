@@ -217,8 +217,13 @@ public class GatewayMemberFetcher {
         try {
             emit("ready", "已连接 Discord Gateway，开始抓取成员...");
             
-            if (!readyLatch.await(30, TimeUnit.SECONDS)) {
-                throw new GatewayException("等待 Gateway READY 超时(30秒)，可能 Token 无效或网络不稳定", 408);
+            if (!readyLatch.await(60, TimeUnit.SECONDS)) {
+                GatewayException err = lastError.get();
+                if (err != null) {
+                    // 直接抛出原始错误，保留原始错误码和消息
+                    throw err;
+                }
+                throw new GatewayException("等待 Gateway READY 超时(60秒)，可能 Token 无效或网络不稳定", 408);
             }
 
             log.info("开始执行 fetchAll()，最大请求数={}, 最大成员数={}", maxRequestsRef, maxMembersRef);
@@ -809,6 +814,30 @@ public class GatewayMemberFetcher {
                         readyLatch.countDown();
                     }
                     
+                    // 处理 Discord Gateway 关闭码
+                    // 4004: Authentication failed - Token 无效，不可恢复
+                    // 4010: Token invalid
+                    // 4007: Token expired
+                    if (code == 4004 || code == 4010 || code == 4007) {
+                        String errorMsg;
+                        switch (code) {
+                            case 4004:
+                                errorMsg = "Discord 认证失败 (code: 4004)，Token 无效或已过期，请检查账号 Token 是否正确";
+                                break;
+                            case 4010:
+                                errorMsg = "Discord Token 无效 (code: 4010)，请重新获取账号 Token";
+                                break;
+                            case 4007:
+                                errorMsg = "Discord Token 已过期 (code: 4007)，请重新获取账号 Token";
+                                break;
+                            default:
+                                errorMsg = "Discord 连接失败 (code: " + code + ")，原因: " + reason;
+                        }
+                        lastError.set(new GatewayException(errorMsg, code));
+                        log.error("不可恢复的 Gateway 错误: {}", errorMsg);
+                        return; // 不尝试重连
+                    }
+                    
                     GatewayException err = lastError.get();
                     if (err == null) {
                         lastError.set(new GatewayException(
@@ -850,12 +879,20 @@ public class GatewayMemberFetcher {
             log.info("正在连接 Discord Gateway...");
             webSocket.connect();
 
-            if (!openLatch.await(30, TimeUnit.SECONDS)) {
-                throw new GatewayException("WebSocket 连接超时(30秒)", 504);
+            if (!openLatch.await(60, TimeUnit.SECONDS)) {
+                GatewayException err = lastError.get();
+                if (err != null) {
+                    throw new GatewayException("WebSocket 连接超时(60秒): " + err.getMessage(), 504);
+                }
+                throw new GatewayException("WebSocket 连接超时(60秒)，请检查网络连接或代理设置", 504);
             }
 
-            if (!readyLatch.await(30, TimeUnit.SECONDS)) {
-                throw new GatewayException("等待 Gateway READY 超时(30秒)，可能 Token 无效或网络不稳定", 408);
+            if (!readyLatch.await(60, TimeUnit.SECONDS)) {
+                GatewayException err = lastError.get();
+                if (err != null) {
+                    throw new GatewayException("等待 Gateway READY 超时(60秒): " + err.getMessage(), 408);
+                }
+                throw new GatewayException("等待 Gateway READY 超时(60秒)，可能原因：\n1. Token 无效或已过期\n2. 网络不稳定\n3. 代理服务器无法访问 Discord", 408);
             }
 
             if (lastError.get() != null) {

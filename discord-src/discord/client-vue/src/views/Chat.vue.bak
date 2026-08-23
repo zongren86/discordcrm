@@ -17,22 +17,13 @@
             <el-option v-for="acc in accountOptionsForFilter" :key="acc.id" :value="acc.id"
               :label="acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id)">
               {{ acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id) }}
-              <span v-if="!acc.tokenValid" style="color:#f56c6c;font-size:12px;margin-left:4px;">(失效)</span>
-              <span v-if="!acc._hasConversations && acc.tokenValid" style="color:#999;font-size:12px;margin-left:4px;">(无消息)</span>
+              <span v-if="!acc._hasConversations" style="color:#999;font-size:12px;margin-left:4px;">(无消息)</span>
             </el-option>
           </el-select>
 
           <el-select v-model="selectedStage" size="small" placeholder="漏斗" clearable class="filter-select">
             <el-option :value="null" label="全部阶段" />
             <el-option v-for="s in stageOptions" :key="s.value" :value="s.value" :label="s.label" />
-          </el-select>
-
-          <el-select v-model="selectedPresence" size="small" placeholder="状态" clearable class="filter-select">
-            <el-option :value="null" label="全部状态" />
-            <el-option value="online" label="在线" />
-            <el-option value="idle" label="闲置" />
-            <el-option value="dnd" label="请勿打扰" />
-            <el-option value="offline" label="离线" />
           </el-select>
 
           <el-popover placement="bottom-start" :width="440" trigger="click" v-model:visible="datePopoverVisible" popper-class="date-popover-popper" :close-on-click-modal="false" :teleported="false">
@@ -357,7 +348,7 @@
                   <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
                   <span v-if="msg.editedAt" class="msg-edited">(已编辑)</span>
                 </div>
-                <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted, 'bubble-media-only': !msg.isDeleted && (isGifMsg(msg) || isStickerMsg(msg)) }]">
+                <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted }]">
                   <!-- 非GIF附件区域（排除GIF，由专门的GIF区域渲染） -->
                   <div v-if="nonGifAttachments(msg).length" class="msg-attachments">
                     <div v-for="att in nonGifAttachments(msg)" :key="att.url" class="attachment-item">
@@ -422,7 +413,7 @@
                     <div v-if="hoveredGifMsgId === msg.id && !isGifFavorited(gifUrlOf(msg))" class="msg-gif-actions">
                       <el-tooltip content="收藏" placement="top">
                         <button class="msg-gif-btn" @click="handleFavoriteGif(msg)" title="收藏">
-                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
                         </button>
                       </el-tooltip>
                       <el-tooltip content="下载" placement="top">
@@ -434,7 +425,7 @@
                     <div v-else-if="hoveredGifMsgId === msg.id && isGifFavorited(gifUrlOf(msg))" class="msg-gif-actions">
                       <el-tooltip content="已收藏，点击取消" placement="top">
                         <button class="msg-gif-btn favorited" @click="handleUnfavoriteGif(msg)" title="取消收藏">
-                          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
                         </button>
                       </el-tooltip>
                       <el-tooltip content="下载" placement="top">
@@ -458,82 +449,7 @@
                     </div>
                   </div>
 
-                  <!-- Sticker消息渲染 -->
-                  <div v-if="!msg.isDeleted && isStickerMsg(msg)" class="msg-sticker-wrap">
-                    <template v-for="(sticker, idx) in stickerItemsOf(msg)" :key="idx">
-                      <!-- Lottie 动画 sticker -->
-                      <div v-if="isLottieSticker(sticker)"
-                           class="msg-lottie-wrapper"
-                           @mouseenter="hoveredStickerMsgId = msg.id"
-                           @mouseleave="hoveredStickerMsgId = null"
-                           @click="openMediaPreview(stickerLottieUrl(sticker))">
-                        <div :id="'lottie-sticker-' + msg.id + '-' + idx"
-                             class="msg-lottie-container"></div>
-                        <!-- Sticker 操作按钮 -->
-                        <template v-if="hoveredStickerMsgId === msg.id">
-                          <div v-if="isStickerFavorited(sticker)" class="msg-sticker-actions">
-                            <el-tooltip content="已收藏，点击取消" placement="top">
-                              <button class="msg-gif-btn favorited" @click.stop="handleStickerUnfavorite(sticker)" title="取消收藏">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                              </button>
-                            </el-tooltip>
-                            <el-tooltip content="下载" placement="top">
-                              <button class="msg-gif-btn" @click.stop="handleStickerDownload(sticker)" title="下载">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                              </button>
-                            </el-tooltip>
-                          </div>
-                          <div v-else class="msg-sticker-actions">
-                            <el-tooltip content="收藏" placement="top">
-                              <button class="msg-gif-btn" @click.stop="handleStickerFavorite(sticker)" title="收藏">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                              </button>
-                            </el-tooltip>
-                            <el-tooltip content="下载" placement="top">
-                              <button class="msg-gif-btn" @click.stop="handleStickerDownload(sticker)" title="下载">
-                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                              </button>
-                            </el-tooltip>
-                          </div>
-                        </template>
-                      </div>
-                      <!-- 非 Lottie 格式的 sticker -->
-                      <div v-else class="msg-sticker-img-wrapper"
-                           @mouseenter="hoveredStickerMsgId = msg.id"
-                           @mouseleave="hoveredStickerMsgId = null"
-                           @click="openMediaPreview(stickerLottieUrl(sticker))">
-                        <img :src="stickerLottieUrl(sticker)" class="msg-sticker-img" />
-                        <template v-if="hoveredStickerMsgId === msg.id">
-                          <div v-if="isStickerFavorited(sticker)" class="msg-sticker-actions">
-                            <button class="msg-gif-btn favorited" @click.stop="handleStickerUnfavorite(sticker)" title="取消收藏">
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                            </button>
-                            <button class="msg-gif-btn" @click.stop="handleStickerDownload(sticker)" title="下载">
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            </button>
-                          </div>
-                          <div v-else class="msg-sticker-actions">
-                            <button class="msg-gif-btn" @click.stop="handleStickerFavorite(sticker)" title="收藏">
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
-                            </button>
-                            <button class="msg-gif-btn" @click.stop="handleStickerDownload(sticker)" title="下载">
-                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                            </button>
-                          </div>
-                        </template>
-                      </div>
-                    </template>
-                  </div>
-
                   <div v-if="!msg.isDeleted && !isVoiceMsg(msg) && !isGifMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
-
-                  <!-- 图片附件渲染 -->
-                  <div v-if="!msg.isDeleted && imageAttachmentsOf(msg).length > 0" class="msg-image-attachments">
-                    <img v-for="(img, i) in imageAttachmentsOf(msg)" :key="i"
-                         :src="img.url" class="msg-image-attachment"
-                         @click="openMediaPreview(img.url)" />
-                  </div>
-
                   <div v-else-if="msg.isDeleted" class="msg-deleted-tip">[消息已删除]</div>
 
                   <div v-if="parseReactions(msg).length" class="msg-reactions">
@@ -610,10 +526,57 @@
               </div>
             </el-popover>
 
-            <!-- GIF 选择器入口（放在 emoji 图标右边） -->
-            <button class="toolbar-btn gif-picker-btn-inline" @click="gifPickerVisible = true" title="选择 GIF">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><text x="12" y="16" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">GIF</text></svg>
-            </button>
+            <el-popover v-model:visible="showGifPanel" placement="top-start" width="320" trigger="click">
+              <template #reference>
+                <el-button size="small" circle class="toolbar-btn">GIF</el-button>
+              </template>
+              <div class="gif-panel">
+                <el-tabs v-model="gifTab" size="small">
+                  <el-tab-pane label="收藏" name="favorites">
+                    <div class="gif-grid">
+                      <div v-for="(gif, i) in gifFavorites" :key="'fav-'+i" class="gif-item" @click="insertText(gif)">
+                        <img :src="gif" class="gif-thumb" />
+                      </div>
+                      <div v-if="gifFavorites.length === 0" class="gif-empty">暂无收藏</div>
+                    </div>
+                  </el-tab-pane>
+                  <el-tab-pane label="热门" name="hot">
+                    <div class="gif-grid">
+                      <div v-for="(gif, i) in gifHot" :key="'hot-'+i" class="gif-item" @click="insertText(gif)">
+                        <img :src="gif" class="gif-thumb" />
+                      </div>
+                    </div>
+                  </el-tab-pane>
+                </el-tabs>
+              </div>
+            </el-popover>
+
+            <el-popover v-model:visible="showStickerPanel" placement="top-start" width="280" trigger="click">
+              <template #reference>
+                <el-button size="small" circle class="toolbar-btn"><el-icon><Stamp /></el-icon></el-button>
+              </template>
+              <div class="sticker-panel">
+                <el-tabs v-model="stickerTab" size="small">
+                  <el-tab-pane label="系统" name="system">
+                    <div class="sticker-grid">
+                      <div v-for="(s, i) in systemStickers" :key="'sys-'+i" class="sticker-item" @click="insertText(s.url)">
+                        <img :src="s.url" class="sticker-thumb" />
+                        <span class="sticker-count" v-if="s.count">{{ s.count }}</span>
+                      </div>
+                    </div>
+                  </el-tab-pane>
+                  <el-tab-pane label="收藏" name="favorites">
+                    <div class="sticker-grid">
+                      <div v-for="(s, i) in favoriteStickers" :key="'fav-'+i" class="sticker-item" @click="insertText(s.url)">
+                        <img :src="s.url" class="sticker-thumb" />
+                        <span class="sticker-count" v-if="s.count">{{ s.count }}</span>
+                      </div>
+                      <div v-if="favoriteStickers.length === 0" class="sticker-empty">暂无收藏</div>
+                    </div>
+                  </el-tab-pane>
+                </el-tabs>
+              </div>
+            </el-popover>
 
             <el-popover v-model:visible="showMentionPanel" placement="top-start" width="240" trigger="click">
               <template #reference>
@@ -647,9 +610,6 @@
                 :label="lang.name"
               />
             </el-select>
-            <el-button size="small" type="primary" plain @click="requestTranslationPreview" :disabled="!inputText.trim()">
-              <el-icon><Location /></el-icon> 预览翻译
-            </el-button>
             <el-button size="small" type="primary" plain @click="translateCurrentMsg">
               <el-icon><Location /></el-icon> 翻译
             </el-button>
@@ -696,37 +656,6 @@
               <el-icon v-else><Document /></el-icon>
               <span>{{ att.name }}</span>
               <el-icon class="close-icon" @click="pendingAttachments.splice(i, 1)"><Close /></el-icon>
-            </div>
-          </div>
-
-          <!-- 翻译预览面板 -->
-          <div v-if="showTranslationPreview" class="translation-preview-panel">
-            <div class="translation-preview-header">
-              <span>🌐 翻译预览 → {{ targetLangLabel }}</span>
-              <el-button size="small" link @click="cancelTranslationPreview">取消</el-button>
-            </div>
-            <div class="translation-preview-content">
-              <div v-if="translationPreviewLoading" class="translation-preview-loading">
-                <el-icon class="is-loading"><Loading /></el-icon>
-                <span>正在翻译...</span>
-              </div>
-              <div v-else>
-                <div class="translation-preview-original">
-                  <span class="preview-label">原文：</span>
-                  <span>{{ inputText }}</span>
-                </div>
-                <div class="translation-preview-translated">
-                  <span class="preview-label">译文：</span>
-                  <span>{{ translationPreviewText }}</span>
-                </div>
-                <div class="translation-preview-hint">
-                  发送时将以译文内容发送，确认发送吗？
-                </div>
-              </div>
-            </div>
-            <div class="translation-preview-actions">
-              <el-button size="small" @click="editTranslationPreview" :disabled="translationPreviewLoading">编辑原文</el-button>
-              <el-button size="small" type="primary" @click="confirmTranslationPreview" :disabled="translationPreviewLoading">确认发送</el-button>
             </div>
           </div>
 
@@ -828,6 +757,9 @@
             <el-input v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
               :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
               resize="none" @keydown="onInputKeydown" class="msg-input" />
+            <button v-if="!isEditing && !recordedAudioData && !isRecording" class="gif-picker-btn" @click="gifPickerVisible = true" title="选择 GIF">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><text x="12" y="16" text-anchor="middle" font-size="8" fill="currentColor" stroke="none">GIF</text></svg>
+            </button>
             <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
               :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
               @click="send">
@@ -941,7 +873,7 @@
     <div class="gif-picker">
       <!-- Tab 切换 -->
       <el-tabs v-model="gifPickerTab">
-        <el-tab-pane label="GIF收藏" name="gifFavorites">
+        <el-tab-pane label="收藏" name="favorites">
           <div v-if="gifFavorites.length === 0" class="gif-empty">
             <p>暂无收藏的 GIF</p>
             <p class="gif-empty-hint">在聊天中 hover GIF 消息，点击❤️即可收藏</p>
@@ -950,23 +882,6 @@
             <div v-for="fav in gifFavorites" :key="fav.id" class="gif-item" 
                  @click="sendGifFromFavorite(fav)">
               <img :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'GIF'" 
-                   class="gif-thumb" @error="onGifError" />
-              <div class="gif-item-actions">
-                <button class="gif-item-btn" @click.stop="handleUnfavoriteById(fav.id)" title="取消收藏">
-                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                </button>
-              </div>
-            </div>
-          </div>
-        </el-tab-pane>
-        <el-tab-pane label="Sticker收藏" name="stickerFavorites">
-          <div v-if="stickerFavorites.length === 0" class="gif-empty">
-            <p>暂无收藏的 Sticker</p>
-          </div>
-          <div v-else class="gif-grid">
-            <div v-for="fav in stickerFavorites" :key="fav.id" class="gif-item" 
-                 @click="sendStickerFromFavorite(fav)">
-              <img :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'Sticker'" 
                    class="gif-thumb" @error="onGifError" />
               <div class="gif-item-actions">
                 <button class="gif-item-btn" @click.stop="handleUnfavoriteById(fav.id)" title="取消收藏">
@@ -1002,12 +917,11 @@ import {
   getConversationTags, addConversationTags, removeConversationTag, listTagNames as listTagNamesApi,
   listMessageTemplates, getTemplateCategories, createMessageTemplate,
   updateMessageTemplate, deleteMessageTemplate,
-  transcribeVoiceAsr, translateAsrText, translateText,
+  transcribeVoiceAsr, translateAsrText,
   getSupportedLanguages, getAISettingByFeature,
   listGifFavorites, addGifFavorite, removeGifFavorite, checkGifFavorited, normalizeGifUrl as normalizeGifUrlApi,
-  sendGifMessage as sendGifMessageApi, resolveGifUrl as resolveGifUrlApi
+  sendGifMessage as sendGifMessageApi
 } from '@/api'
-import lottie from 'lottie-web'
 
 const auth = useAuthStore()
 const accounts = useAccountsStore()
@@ -1020,7 +934,6 @@ const fileInputRef = ref(null)
 const convSearch = ref('')
 const selectedAccountId = ref(null)
 const selectedStage = ref(null)
-const selectedPresence = ref(null)
 const pinnedOnly = ref(false)
 const dateRange = ref(null)
 const tempDateRange = ref(null)
@@ -1031,9 +944,7 @@ const hoveredGifMsgId = ref(null)  // 当前鼠标悬停的 GIF 消息 ID
 const gifFavorites = ref([])  // 当前账号的 GIF 收藏列表
 const gifFavoritedUrls = ref(new Set())  // 已收藏的 GIF URL 集合
 const gifPickerVisible = ref(false)  // GIF 选择器弹窗可见性
-const gifPickerTab = ref('gifFavorites')  // 当前 Tab: gifFavorites | stickerFavorites
-const stickerFavorites = ref([])  // Sticker 收藏列表
-const hoveredStickerMsgId = ref(null)
+const gifPickerTab = ref('favorites')  // GIF 选择器当前 Tab
 
 // 当前会话对应的 Discord 账号 ID
 const currentAccountId = computed(() => {
@@ -1082,88 +993,6 @@ const aiTone = ref('friendly')
 const aiSuggestions = ref([])
 const aiLoading = ref(false)
 
-// Lottie 动画实例缓存
-const lottieInstances = new Map()
-
-/** 初始化单个 Lottie 动画 */
-async function initLottieAnimation(msgId, idx, sticker) {
-  const containerId = `lottie-sticker-${msgId}-${idx}`
-  const container = document.getElementById(containerId)
-  if (!container) return
-  
-  // 避免重复初始化
-  if (lottieInstances.has(containerId)) {
-    lottieInstances.get(containerId).destroy()
-    lottieInstances.delete(containerId)
-  }
-  
-  try {
-    const url = stickerLottieUrl(sticker)
-    if (!url) return
-    
-    // 如果需要代理，使用代理 URL
-    const fetchUrl = needsProxy(url) ? proxiedUrl(url) : url
-    
-    // 用 fetch 获取 JSON
-    const response = await fetch(fetchUrl)
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const jsonData = await response.json()
-    
-    const instance = lottie.loadAnimation({
-      container: container,
-      renderer: 'svg',
-      loop: true,
-      autoplay: true,
-      animationData: jsonData
-    })
-    lottieInstances.set(containerId, instance)
-  } catch (e) {
-    console.warn('Lottie 初始化失败:', containerId, e)
-    // 失败时尝试直接用 URL（不走代理）
-    try {
-      const url = stickerLottieUrl(sticker)
-      if (url && !needsProxy(url)) {
-        const instance = lottie.loadAnimation({
-          container: container,
-          renderer: 'svg',
-          loop: true,
-          autoplay: true,
-          path: url
-        })
-        lottieInstances.set(containerId, instance)
-      } else {
-        container.innerHTML = '<div style="color:#999;font-size:12px;padding:20px;text-align:center;">动画加载失败</div>'
-      }
-    } catch {
-      container.innerHTML = '<div style="color:#999;font-size:12px;padding:20px;text-align:center;">动画加载失败</div>'
-    }
-  }
-}
-
-/** 扫描消息列表，初始化所有待加载的 Lottie 动画 */
-function initPendingLottieAnimations() {
-  const msgs = conversations.currentMessages
-  if (!msgs || msgs.length === 0) return
-  
-  msgs.forEach(msg => {
-    if (!isStickerMsg(msg)) return
-    const items = stickerItemsOf(msg)
-    items.forEach((sticker, idx) => {
-      if (isLottieSticker(sticker)) {
-        const containerId = `lottie-sticker-${msg.id}-${idx}`
-        if (!lottieInstances.has(containerId)) {
-          nextTick(() => initLottieAnimation(msg.id, idx, sticker))
-        }
-      }
-    })
-  })
-}
-
-// 翻译预览相关状态
-const showTranslationPreview = ref(false)
-const translationPreviewText = ref("")
-const translationPreviewLoading = ref(false)
-
 // 使用 ref 对象代替 Set 以确保模板中的响应性
 const originalExpandedSet = ref({})
 const translatingSet = ref({})
@@ -1172,12 +1001,6 @@ const asrLoadingSet = ref({})
 const originalBelowExpanded = ref({})
 
 const targetLang = ref('zh')  // 目标语言：发送消息时自动翻译成好友的语言
-
-// 目标语言标签（用于翻译预览面板显示）
-const targetLangLabel = computed(() => {
-  const lang = supportedLanguages.find(l => l.code === targetLang.value)
-  return lang ? lang.name : targetLang.value
-})
 const readTranslateLang = 'zh'  // 阅读翻译：一键翻译时固定翻译成中文
 const detectedLang = ref('未知')
 const supportedLanguages = ref([])  // AI 翻译模型支持的所有语种
@@ -1315,38 +1138,6 @@ const filteredConversations = computed(() => {
   }
   if (pinnedOnly.value) {
     list = list.filter(c => c.pinned)
-  }
-  if (selectedPresence.value) {
-    list = list.filter(c => {
-      const presence = c.friendPresence || ''
-      const updatedAt = c.friendPresenceUpdatedAt
-      // 如果有明确的 Discord presence 状态，直接使用
-      if (presence) {
-        // online/idle/dnd/offline 匹配
-        if (selectedPresence.value === 'online') {
-          return presence.toLowerCase() === 'online'
-        } else if (selectedPresence.value === 'idle') {
-          return presence.toLowerCase() === 'idle'
-        } else if (selectedPresence.value === 'dnd') {
-          return presence.toLowerCase() === 'dnd' || presence.toLowerCase() === 'do_not_disturb'
-        } else if (selectedPresence.value === 'offline') {
-          return presence.toLowerCase() === 'offline' || presence.toLowerCase() === 'invisible'
-        }
-      }
-      // 如果没有 presence 字段，根据更新时间推断
-      if (!updatedAt) {
-        return selectedPresence.value === 'offline'  // 无数据视为离线
-      }
-      const diff = Date.now() - new Date(updatedAt).getTime()
-      if (selectedPresence.value === 'online') {
-        return diff < 5 * 60 * 1000  // 5分钟内视为在线
-      } else if (selectedPresence.value === 'idle') {
-        return diff >= 5 * 60 * 1000 && diff < 30 * 60 * 1000
-      } else if (selectedPresence.value === 'offline') {
-        return diff >= 30 * 60 * 1000
-      }
-      return false
-    })
   }
   if (dateRange.value && dateRange.value.length === 2) {
     const [start, end] = dateRange.value
@@ -1494,21 +1285,6 @@ const isOnline = computed(() => {
   return diff < 5 * 60 * 1000
 })
 
-const lastPresenceSeen = ref(null)
-
-const presenceStatus = computed(() => {
-  const lastSeen = lastPresenceSeen.value
-  if (!lastSeen) return 'offline'
-  const diff = Date.now() - new Date(lastSeen).getTime()
-  if (diff < 5 * 60 * 1000) return 'online'
-  if (diff < 30 * 60 * 1000) return 'idle'
-  return 'offline'
-})
-
-const presenceLabel = computed(() => {
-  return { online: '在线', idle: '闲置', dnd: '请勿打扰', offline: '离线' }[presenceStatus.value] || '离线'
-})
-
 function containsChinese(text) {
   return /[\u4e00-\u9fa5]/.test(text || '')
 }
@@ -1635,12 +1411,12 @@ function isGifMsg(msg) {
 
 function gifUrlOf(msg) {
   if (!msg) return ''
-
+  
   // 优先使用消息的gifUrl字段（后端上传后的CDN链接）
   if (msg.gifUrl) {
     return normalizeGifUrl(msg.gifUrl)
   }
-
+  
   // 优先从附件中获取GIF/动画URL
   const atts = parseAttachments(msg)
   if (atts.length > 0) {
@@ -1651,40 +1427,10 @@ function gifUrlOf(msg) {
     })
     if (gifAtt) return normalizeGifUrl(gifAtt.url)
   }
-
+  
   // 兜底：使用消息内容作为URL
   if (!msg?.content) return ''
-  const rawUrl = msg.content.trim()
-  
-  // 检查是否已解析过 klipy.com URL
-  if (resolvedGifUrls.value.has(rawUrl)) {
-    return resolvedGifUrls.value.get(rawUrl)
-  }
-  
-  // 检查是否是 klipy.com 页面链接，需要解析
-  if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
-    resolveGifUrl(rawUrl)
-  }
-  
-  return normalizeGifUrl(rawUrl)
-}
-
-/** 解析 klipy.com 页面 URL 为 CDN 直链 */
-async function resolveGifUrl(url) {
-  if (resolvingGifUrls.value.has(url)) return
-  resolvingGifUrls.value.add(url)
-  try {
-    const res = await resolveGifUrlApi(url)
-    if (res?.data?.resolvedUrl) {
-      resolvedGifUrls.value.set(url, res.data.resolvedUrl)
-      // 触发 Vue 响应式更新
-      resolvedGifUrls.value = new Map(resolvedGifUrls.value)
-    }
-  } catch (e) {
-    console.warn('解析 klipy.com URL 失败:', url, e)
-  } finally {
-    resolvingGifUrls.value.delete(url)
-  }
+  return normalizeGifUrl(msg.content.trim())
 }
 
 /**
@@ -1706,22 +1452,9 @@ function normalizeGifUrl(url) {
   return url
 }
 
-/** 不需要代理的域名（浏览器可直接加载且无 Cloudflare 防护） */
-const NO_PROXY_DOMAINS = [
-  'cdn.discordapp.com', 'media.discordapp.net',
-  'i.imgur.com', 'i.redd.it',
-  'c.tenor.com', 'media.tenor.com'
-]
-
-/** 已解析的 klipy.com URL 缓存：原始URL → CDN URL（CDN 也需要代理绕过 Cloudflare） */
-const resolvedGifUrls = ref(new Map())
-/** 正在解析的 URL 集合（防止并发重复解析） */
-const resolvingGifUrls = ref(new Set())
-
-/** 需要代理的外部 GIF/动画域名（浏览器直接加载会被 CORS/Cloudflare 阻止） */
+/** 需要代理的外部 GIF/动画域名（浏览器直接加载会被 CORS 阻止） */
 const EXTERNAL_GIF_DOMAINS = [
-  'klipy.com', 'static2.klipy.com', 'cdn.klipy.com',
-  'tenor.com', 'giphy.com', 'imgur.com',
+  'klipy.com', 'tenor.com', 'giphy.com', 'imgur.com',
   'futuri.io', 'gyazo.com', '4cdn.org', 'redd.it',
   'twitter.com', 'twimg.com', 'instagram.com'
 ]
@@ -1731,38 +1464,15 @@ function needsProxy(url) {
   if (!url) return false
   try {
     const hostname = new URL(url).hostname.toLowerCase()
-    // 已解析的 CDN 域名不需要代理
-    if (NO_PROXY_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))) {
-      return false
-    }
     return EXTERNAL_GIF_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))
   } catch {
     return false
   }
 }
 
-/** 检查URL是否为页面链接（非直接资源），如 klipy.com/gifs/xxx */
-function isPageUrl(url) {
-  if (!url) return false
-  // 如果已经解析过，返回 false（已变为 CDN 直链）
-  if (resolvedGifUrls.value.has(url)) return false
-  try {
-    const hostname = new URL(url).hostname.toLowerCase()
-    return hostname === 'klipy.com' || hostname.endsWith('.klipy.com')
-  } catch {
-    return false
-  }
-}
-
-/** 将外部 GIF URL 转为后端代理 URL，绕过浏览器 CORS/Cloudflare 限制 */
+/** 将外部 GIF URL 转为后端代理 URL，绕过浏览器 CORS 限制 */
 function proxiedUrl(url) {
   if (!url) return ''
-  // 如果是 klipy.com 页面链接且已解析，返回解析后的 CDN URL（CDN 也需要代理）
-  if (isPageUrl(url) && resolvedGifUrls.value.has(url)) {
-    const cdnUrl = resolvedGifUrls.value.get(url)
-    // CDN URL 也走代理（绕过 Cloudflare）
-    return '/api/proxy/fetch?url=' + encodeURIComponent(cdnUrl)
-  }
   if (needsProxy(url)) {
     return '/api/proxy/fetch?url=' + encodeURIComponent(url)
   }
@@ -1773,171 +1483,6 @@ function proxiedUrl(url) {
 function isVideoGif(url) {
   if (!url) return false
   return /\.(mp4|webm|mov)(\?|#|$)/i.test(url)
-}
-
-/** 判断是否 Sticker 消息 */
-function isStickerMsg(msg) {
-  if (!msg || msg.isDeleted) return false
-  // 优先检查 stickerItemsJson
-  if (msg.stickerItemsJson) return true
-  // 检查 messageType（后端返回的字段）
-  if (msg.messageType === 'sticker' || msg.messageType === 'lottie') return true
-  // 兼容旧字段名 contentType
-  if (msg.contentType === 'sticker' || msg.contentType === 'lottie') return true
-  // 检查是否是 Sticker/Lottie URL
-  if (msg.content && /^https?:\/\/\S+$/.test(msg.content.trim())) {
-    const url = msg.content.trim().toLowerCase()
-    if (url.includes('cdn.discordapp.com/stickers') || url.endsWith('.json')) {
-      return true
-    }
-  }
-  return false
-}
-
-/** 获取 Sticker 项列表 */
-function stickerItemsOf(msg) {
-  // 如果有 stickerItemsJson，直接解析
-  if (msg.stickerItemsJson) {
-    try {
-      const items = JSON.parse(msg.stickerItemsJson)
-      if (Array.isArray(items) && items.length > 0) return items
-    } catch { /* ignore */ }
-  }
-  
-  // 从 content 中提取 Sticker URL（兼容 URL 形式的 Sticker 消息）
-  if (msg.content && /^https?:\/\/\S+$/.test(msg.content.trim())) {
-    const url = msg.content.trim()
-    const lowerUrl = url.toLowerCase()
-    
-    // 处理 cdn.discordapp.com/stickers/xxx.json 格式
-    const stickerMatch = lowerUrl.match(/cdn\.discordapp\.com\/stickers\/(\d+)\.json/i)
-    if (stickerMatch) {
-      const stickerId = stickerMatch[1]
-      return [{
-        id: stickerId,
-        name: 'Sticker',
-        formatType: 3, // Lottie format
-        assetUrl: url
-      }]
-    }
-    
-    // 处理 cdn.discordapp.com/stickers/xxx/assetUrl.ext 格式
-    const assetMatch = lowerUrl.match(/cdn\.discordapp\.com\/stickers\/(\d+)\/([a-zA-Z0-9_-]+)\.(gif|png|webm|json)/i)
-    if (assetMatch) {
-      const stickerId = assetMatch[1]
-      const assetUrl = assetMatch[2]
-      const ext = assetMatch[3]
-      const formatType = ext === 'json' ? 3 : (ext === 'webm' ? 4 : 1)
-      return [{
-        id: stickerId,
-        name: 'Sticker',
-        formatType: formatType,
-        assetUrl: assetUrl + '.' + ext
-      }]
-    }
-  }
-  
-  return []
-}
-
-/** 判断是否 Lottie 格式 Sticker */
-function isLottieSticker(sticker) {
-  return sticker && (sticker.formatType === 3 || sticker.format === 'lottie')
-}
-
-/** 获取 Sticker 的资源 URL（Lottie 返回 JSON，图片返回 CDN 链接） */
-function stickerLottieUrl(sticker) {
-  if (!sticker) return ''
-  // 已经是完整 URL
-  if (sticker.assetUrl && sticker.assetUrl.startsWith('http')) return sticker.assetUrl
-  
-  // Lottie 格式
-  if (isLottieSticker(sticker)) {
-    if (sticker.assetUrl) {
-      return `https://cdn.discordapp.com/stickers/${sticker.id}/${sticker.assetUrl}.json`
-    }
-    return `https://cdn.discordapp.com/stickers/${sticker.id}?format=json`
-  }
-  
-  // 普通图片 Sticker：尝试多种可能的 CDN URL 格式
-  const appId = sticker.applicationId || sticker.appId
-  const ext = sticker.formatType === 4 ? 'webm' : 'png'  // 4 = animated
-  if (sticker.assetUrl) {
-    return `https://cdn.discordapp.com/stickers/${sticker.id}/${sticker.assetUrl}.${ext}`
-  }
-  // 兜底
-  return `https://cdn.discordapp.com/attachments/${appId || ''}/${sticker.id}.${ext}`
-}
-
-/** Sticker 是否已收藏 */
-function isStickerFavorited(sticker) {
-  return stickerFavorites.value.some(f => f.gifUrl && stickerLottieUrl(sticker).includes(f.gifUrl.split('/').pop() || f.gifUrl))
-}
-
-/** 收藏 Sticker */
-async function handleStickerFavorite(sticker) {
-  const url = stickerLottieUrl(sticker)
-  try {
-    await addGifFavorite(currentAccountId.value, url, sticker.name || 'Sticker', 'sticker')
-    await loadGifFavorites()
-    ElMessage.success('已收藏')
-  } catch (e) {
-    ElMessage.error('收藏失败')
-  }
-}
-
-/** 取消收藏 Sticker */
-async function handleStickerUnfavorite(sticker) {
-  const url = stickerLottieUrl(sticker)
-  const fav = stickerFavorites.value.find(f => url.includes((f.gifUrl || '').split('/').pop()))
-  if (fav) {
-    try {
-      await removeGifFavorite(fav.id, currentAccountId.value)
-      await loadGifFavorites()
-      ElMessage.success('已取消收藏')
-    } catch (e) {
-      ElMessage.error('操作失败')
-    }
-  }
-}
-
-/** 下载 Sticker */
-function handleStickerDownload(sticker) {
-  const url = stickerLottieUrl(sticker)
-  if (url) {
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `sticker-${sticker.id || Date.now()}.json`
-    a.target = '_blank'
-    a.click()
-  }
-}
-
-/** 判断是否图片附件 */
-function isImageAttachment(att) {
-  if (!att) return false
-  const ct = (att.contentType || '').toLowerCase()
-  if (ct.startsWith('image/')) return true
-  const name = (att.filename || att.name || '').toLowerCase()
-  return /\.(jpg|jpeg|png|gif|webp|bmp)$/.test(name)
-}
-
-/** 获取消息的图片附件列表 */
-function imageAttachmentsOf(msg) {
-  if (!msg || !msg.attachmentsJson) return []
-  try {
-    const arr = JSON.parse(msg.attachmentsJson)
-    return arr.filter(isImageAttachment)
-  } catch {
-    return []
-  }
-}
-
-/** 打开媒体预览 */
-function openMediaPreview(url) {
-  if (url) {
-    window.open(url, '_blank')
-  }
 }
 
 function isVoiceMsg(msg) {
@@ -2320,12 +1865,8 @@ function onGifError(e) {
 async function loadGifFavorites() {
   if (!currentAccountId.value) return
   try {
-    const [gifRes, stickerRes] = await Promise.all([
-      listGifFavorites(currentAccountId.value, 'gif'),
-      listGifFavorites(currentAccountId.value, 'sticker')
-    ])
-    stickerFavorites.value = stickerRes || []
-    gifFavorites.value = gifRes || []
+    const res = await listGifFavorites(currentAccountId.value)
+    gifFavorites.value = res || []
     gifFavoritedUrls.value = new Set(gifFavorites.value.map(f => f.gifUrl))
   } catch (e) {
     console.error('加载 GIF 收藏失败:', e)
@@ -2431,20 +1972,6 @@ async function sendGifFromFavorite(favorite) {
   } catch (e) {
     console.error('发送GIF失败:', e)
     ElMessage.error('发送失败')
-  }
-}
-
-/** 发送收藏的 Sticker */
-async function sendStickerFromFavorite(fav) {
-  if (!conversations.currentConversationId) {
-    ElMessage.warning('请选择会话')
-    return
-  }
-  try {
-    const url = fav.resolvedUrl || fav.favDisplayUrl || fav.gifUrl
-    await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
-  } catch (e) {
-    ElMessage.error('发送失败: ' + (e.message || ''))
   }
 }
 
@@ -2803,21 +2330,15 @@ async function send() {
     } else if (replyToMsg.value) {
       content = text
     }
-    // 构建附件数据（传递给后端实际发送）
-    let extra = {}
     if (pendingAttachments.value.length > 0) {
-      extra.attachments = pendingAttachments.value.map(a => ({
-        url: a.url || '',
-        name: a.name || 'file',
-        size: String(a.size || 0),
-        contentType: a.contentType || 'application/octet-stream'
-      }))
+      const attachmentDesc = pendingAttachments.value.map(a => `[附件:${a.name}]`).join(' ')
+      content = (content ? content + ' ' : '') + attachmentDesc
     }
     if (replyToMsg.value && replyToMsg.value.id) {
       await replyMessageApi(conversations.currentConversationId, replyToMsg.value.id, content, targetLang.value)
       replyToMsg.value = null
     } else {
-      await conversations.send(conversations.currentConversationId, content, targetLang.value, extra)
+      await conversations.send(conversations.currentConversationId, content, targetLang.value)
     }
     inputText.value = ''
     pendingAttachments.value = []
@@ -2840,8 +2361,6 @@ watch(() => conversations.currentMessages.length, (cnt) => {
   lastCount = cnt
   // 更新检测语言
   updateDetectedLang()
-  // 初始化新消息中的 Lottie 动画
-  nextTick(() => initPendingLottieAnimations())
 })
 
 watch(() => conversations.currentConversationId, async (newId, oldId) => {
@@ -2858,10 +2377,7 @@ watch(() => conversations.currentConversationId, async (newId, oldId) => {
     nextTick().then(() => scrollToBottom({ force: true }))
   }
   lastCount = (conversations.currentMessages || []).length
-  nextTick().then(() => {
-    autoTriggerPendingAsr()
-    initPendingLottieAnimations()
-  })
+  nextTick().then(() => autoTriggerPendingAsr())
   // 加载当前账号的 GIF 收藏
   await loadGifFavorites()
 })
@@ -3780,52 +3296,6 @@ async function translateCurrentMsg() {
   ElMessage.success(`正在翻译 ${inboundMsgs.length} 条消息...`)
 }
 
-/** 请求翻译预览 - 调用后端翻译API获取真实翻译结果 */
-async function requestTranslationPreview() {
-  const text = inputText.value.trim()
-  if (!text) {
-    ElMessage.info('请输入要翻译的内容')
-    return
-  }
-  translationPreviewLoading.value = true
-  translationPreviewText.value = text
-  showTranslationPreview.value = true
-  try {
-    const result = await translateText(text, targetLang.value)
-    if (result && result.translatedText) {
-      translationPreviewText.value = result.translatedText
-    }
-  } catch (e) {
-    console.error('翻译预览失败:', e)
-  } finally {
-    translationPreviewLoading.value = false
-  }
-}
-
-/** 确认翻译预览并发送（使用译文替换原文） */
-function confirmTranslationPreview() {
-  if (translationPreviewText.value) {
-    inputText.value = translationPreviewText.value
-  }
-  showTranslationPreview.value = false
-  translationPreviewText.value = ''
-  send()
-}
-
-/** 取消翻译预览 */
-function cancelTranslationPreview() {
-  showTranslationPreview.value = false
-  translationPreviewText.value = ''
-  translationPreviewLoading.value = false
-}
-
-/** 编辑翻译预览 - 将译文回填到输入框继续编辑 */
-function editTranslationPreview() {
-  inputText.value = translationPreviewText.value || inputText.value
-  showTranslationPreview.value = false
-  translationPreviewText.value = ''
-}
-
 // AI配置更新事件处理 - 确保配置修改即时生效
 async function onAISettingsUpdated(event) {
   if (event.detail?.feature === 'translate') {
@@ -4555,25 +4025,6 @@ onUnmounted(() => {
   border-top-right-radius: 4px;
 }
 
-/* GIF/Sticker 消息去除气泡背景和阴影 */
-.bubble-media-only {
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  padding: 4px 0 !important;
-  color: inherit !important;
-}
-
-.bubble-media-only.bubble-out {
-  background: transparent !important;
-  color: inherit !important;
-}
-
-.bubble-media-only.bubble-in {
-  background: transparent !important;
-  color: inherit !important;
-}
-
 .msg-content {
   white-space: pre-wrap;
   word-break: break-word;
@@ -4620,26 +4071,6 @@ onUnmounted(() => {
 .msg-gif-btn.favorited {
   color: #f56c6c;
   background: #fff;
-}
-
-/* 工具栏内联 GIF 按钮 */
-.gif-picker-btn-inline {
-  width: 32px;
-  height: 32px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-2);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  transition: all 0.2s;
-}
-
-.gif-picker-btn-inline:hover {
-  color: var(--color-primary);
-  background: var(--color-bg-4);
 }
 
 /* GIF 选择器按钮 */
@@ -6120,71 +5551,6 @@ video.msg-gif-img {
   align-items: center;
   gap: 10px;
 }
-
-/* 翻译预览面板 */
-.translation-preview-panel {
-  background: var(--el-bg-color, #fff);
-  border: 1px solid var(--el-border-color, #e4e7ed);
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin-bottom: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-}
-.translation-preview-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: var(--el-text-color-primary, #303133);
-}
-.translation-preview-content {
-  font-size: 14px;
-  color: var(--el-text-color-regular, #606266);
-}
-.translation-preview-loading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 16px 0;
-  color: var(--el-text-color-secondary, #909399);
-}
-.translation-preview-original,
-.translation-preview-translated {
-  margin-bottom: 6px;
-  line-height: 1.6;
-}
-.translation-preview-translated {
-  color: var(--el-color-primary, #409eff);
-}
-.preview-label {
-  font-weight: 500;
-  margin-right: 4px;
-}
-.translation-preview-hint {
-  color: var(--el-text-color-secondary, #909399);
-  font-size: 13px;
-  margin-top: 4px;
-}
-.translation-preview-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-/* Sticker/Lottie styles */
-.msg-sticker-wrap { display: flex; justify-content: center; margin: 4px 0; }
-.msg-lottie-wrapper { position: relative; cursor: pointer; max-width: 250px; max-height: 250px; }
-.msg-lottie-container { width: 200px; height: 200px; }
-.msg-sticker-img-wrapper { position: relative; cursor: pointer; }
-.msg-sticker-img { max-width: 200px; max-height: 200px; }
-.msg-sticker-actions { position: absolute; top: 4px; right: 4px; display: flex; gap: 4px; }
-.msg-gif-btn { width: 24px; height: 24px; border-radius: 50%; background: rgba(0,0,0,0.5); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #fff; padding: 4px; transition: background 0.2s; }
-.msg-gif-btn:hover { background: rgba(0,0,0,0.7); }
-.msg-gif-btn.favorited { color: #ffd700; }
-.msg-image-attachments { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
-.msg-image-attachment { max-width: 200px; max-height: 200px; border-radius: 4px; cursor: pointer; }
 </style>
 
 <style>

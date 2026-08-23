@@ -29,17 +29,15 @@ public class GifFavoriteController {
     }
 
     /**
-     * 获取当前账号的 GIF 收藏列表
+     * 获取当前账号的 GIF/Sticker 收藏列表
      */
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> listFavorites(
-            @RequestParam(value = "accountId", required = false) Long accountId) {
-        // 如果没有指定账号，使用当前会话的账号
-        // 这里可以根据前端传参获取，或从当前上下文获取
+            @RequestParam(value = "accountId", required = false) Long accountId,
+            @RequestParam(value = "type", required = false) String type) {
         Long targetAccountId = accountId;
         
-        // 如果是平台管理员，可以查看任意账号的收藏
-        if ("PLATFORM_ADMIN".equals(SecurityUtils.currentRole()) && targetAccountId == null) {
+        if (SecurityUtils.isPlatformAdmin() && targetAccountId == null) {
             return ResponseEntity.ok(List.of());
         }
         
@@ -48,6 +46,13 @@ public class GifFavoriteController {
         }
         
         List<GifFavorite> favorites = gifFavoriteService.getFavoritesByAccount(targetAccountId);
+        // 按类型过滤
+        if (type != null && !type.isEmpty()) {
+            final String filterType = type;
+            favorites = favorites.stream()
+                    .filter(f -> filterType.equals(f.getType()))
+                    .collect(Collectors.toList());
+        }
         List<Map<String, Object>> result = favorites.stream()
                 .map(this::toDto)
                 .collect(Collectors.toList());
@@ -56,19 +61,20 @@ public class GifFavoriteController {
     }
 
     /**
-     * 添加 GIF 收藏
+     * 添加 GIF/Sticker 收藏
      */
     @PostMapping
     public ResponseEntity<Map<String, Object>> addFavorite(@RequestBody Map<String, String> body) {
         String gifUrl = body.get("gifUrl");
         Long accountId = Long.parseLong(body.get("accountId"));
         String title = body.get("title");
+        String type = body.getOrDefault("type", "gif");
         
         if (gifUrl == null || gifUrl.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "GIF URL 不能为空"));
+            return ResponseEntity.badRequest().body(Map.of("error", "URL 不能为空"));
         }
         
-        GifFavorite favorite = gifFavoriteService.addFavorite(accountId, gifUrl, title);
+        GifFavorite favorite = gifFavoriteService.addFavorite(accountId, gifUrl, title, type);
         return ResponseEntity.ok(toDto(favorite));
     }
 
@@ -84,12 +90,13 @@ public class GifFavoriteController {
     }
 
     /**
-     * 检查 GIF 是否已收藏
+     * 检查 GIF/Sticker 是否已收藏
      */
     @GetMapping("/check")
     public ResponseEntity<Map<String, Object>> checkFavorited(
             @RequestParam Long accountId,
-            @RequestParam String gifUrl) {
+            @RequestParam String gifUrl,
+            @RequestParam(value = "type", required = false) String type) {
         boolean isFavorited = gifFavoriteService.isFavorited(accountId, gifUrl);
         Map<String, Object> result = new HashMap<>();
         result.put("favorited", isFavorited);
@@ -114,8 +121,9 @@ public class GifFavoriteController {
         dto.put("gifUrl", favorite.getGifUrl());
         dto.put("title", favorite.getTitle());
         dto.put("sourceDomain", favorite.getSourceDomain());
+        dto.put("type", favorite.getType() != null ? favorite.getType() : "gif");
         dto.put("createdAt", favorite.getCreatedAt());
-        dto.put("accountId", favorite.getDiscordAccount().getId());
+        dto.put("accountId", favorite.getDiscordAccountId());
         return dto;
     }
 }

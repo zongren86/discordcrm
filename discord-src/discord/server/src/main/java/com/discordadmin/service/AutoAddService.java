@@ -32,6 +32,7 @@ public class AutoAddService {
     private final EmuFriendPoolService friendPoolService;
     private final GuildMemberRepository memberRepository;
     private final EmuServerBindingRepository serverBindingRepository;
+    private final EmuAutoAddDispatcher dispatcher;
 
     // 每台模拟器的自动化开关（内存态，持久化交给 EmulatorInfo.autoRunning）
     private final Set<Integer> running = ConcurrentHashMap.newKeySet();
@@ -48,7 +49,8 @@ public class AutoAddService {
                           DataStoreService dataStore, EmuInstanceRepository instanceRepository,
                           EmuFriendPoolService friendPoolService,
                           GuildMemberRepository memberRepository,
-                          EmuServerBindingRepository serverBindingRepository) {
+                          EmuServerBindingRepository serverBindingRepository,
+                          EmuAutoAddDispatcher dispatcher) {
         this.emulatorService = emulatorService;
         this.discordService = discordService;
         this.dataStore = dataStore;
@@ -56,6 +58,7 @@ public class AutoAddService {
         this.friendPoolService = friendPoolService;
         this.memberRepository = memberRepository;
         this.serverBindingRepository = serverBindingRepository;
+        this.dispatcher = dispatcher;
     }
 
     private Long resolveMerchantId() {
@@ -230,10 +233,6 @@ public class AutoAddService {
         return "SUCCESS";
     }
 
-    public void stopAll() {
-        for (int idx : new ArrayList<>(running)) stop(idx);
-    }
-
     public boolean isRunning(int index) {
         return running.contains(index);
     }
@@ -243,15 +242,6 @@ public class AutoAddService {
         return busy.contains(index);
     }
 
-    /** 默认全局启动：对所有 RUNNING 模拟器启动（已运行的不重复登录） */
-    public synchronized void startAll() {
-        for (EmulatorInfo info : emulatorService.getAllEmulators()) {
-            if ("RUNNING".equals(info.getStatus()) && !running.contains(info.getIndex())) {
-                start(info.getIndex());
-            }
-        }
-    }
-
     private long randomDelay() {
         int min = dataStore.getConfig().getDelayMinSeconds();
         int max = dataStore.getConfig().getDelayMaxSeconds();
@@ -259,9 +249,13 @@ public class AutoAddService {
         return (long) (min + new Random().nextInt(max - min + 1)) * 1000;
     }
 
-    /** 心跳：每秒检查各台是否到达排程时间 */
+    /** 心跳：每秒检查各台是否到达排程时间；批量任务运行中时跳过，避免双调度 */
     @Scheduled(fixedDelay = 1000)
     public void tick() {
+        // 批量调度器运行中时，由 EmuAutoAddDispatcher 统一推进，tick 跳过
+        if (dispatcher.isBatchTaskRunning()) {
+            return;
+        }
         long now = System.currentTimeMillis();
         for (int index : new ArrayList<>(running)) {
             EmulatorInfo info = emulatorService.getEmulator(index);

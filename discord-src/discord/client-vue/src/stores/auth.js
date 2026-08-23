@@ -44,7 +44,7 @@ export const useAuthStore = defineStore('auth', {
         id: res.agentId ?? res.id,
         username: res.username,
         displayName: res.displayName ?? res.name,
-        role: res.role,
+        accountType: res.accountType,
         merchantId: res.merchantId ?? null,
         merchantName: res.merchantName ?? null
       }
@@ -70,7 +70,7 @@ export const useAuthStore = defineStore('auth', {
             id: res.agentId,
             username: res.username,
             displayName: res.displayName,
-            role: res.role,
+            accountType: res.accountType,
             merchantId: res.merchantId ?? null,
             merchantName: res.merchantName ?? null
           }

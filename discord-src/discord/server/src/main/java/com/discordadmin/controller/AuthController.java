@@ -63,7 +63,7 @@ public class AuthController {
         }
 
         String token = jwtUtil.generateToken(agent.getId(), agent.getUsername(),
-                agent.getRole().name(), agent.getMerchantId());
+                agent.getAccountType(), agent.getMerchantId());
 
         String merchantName = null;
         if (agent.getMerchantId() != null) {
@@ -74,7 +74,7 @@ public class AuthController {
         List<String> permissions = getAgentPermissions(agent);
 
         return new LoginResponse(token, agent.getId(), agent.getUsername(),
-                agent.getDisplayName(), agent.getRole().name(),
+                agent.getDisplayName(), agent.getAccountType(),
                 agent.getMerchantId(), merchantName, permissions);
     }
 
@@ -179,7 +179,7 @@ public class AuthController {
         Map<String, Object> result = new HashMap<>();
         result.put("agentId", agent.agentId());
         result.put("username", agent.username());
-        result.put("role", agent.role());
+        result.put("accountType", agent.accountType());
         result.put("merchantId", agent.merchantId());
 
         Agent agentEntity = agentRepository.findById(agent.agentId()).orElse(null);
@@ -233,30 +233,22 @@ public class AuthController {
             }
         }
         
-        // 如果没有自定义角色或自定义角色没有分配权限，则根据内置角色类型返回默认权限
+        // 如果没有自定义角色或自定义角色没有分配权限，则根据账号类型返回默认权限
         if (!hasPermissions) {
-            Agent.AgentRole agentRole = agent.getRole();
-            if (agentRole == null) {
-                agentRole = Agent.AgentRole.SALES;
+            Integer accountType = agent.getAccountType();
+            if (accountType == null) {
+                accountType = 1;
             }
-            switch (agentRole) {
-                case PLATFORM_ADMIN:
+            if (accountType == 0) {
+                // 管理员：区分平台管理员和商户管理员
+                if (agent.getMerchantId() == null) {
                     permissions.addAll(getPlatformAdminPermissions());
-                    break;
-                case MERCHANT_ADMIN:
+                } else {
                     permissions.addAll(getMerchantAdminPermissions());
-                    break;
-                case MANAGER:
-                    permissions.addAll(getManagerPermissions());
-                    break;
-                case SALES:
-                    permissions.addAll(getSalesPermissions());
-                    break;
-                case SERVICE:
-                    permissions.addAll(getServicePermissions());
-                    break;
-                default:
-                    permissions.addAll(getSalesPermissions());
+                }
+            } else {
+                // 普通账号：基础权限
+                permissions.addAll(getSalesPermissions());
             }
         }
         
@@ -273,7 +265,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "system", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "users", "roles", "features", "audit"
+            "friend-manage", "friend-list", "friend-config", "ai-settings", "users", "roles", "features", "audit"
         );
     }
 
@@ -281,7 +273,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "audit"
+            "friend-manage", "friend-list", "friend-config", "ai-settings", "audit"
         );
     }
 
@@ -289,21 +281,21 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "audit"
+            "friend-manage", "friend-list", "friend-config", "ai-settings", "audit"
         );
     }
 
     private List<String> getSalesPermissions() {
         return List.of(
             "dashboard", "chat", "customer", "service",
-            "accounts", "customers", "guild-members", "friend-manage", "account-numbers"
+            "accounts", "customers", "guild-members", "friend-manage", "friend-list", "account-numbers"
         );
     }
 
     private List<String> getServicePermissions() {
         return List.of(
             "chat", "customer", "service",
-            "accounts", "customers", "friend-manage", "account-numbers"
+            "accounts", "customers", "friend-manage", "friend-list", "account-numbers"
         );
     }
 }

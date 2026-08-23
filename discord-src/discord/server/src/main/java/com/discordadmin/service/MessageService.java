@@ -37,6 +37,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -482,6 +484,104 @@ public class MessageService {
     @Transactional
     public Message sendReply(Long conversationId, String content, String targetLanguage, String agentDisplayName) {
         return sendReply(conversationId, content, targetLanguage, null, null, null, null, null, agentDisplayName);
+    }
+
+    /** 带附件的发送方法 */
+    @Transactional
+    public Message sendReply(Long conversationId, String content, String targetLanguage,
+                              String messageType, String audioData, String audioMimeType,
+                              Integer audioDuration, String audioFileName, String agentDisplayName,
+                              java.util.List<java.util.Map<String, String>> attachments) {
+        // 如果有附件，先发送附件消息
+        if (attachments != null && !attachments.isEmpty()) {
+            sendAttachments(conversationId, attachments, agentDisplayName);
+        }
+        // 再发送文本/语音消息
+        return sendReply(conversationId, content, targetLanguage,
+                messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
+    }
+
+    /** 发送附件到 Discord 并保存本地记录 */
+    private void sendAttachments(Long conversationId, java.util.List<java.util.Map<String, String>> attachments, String agentDisplayName) {
+        try {
+            Conversation conversation = conversationRepository.findById(conversationId)
+                    .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+            DiscordAccount account = discordAccountRepository.findById(
+                            conversation.getDiscordAccount().getId())
+                    .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
+
+            StringBuilder attachmentDesc = new StringBuilder();
+            java.util.List<java.util.Map<String, String>> sentAttachments = new java.util.ArrayList<>();
+
+            for (java.util.Map<String, String> att : attachments) {
+                String url = att.get("url");
+                String fileName = att.get("name");
+                String contentType = att.get("contentType");
+                
+                if (url == null || url.isBlank()) continue;
+                // 如果是相对路径，补全为绝对URL
+                if (url.startsWith("/")) {
+                    url = "http://localhost:8090" + url;
+                }
+                
+                try {
+                    // 下载文件
+                    HttpClient client = HttpClient.newBuilder()
+                            .connectTimeout(Duration.ofSeconds(30))
+                            .build();
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(URI.create(url))
+                            .timeout(Duration.ofSeconds(60))
+                            .GET()
+                            .build();
+                    HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                    
+                    if (response.statusCode() == 200) {
+                        byte[] fileBytes = response.body();
+                        String mimeType = contentType != null ? contentType : "application/octet-stream";
+                        String name = fileName != null ? fileName : "attachment";
+                        
+                        // 发送到 Discord
+                        if (account.getAccountType() == DiscordAccount.AccountType.USER) {
+                            discordUserClient.sendMessageWithFile(
+                                    account.getToken(), conversation.getChannelId(), "",
+                                    name, fileBytes, mimeType, null, null);
+                        } else {
+                            log.warn("Bot 账号暂不支持文件附件发送");
+                        }
+                        // 记录已发送的附件
+                        Map<String, String> sent = new java.util.HashMap<>();
+                        sent.put("url", url);
+                        sent.put("name", name);
+                        sent.put("contentType", mimeType);
+                        sent.put("size", String.valueOf(fileBytes.length));
+                        sentAttachments.add(sent);
+                        attachmentDesc.append("[附件:").append(name).append("] ");
+                    }
+                } catch (Exception e) {
+                    log.error("发送附件失败: {}", e.getMessage());
+                }
+            }
+            
+            // 保存附件消息到数据库（让前端能显示）
+            if (!sentAttachments.isEmpty()) {
+                Message attMsg = new Message();
+                attMsg.setConversation(conversation);
+                attMsg.setDirection(Message.Direction.OUTBOUND);
+                attMsg.setSenderName(agentDisplayName != null ? agentDisplayName : "我");
+                attMsg.setContent(attachmentDesc.toString().trim());
+                attMsg.setAttachmentsJson(toJson(sentAttachments));
+                attMsg.setMessageType("attachment");
+                attMsg.setCreatedAt(Instant.now());
+                Message savedAtt = messageRepository.save(attMsg);
+                
+                // 推送到前端
+                MessageDtos.MessageDto dto = MessageDtos.MessageDto.from(savedAtt);
+                messagingTemplate.convertAndSend("/topic/messages", dto);
+            }
+        } catch (Exception e) {
+            log.error("发送附件整体失败: {}", e.getMessage());
+        }
     }
 
     public void translateAndSave(Message message, String targetLanguage) {
@@ -1141,13 +1241,10 @@ public class MessageService {
 
         Message saved = messageRepository.save(message);
 
-        // 推送 WebSocket 消息
-        messagingTemplate.convertAndSend("/topic/messages", Map.of(
-                "type", "message",
-                "conversationId", conversationId,
-                "messageId", saved.getId(),
-                "data", saved
-        ));
+        // 推送 WebSocket 消息（使用 DTO 避免 Hibernate 懒加载序列化问题）
+        MessageDtos.MessageDto dto = MessageDto.from(saved, conversation, account);
+        messagingTemplate.convertAndSend("/topic/conversations/" + conversationId, dto);
+        messagingTemplate.convertAndSend("/topic/messages", dto);
 
         log.info("GIF 消息发送成功: conversationId={}, gifUrl={}, discordMessageId={}",
                 conversationId, gifUrl, discordMessageId);
@@ -1354,6 +1451,18 @@ public class MessageService {
      * GIF 发送结果记录
      */
     private record GifSendResult(String messageId, String attachmentUrl, String sentContent) {
+    }
+
+    /**
+     * 将对象列表序列化为 JSON 字符串
+     */
+    private String toJson(Object obj) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(obj);
+        } catch (Exception e) {
+            log.error("序列化失败: {}", e.getMessage());
+            return "[]";
+        }
     }
 
 }

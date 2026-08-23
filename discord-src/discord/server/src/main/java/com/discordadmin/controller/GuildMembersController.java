@@ -80,11 +80,12 @@ public class GuildMembersController {
             @RequestParam(defaultValue = "20") int size) {
 
         Long merchantId = SecurityUtils.currentMerchantId();
-        String role = SecurityUtils.currentRole();
+        boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
+        boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
         // 1) 权限：先收敛当前用户可见的服务器ID集合
-        Set<Long> visibleServerIds = resolveVisibleServerIds(merchantId, role, currentAgentId);
+        Set<Long> visibleServerIds = resolveVisibleServerIds(merchantId, isPlatformAdmin, isMerchantAdmin, currentAgentId);
         if (visibleServerIds.isEmpty()) {
             return emptyPage(page, size);
         }
@@ -143,12 +144,12 @@ public class GuildMembersController {
 
         // 6) 仅当非 管理员 时，才进行"会话可见性"过滤（成本最高的一步，限定在分页大小内）
         List<MemberDTO> dtos;
-        if ("PLATFORM_ADMIN".equals(role) || "MERCHANT_ADMIN".equals(role)) {
+        if (isPlatformAdmin || isMerchantAdmin) {
             dtos = buildDTOs(members, serverMap, accountMap, friendMap, assignedAccountMap);
         } else {
             Map<String, Map<Long, Conversation>> conversationMap = batchFetchConversations(members, friendMap, serverMap);
             List<MemberDTO> allDtos = buildDTOs(members, serverMap, accountMap, friendMap, assignedAccountMap);
-            dtos = filterDtosByAgentAccess(allDtos, conversationMap, currentAgentId, role);
+            dtos = filterDtosByAgentAccess(allDtos, conversationMap, currentAgentId, false);
         }
 
         return new PageResponse<>(dtos, memberPage.getTotalElements(),
@@ -160,13 +161,13 @@ public class GuildMembersController {
     }
 
     /** 权限：确定当前用户可见的所有服务器ID */
-    private Set<Long> resolveVisibleServerIds(Long merchantId, String role, Long currentAgentId) {
+    private Set<Long> resolveVisibleServerIds(Long merchantId, boolean isPlatformAdmin, boolean isMerchantAdmin, Long currentAgentId) {
         Set<Long> visibleServerIds;
-        if ("PLATFORM_ADMIN".equals(role)) {
+        if (isPlatformAdmin) {
             visibleServerIds = merchantId != null
                     ? guildServerRepository.findByMerchantId(merchantId).stream().map(GuildServer::getId).collect(Collectors.toSet())
                     : guildServerRepository.findAll().stream().map(GuildServer::getId).collect(Collectors.toSet());
-        } else if ("MERCHANT_ADMIN".equals(role)) {
+        } else if (isMerchantAdmin) {
             visibleServerIds = merchantId != null
                     ? guildServerRepository.findByMerchantId(merchantId).stream().map(GuildServer::getId).collect(Collectors.toSet())
                     : Collections.emptySet();
@@ -247,13 +248,14 @@ public class GuildMembersController {
     @GetMapping("/servers")
     public List<Map<String, Object>> listServers() {
         Long merchantId = SecurityUtils.currentMerchantId();
-        String role = SecurityUtils.currentRole();
+        boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
+        boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
         List<GuildServer> servers;
 
         // 普通用户：只能看到分配给自己账号的服务器
-        if (!"PLATFORM_ADMIN".equals(role) && !"MERCHANT_ADMIN".equals(role) && currentAgentId != null) {
+        if (!isPlatformAdmin && !isMerchantAdmin && currentAgentId != null) {
             Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
             if (assignedAccountIds.isEmpty()) {
                 return List.of();
@@ -280,13 +282,14 @@ public class GuildMembersController {
     @GetMapping("/accounts")
     public List<Map<String, Object>> listAccounts() {
         Long merchantId = SecurityUtils.currentMerchantId();
-        String role = SecurityUtils.currentRole();
+        boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
+        boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
         List<DiscordAccount> accounts;
 
         // 普通用户：只能看到自己分配的账号
-        if (!"PLATFORM_ADMIN".equals(role) && !"MERCHANT_ADMIN".equals(role) && currentAgentId != null) {
+        if (!isPlatformAdmin && !isMerchantAdmin && currentAgentId != null) {
             Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
             if (assignedAccountIds.isEmpty()) {
                 return List.of();
@@ -311,11 +314,11 @@ public class GuildMembersController {
      */
     private List<MemberDTO> filterDtosByAgentAccess(List<MemberDTO> dtos,
                                                      Map<String, Map<Long, Conversation>> conversationMap,
-                                                     Long currentAgentId, String role) {
+                                                     Long currentAgentId, boolean isAdmin) {
         if (dtos.isEmpty()) return dtos;
 
-        // 平台管理员和商户管理员可见全部
-        if ("PLATFORM_ADMIN".equals(role) || "MERCHANT_ADMIN".equals(role)) {
+        // 管理员可见全部
+        if (isAdmin) {
             return dtos;
         }
 

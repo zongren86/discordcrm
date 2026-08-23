@@ -240,6 +240,11 @@ public class EmuAutoAddDispatcher {
         return status;
     }
 
+    /** 批量任务是否在运行（供 AutoAddService.tick 过滤，避免双调度） */
+    public boolean isBatchTaskRunning() {
+        return isTaskRunning;
+    }
+
     /**
      * 执行一轮加好友
      */
@@ -529,18 +534,7 @@ public class EmuAutoAddDispatcher {
             openErr = "打开Discord异常: " + truncate(e.getMessage(), 150);
         }
 
-        // ========== Step 3: 测试模式/生产模式分支 ==========
-        if (testMode) {
-            // 测试：不添加好友；只把打开/登录状态作为最后添加结果回传
-            boolean ok = discordReady;
-            String msg = ok ? "【测试】Discord已进入首页，账号登录: " + (discordUser != null ? discordUser : "(已登录)")
-                           : "【测试】" + (openErr != null ? openErr : "打开Discord未就绪");
-            writeResult(dbIndex, merchantId, userId, true, ok, msg, discordLoggedIn, discordOnHome(discordReady), discordUser, startTs);
-            scheduleNextAndClose(dbIndex, merchantId, userId, cfg, true);
-            return;
-        }
-
-        // === 生产模式：加一个好友 ===
+        // ========== Step 3: 准备加好友流程（测试/生产共用前半段） ==========
         if (!discordReady) {
             writeResult(dbIndex, merchantId, userId, false,
                     false, "无法添加: " + (openErr == null ? "Discord未就绪" : openErr),
@@ -570,6 +564,24 @@ public class EmuAutoAddDispatcher {
         GuildMember target = pending.get(0);
         String username = (target.getUsername() != null && !target.getUsername().isBlank())
                 ? target.getUsername() : target.getUserId();
+
+        // ========== Step 4: 测试模式拦截点 ==========
+        if (testMode) {
+            // 测试模式：录入用户名后不发起请求，直接返回结果并关闭
+            target.setFriendStatus(friendPoolService.STATUS_ASSIGNED);
+            target.setEmulatorIndex(dbIndex);
+            target.setStartedAt(Instant.now());
+            target.setUpdatedAt(Instant.now());
+            memberRepository.save(target);
+
+            String msg = "【测试】录入用户名 " + username + " 后，未最终发起请求";
+            writeResult(dbIndex, merchantId, userId, true, false, msg,
+                    discordLoggedIn, discordOnHome(discordReady), discordUser, startTs);
+            scheduleNextAndClose(dbIndex, merchantId, userId, cfg, false);
+            return;
+        }
+
+        // === 生产模式：真正添加好友 ===
         // 标记已分配
         target.setFriendStatus(friendPoolService.STATUS_ASSIGNED);
         target.setEmulatorIndex(dbIndex);
@@ -710,5 +722,25 @@ public class EmuAutoAddDispatcher {
         if (o == null) return "null";
         try { String s = String.valueOf(o); return s.length() <= 120 ? s : s.substring(0, 120); }
         catch (Exception e) { return o.getClass().getSimpleName(); }
+    }
+
+    /**
+     * 重置所有模拟器的 autoRunning 状态为 false
+     * 用于在任务未运行时清理残留状态
+     */
+    public void resetAllAutoRunning(Long merchantId, String userId) {
+        List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+        int resetCount = 0;
+        for (EmuInstance e : instances) {
+            if (Boolean.TRUE.equals(e.getAutoRunning())) {
+                e.setAutoRunning(false);
+                e.setUpdatedAt(Instant.now());
+                instanceRepository.save(e);
+                resetCount++;
+            }
+        }
+        if (resetCount > 0) {
+            log.info("重置了 {} 个模拟器的 autoRunning 状态", resetCount);
+        }
     }
 }

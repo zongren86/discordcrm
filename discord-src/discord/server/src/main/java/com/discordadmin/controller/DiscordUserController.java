@@ -76,7 +76,7 @@ public class DiscordUserController {
     public record UserProfileDto(
             Long id, String discordUserId, String username, String globalName,
             String avatarUrl, String notes, String tags, String status,
-            String firstSeenAt, String lastActiveAt, String serverName
+            String firstSeenAt, String lastActiveAt, String presence, String presenceUpdatedAt, String serverName
     ) {
         public static UserProfileDto from(DiscordUser u) {
             return new UserProfileDto(
@@ -85,6 +85,8 @@ public class DiscordUserController {
                     u.getStatus() != null ? u.getStatus().name() : "NORMAL",
                     u.getFirstSeenAt() != null ? u.getFirstSeenAt().toString() : null,
                     u.getLastActiveAt() != null ? u.getLastActiveAt().toString() : null,
+                    u.getPresence(),
+                    u.getPresenceUpdatedAt() != null ? u.getPresenceUpdatedAt().toString() : null,
                     null
             );
         }
@@ -96,6 +98,8 @@ public class DiscordUserController {
                     u.getStatus() != null ? u.getStatus().name() : "NORMAL",
                     u.getFirstSeenAt() != null ? u.getFirstSeenAt().toString() : null,
                     u.getLastActiveAt() != null ? u.getLastActiveAt().toString() : null,
+                    u.getPresence(),
+                    u.getPresenceUpdatedAt() != null ? u.getPresenceUpdatedAt().toString() : null,
                     serverName
             );
         }

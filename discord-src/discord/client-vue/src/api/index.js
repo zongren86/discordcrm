@@ -127,6 +127,7 @@ export function sendMessage(conversationId, content, targetLanguage, extra = {})
   if (extra.audioMimeType) body.audioMimeType = extra.audioMimeType
   if (extra.audioDuration) body.audioDuration = extra.audioDuration
   if (extra.audioFileName) body.audioFileName = extra.audioFileName
+  if (extra.attachments) body.attachments = extra.attachments
   return http.post('/conversations/' + conversationId + '/messages', body)
 }
 
@@ -154,6 +155,11 @@ export function translateAsrText(conversationId, messageId, targetLanguage = 'zh
 
 export function detectLanguage(text) {
   return http.post('/conversations/detect-language', { text })
+}
+
+/** 翻译文本（用于翻译预览等场景） */
+export function translateText(text, targetLanguage) {
+  return http.post('/conversations/translate-text', { text, targetLanguage })
 }
 
 export function detectMessageLanguage(conversationId, messageId) {
@@ -531,11 +537,15 @@ export function unlinkAccountNumber(userId, accountNumberId) {
 }
 
 // === GIF 收藏 ===
-export function listGifFavorites(accountId) {
-  return http.get('/gif-favorites', { params: { accountId } })
+export function listGifFavorites(accountId, type) {
+  const params = { accountId }
+  if (type) params.type = type
+  return http.get('/gif-favorites', { params })
 }
-export function addGifFavorite(accountId, gifUrl, title) {
-  return http.post('/gif-favorites', { accountId, gifUrl, title })
+export function addGifFavorite(accountId, gifUrl, title, type) {
+  const body = { accountId, gifUrl, title }
+  if (type) body.type = type
+  return http.post('/gif-favorites', body)
 }
 export function removeGifFavorite(id, accountId) {
   return http.delete(`/gif-favorites/${id}`, { params: { accountId } })
@@ -545,4 +555,7 @@ export function checkGifFavorited(accountId, gifUrl) {
 }
 export function normalizeGifUrl(url) {
   return http.get('/gif-favorites/normalize-url', { params: { url } })
+}
+export function resolveGifUrl(url) {
+  return http.get('/proxy/resolve-gif-url', { params: { url } })
 }

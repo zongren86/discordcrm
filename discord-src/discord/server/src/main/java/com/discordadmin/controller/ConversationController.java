@@ -13,6 +13,7 @@ import com.discordadmin.security.JwtAuthFilter.AuthenticatedAgent;
 import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.ConversationService;
 import com.discordadmin.translation.LanguageDetectionService;
+import com.discordadmin.translation.TranslationServiceFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
@@ -28,11 +29,14 @@ public class ConversationController {
 
     private final ConversationService conversationService;
     private final LanguageDetectionService languageDetectionService;
+    private final TranslationServiceFactory translationServiceFactory;
 
     public ConversationController(ConversationService conversationService, 
-                                    LanguageDetectionService languageDetectionService) {
+                                    LanguageDetectionService languageDetectionService,
+                                    TranslationServiceFactory translationServiceFactory) {
         this.conversationService = conversationService;
         this.languageDetectionService = languageDetectionService;
+        this.translationServiceFactory = translationServiceFactory;
     }
 
     @PostMapping("/open-dm")
@@ -77,7 +81,8 @@ public class ConversationController {
                                    @RequestBody SendMessageRequest request) {
         return conversationService.sendMessage(id, request.content(), request.targetLanguage(),
                 request.messageType(), request.audioData(), request.audioMimeType(),
-                request.audioDuration(), request.audioFileName(), getCurrentUsername());
+                request.audioDuration(), request.audioFileName(), getCurrentUsername(),
+                request.attachments());
     }
 
     @PostMapping("/{id}/messages/gif")
@@ -176,6 +181,28 @@ public class ConversationController {
         return response;
     }
 
+    /** 文本翻译：用于翻译预览等场景，直接翻译文本而不保存消息 */
+    @PostMapping("/translate-text")
+    public Map<String, Object> translateText(@RequestBody TranslateTextRequest request) {
+        Map<String, Object> response = new HashMap<>();
+        try {
+            Long merchantId = SecurityUtils.currentMerchantId();
+            String translated = translationServiceFactory.translate(
+                    request.text(), request.targetLanguage(), merchantId)
+                    .orElse(request.text());
+            response.put("code", 200);
+            Map<String, Object> data = new HashMap<>();
+            data.put("translatedText", translated);
+            data.put("sourceText", request.text());
+            data.put("targetLanguage", request.targetLanguage());
+            response.put("data", data);
+        } catch (Exception e) {
+            response.put("code", 500);
+            response.put("message", "翻译失败: " + e.getMessage());
+        }
+        return response;
+    }
+
     /**
      * 获取 AI 翻译模型支持的所有语种列表
      */
@@ -244,4 +271,5 @@ public class ConversationController {
     public record TransferRequest(Long agentId, String reason) {}
     public record DetectLanguageRequest(String text) {}
     public record SendGifRequest(String gifUrl, String title) {}
+    public record TranslateTextRequest(String text, String targetLanguage) {}
 }

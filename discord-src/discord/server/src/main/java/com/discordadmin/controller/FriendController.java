@@ -66,7 +66,7 @@ public class FriendController {
         }
 
         // 商户管理员：查看商户下所有好友
-        if ("MERCHANT_ADMIN".equals(SecurityUtils.currentRole())) {
+        if (SecurityUtils.isMerchantAdmin()) {
             Long merchantId = SecurityUtils.currentMerchantId();
             if (merchantId != null) {
                 return friendRepository.findByMerchantIdOrderByGlobalNameAsc(merchantId).stream()
