@@ -615,12 +615,12 @@
               </div>
             </el-popover>
 
-            <!-- GIF 选择器入口 -->
-            <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('gif')" title="选择 GIF">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><text x="12" y="16" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">GIF</text></svg>
-            </button>
             <!-- Sticker 选择器入口 -->
             <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('sticker')" title="选择 Sticker">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><text x="12" y="16" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">GIF</text></svg>
+            </button>
+            <!-- GIF 选择器入口 -->
+            <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('gif')" title="选择 GIF">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/><path d="M8.5 14c1.2 1 2.5 1.5 3.5 1.5s2.3-.5 3.5-1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
             </button>
 
