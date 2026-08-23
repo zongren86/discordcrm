@@ -444,7 +444,7 @@
                       </el-tooltip>
                     </div>
                     <!-- klipy.com页面URL解析中显示加载状态 -->
-                    <div v-if="isPageUrl(gifUrlOf(msg)) && msg.gifUrl && !resolvedGifUrls.has(msg.gifUrl)" class="msg-gif-loading">
+                    <div v-if="isPageUrl(gifUrlOf(msg)) && msg.gifUrl && !isGifUrlResolved(msg.gifUrl)" class="msg-gif-loading">
                       <div class="loading-spinner"></div>
                       <span>加载中...</span>
                     </div>
@@ -526,7 +526,7 @@
                     </template>
                   </div>
 
-                  <div v-if="!msg.isDeleted && !isVoiceMsg(msg) && !isGifMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
+                  <div v-if="!msg.isDeleted && !isVoiceMsg(msg) && !isGifMsg(msg) && !isStickerMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
 
                   <!-- 图片附件渲染 -->
                   <div v-if="!msg.isDeleted && imageAttachmentsOf(msg).length > 0" class="msg-image-attachments">
@@ -1676,13 +1676,15 @@ function gifUrlOf(msg) {
   if (msg.gifUrl) {
     const rawUrl = msg.gifUrl
     // 检查是否已解析过 klipy.com URL
-    if (resolvedGifUrls.value.has(rawUrl)) {
-      return resolvedGifUrls.value.get(rawUrl)
+    if (isGifUrlResolved(rawUrl)) {
+      const resolved = resolvedGifUrls.value.get(rawUrl)
+      console.log('[gifUrlOf] 返回解析后URL:', rawUrl, '->', resolved)
+      return resolved || rawUrl
     }
     // 如果是 klipy.com 页面链接，触发异步解析
     if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
+      console.log('[gifUrlOf] 触发解析:', rawUrl)
       resolveGifUrl(rawUrl)
-      // 解析中时返回原始URL（iframe会加载失败，但解析完成后会自动更新为CDN直链）
     }
     // 返回原始 URL
     return normalizeGifUrl(rawUrl)
@@ -1704,8 +1706,9 @@ function gifUrlOf(msg) {
   const rawUrl = msg.content.trim()
   
   // 检查是否已解析过 klipy.com URL
-  if (resolvedGifUrls.value.has(rawUrl)) {
-    return resolvedGifUrls.value.get(rawUrl)
+  if (isGifUrlResolved(rawUrl)) {
+    const resolved = resolvedGifUrls.value.get(rawUrl)
+    return resolved || rawUrl
   }
   
   // 检查是否是 klipy.com 页面链接，需要解析
@@ -1742,15 +1745,19 @@ async function resolveGifUrl(url) {
   resolvingGifUrls.value.add(url)
   try {
     const res = await resolveGifUrlApi(url)
+    console.log('[GIF解析] API返回:', url, res?.data)
     if (res?.data?.resolvedUrl) {
       resolvedGifUrls.value.set(url, res.data.resolvedUrl)
+      console.log('[GIF解析] 成功:', url, '->', res.data.resolvedUrl)
       // 触发 Vue 响应式更新
       resolvedGifUrls.value = new Map(resolvedGifUrls.value)
       // 强制触发消息列表重新渲染（用于gifUrlOf函数的更新）
       gifRenderCounter.value++
+    } else {
+      console.warn('[GIF解析] resolvedUrl为空:', url, res?.data)
     }
   } catch (e) {
-    console.warn('解析 klipy.com URL 失败:', url, e)
+    console.warn('[GIF解析] 失败:', url, e)
   } finally {
     resolvingGifUrls.value.delete(url)
   }
@@ -1787,6 +1794,13 @@ const resolvedGifUrls = ref(new Map())
 /** 正在解析的 URL 集合（防止并发重复解析） */
 const resolvingGifUrls = ref(new Set())
 
+/** 检查URL是否已解析（触发响应式更新） */
+function isGifUrlResolved(url) {
+  if (!url) return false
+  // 读取 resolvedGifUrls.value 确保响应式追踪
+  return resolvedGifUrls.value.has(url)
+}
+
 /** 需要代理的外部 GIF/动画域名（浏览器直接加载会被 CORS/Cloudflare 阻止） */
 const EXTERNAL_GIF_DOMAINS = [
   'klipy.com', 'static2.klipy.com', 'cdn.klipy.com',
@@ -1815,7 +1829,7 @@ function needsProxy(url) {
 function isPageUrl(url) {
   if (!url) return false
   // 如果已经解析过，返回 false（已变为 CDN 直链）
-  if (resolvedGifUrls.value.has(url)) return false
+  if (isGifUrlResolved(url)) return false
   try {
     const hostname = new URL(url).hostname.toLowerCase()
     // 如果URL直接指向资源文件（如 .gif, .mp4 等），即使是 klipy.com 域名也不应视为页面
@@ -1832,8 +1846,9 @@ function isPageUrl(url) {
 function proxiedUrl(url) {
   if (!url) return ''
   // 如果是 klipy.com 页面链接且已解析，返回解析后的 CDN URL（CDN 也需要代理）
-  if (isPageUrl(url) && resolvedGifUrls.value.has(url)) {
+  if (isPageUrl(url) && isGifUrlResolved(url)) {
     const cdnUrl = resolvedGifUrls.value.get(url)
+    console.log('[proxiedUrl] 使用解析后CDN:', url, '->', cdnUrl)
     // CDN URL 也走代理（绕过 Cloudflare）
     return '/api/proxy/fetch?url=' + encodeURIComponent(cdnUrl)
   }
