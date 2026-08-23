@@ -117,9 +117,25 @@ export const useConversationsStore = defineStore('conversations', {
         const existing = existingMap.get(newConv.id)
         if (existing) {
           const preservedPinned = existing.pinned
+          // 保护 lastMessageAt：只允许被更晚的时间覆盖，防止轮询返回的旧时间覆盖掉 WebSocket 推送的最新时间
+          // 这是修复"时间闪烁"的关键：新消息到达时 lastMessageAt 被更新为最新，
+          // 但随后的轮询 fetchConversations 返回的可能是数据库中稍旧的 lastMessageAt，
+          // Object.assign 会把它覆盖回去，造成"显示最新时间→显示更早时间→又显示最新时间"的闪烁
+          const oldLastTime = existing.lastMessageAt
+          const newLastTime = newConv.lastMessageAt
           // 以服务端COUNT为权威，直接覆盖本地的近似累加值（服务端unreadCount才是和DB对齐的真未读）
           Object.assign(existing, newConv)
           existing.pinned = preservedPinned ?? newConv.pinned
+          // 如果本地已有更晚的 lastMessageAt（来自 WebSocket 推送），保留本地值
+          if (oldLastTime && newLastTime) {
+            const oldTs = new Date(oldLastTime).getTime()
+            const newTs = new Date(newLastTime).getTime()
+            if (!isNaN(oldTs) && !isNaN(newTs) && oldTs > newTs) {
+              existing.lastMessageAt = oldLastTime
+            }
+          } else if (oldLastTime && !newLastTime) {
+            existing.lastMessageAt = oldLastTime
+          }
           merged.push(existing)
           existingMap.delete(newConv.id)
         } else {
@@ -268,6 +284,13 @@ export const useConversationsStore = defineStore('conversations', {
       }
     },
     async send(convId, content, targetLanguage, extra = {}) {
+      // 乐观更新：发送前立即把 lastMessageAt 设为当前时间，确保好友列表实时反映最后消息时间
+      const nowTime = new Date().toISOString()
+      const conv = this.conversations.find(c => c.id === convId)
+      if (conv) {
+        conv.lastMessageAt = nowTime
+        conv.lastMessageTime = nowTime
+      }
       const res = await sendMessage(convId, content, targetLanguage, extra)
       if (res && res.id) {
         this.appendMessage(convId, res)
@@ -320,6 +343,15 @@ export const useConversationsStore = defineStore('conversations', {
         if (conv) {
           const snippet = (msg.translatedContent || msg.content || '').slice(0, 60)
           conv.lastMessagePreview = snippet
+          // UPDATE 分支也更新 lastMessageAt：取 max(本地, 消息时间)
+          // 防止 WebSocket 先到+send()返回后到 导致 lastMessageAt 不更新
+          const time = msg.createdAt || new Date().toISOString()
+          const localTs = conv.lastMessageAt ? new Date(conv.lastMessageAt).getTime() : 0
+          const msgTs = new Date(time).getTime()
+          if (!isNaN(msgTs) && (!conv.lastMessageAt || isNaN(localTs) || msgTs > localTs)) {
+            conv.lastMessageAt = time
+            conv.lastMessageTime = time
+          }
           if (this.currentConversationId === convId) {
             conv.lastMessageSnippet = snippet
           }
@@ -341,11 +373,17 @@ export const useConversationsStore = defineStore('conversations', {
         }
         const snippet = (msg.translatedContent || msg.content || '').slice(0, 60)
         conv.lastMessagePreview = snippet
-        if (this.currentConversationId === convId) {
-          conv.lastMessageSnippet = snippet
-          const time = msg.createdAt || new Date().toISOString()
+        const time = msg.createdAt || new Date().toISOString()
+        // 保护 lastMessageAt：只允许更晚的时间覆盖（即使不是当前会话也更新，保持时间最新）
+        const localTs = conv.lastMessageAt ? new Date(conv.lastMessageAt).getTime() : 0
+        const msgTs = new Date(time).getTime()
+        if (!isNaN(msgTs) && (!conv.lastMessageAt || isNaN(localTs) || msgTs > localTs)) {
           conv.lastMessageAt = time
           conv.lastMessageTime = time
+        }
+        conv.lastMessageTime = time
+        if (this.currentConversationId === convId) {
+          conv.lastMessageSnippet = snippet
         }
       }
     },

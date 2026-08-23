@@ -3353,8 +3353,13 @@ async function pollCurrentMessages() {
       if (conv) {
         conv.lastMessagePreview = (newestRemote.translatedContent || newestRemote.content || '').slice(0, 60)
         conv.lastMessageSnippet = conv.lastMessagePreview
-        conv.lastMessageAt = newestRemote.createdAt
-        conv.lastMessageTime = newestRemote.createdAt
+        // 保护 lastMessageAt：只允许更晚的时间覆盖，防止轮询返回的旧时间覆盖 WebSocket 已更新的最新时间
+        const remoteTs = new Date(newestRemote.createdAt).getTime()
+        const localTs = conv.lastMessageAt ? new Date(conv.lastMessageAt).getTime() : 0
+        if (!isNaN(remoteTs) && (!conv.lastMessageAt || isNaN(localTs) || remoteTs > localTs)) {
+          conv.lastMessageAt = newestRemote.createdAt
+          conv.lastMessageTime = newestRemote.createdAt
+        }
       }
     }
 
