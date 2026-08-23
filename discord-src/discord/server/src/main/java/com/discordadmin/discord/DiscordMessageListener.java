@@ -10,10 +10,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -85,7 +92,16 @@ public class DiscordMessageListener extends ListenerAdapter {
                 if (isGifOrMediaUrl(trimmedContent)) {
                     messageType = "gif";
                     gifUrl = trimmedContent;
-                    log.debug("[DISCORD GIF] 检测到URL形式的GIF/媒体消息: accountId={}, url={}", accountId, trimmedContent);
+                    // 如果是 klipy.com 页面 URL，解析为 CDN 直链
+                    if (trimmedContent.contains("klipy.com")) {
+                        String resolvedUrl = resolveKlipyUrl(trimmedContent);
+                        if (resolvedUrl != null) {
+                            gifUrl = resolvedUrl;
+                            log.info("[DISCORD GIF] klipy.com URL解析成功: accountId={}, original={}, resolved={}", 
+                                    accountId, truncate(trimmedContent, 60), truncate(resolvedUrl, 60));
+                        }
+                    }
+                    log.debug("[DISCORD GIF] 检测到URL形式的GIF/媒体消息: accountId={}, url={}", accountId, truncate(gifUrl, 120));
                 }
             }
         }
@@ -311,5 +327,69 @@ public class DiscordMessageListener extends ListenerAdapter {
             || lowerUrl.contains("giphy") 
             || lowerUrl.contains("klipy")
             || lowerUrl.contains("cdn.discordapp.com");
+    }
+
+    /**
+     * 解析 klipy.com 页面 URL 为 CDN 直链
+     * 使用 GoogleBot UA 访问页面提取真实的媒体 URL
+     */
+    private String resolveKlipyUrl(String url) {
+        try {
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(5))
+                    .followRedirects(HttpClient.Redirect.NORMAL)
+                    .build();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .timeout(Duration.ofSeconds(8))
+                    .header("User-Agent", "Googlebot/2.1 (+http://www.google.com/bot.html)")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .GET()
+                    .build();
+
+            HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            
+            if (response.statusCode() == 200) {
+                String pageContent = new String(response.body());
+                // 从页面中提取媒体 URL（支持 .gif, .mp4, .webm 格式）
+                String mediaUrl = extractMediaUrlFromHtml(pageContent);
+                if (mediaUrl != null && !mediaUrl.equals(url)) {
+                    log.debug("[DISCORD GIF] klipy.com解析: {} -> {}", truncate(url, 60), truncate(mediaUrl, 60));
+                    return mediaUrl;
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[DISCORD GIF] klipy.com URL解析失败: {} - {}", url, e.getMessage());
+        }
+        // 解析失败返回 null，让调用方使用原始 URL
+        return null;
+    }
+
+    /**
+     * 从 HTML 页面内容中提取媒体 URL
+     */
+    private String extractMediaUrlFromHtml(String html) {
+        if (html == null || html.isEmpty()) return null;
+
+        // 优先找 GIF URL
+        Pattern gifPattern = Pattern.compile(
+                "https?://[^\"'\\s<>]+\\.gif[^\"'\\s<>]*", Pattern.CASE_INSENSITIVE);
+        Matcher gifMatcher = gifPattern.matcher(html);
+        if (gifMatcher.find()) {
+            String gifUrl = gifMatcher.group(0);
+            return gifUrl.replaceAll("[),;\\]]$", "");
+        }
+
+        // 再找 MP4 URL
+        Pattern mp4Pattern = Pattern.compile(
+                "https?://[^\"'\\s<>]+\\.(mp4|webm)[^\"'\\s<>]*", Pattern.CASE_INSENSITIVE);
+        Matcher mp4Matcher = mp4Pattern.matcher(html);
+        if (mp4Matcher.find()) {
+            String mp4Url = mp4Matcher.group(0);
+            return mp4Url.replaceAll("[),;\\]]$", "");
+        }
+
+        return null;
     }
 }
