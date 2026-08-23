@@ -181,16 +181,11 @@ public class EmuAccountBindingService {
 
     /**
      * 检查Token有效性
-     * 基于账号状态和过期时间判断
+     * 直接以Discord账号里查到的为准（读取数据库 tokenValid 字段）
      */
     private boolean checkTokenValidity(DiscordAccount account) {
-        if (account.getStatus() == DiscordAccount.AccountStatus.INACTIVE) {
-            return false;
-        }
-        if (account.getTokenExpiresAt() != null && account.getTokenExpiresAt().isBefore(Instant.now())) {
-            return false;
-        }
-        return true;
+        // 直接读取数据库中的 tokenValid 字段
+        return Boolean.TRUE.equals(account.getTokenValid());
     }
 
     /**

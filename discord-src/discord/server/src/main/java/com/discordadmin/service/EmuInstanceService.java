@@ -67,10 +67,18 @@ public class EmuInstanceService {
      * 获取当前用户的所有模拟器实例
      */
     public List<Map<String, Object>> getCurrentUserInstances() {
-        Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
-        log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
-        List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+        List<EmuInstance> instances;
+        
+        if (SecurityUtils.isPlatformAdmin()) {
+            // 平台管理员：查询所有 merchant_id 的当前用户模拟器
+            log.info("获取模拟器列表: 平台管理员模式, userId={}", userId);
+            instances = instanceRepository.findByUserId(userId);
+        } else {
+            Long merchantId = resolveMerchantId();
+            log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
+            instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+        }
         log.info("查询结果: 找到 {} 个模拟器", instances.size());
         
         // 使用原生查询获取 auto_running 字段值，解决 JPA 映射问题

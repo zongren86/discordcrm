@@ -878,6 +878,21 @@ emuApi.interceptors.request.use(config => {
   }
   return config
 })
+// 响应拦截器：处理401错误
+emuApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status
+    if (status === 401) {
+      localStorage.removeItem('crm_token')
+      localStorage.removeItem('crm_auth')
+      backendAvailable.value = false
+      ElMessage.warning('登录已过期，请重新登录')
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  }
+)
 
 const friendApi = axios.create({ baseURL: '/api', timeout: 60000 })
 friendApi.interceptors.request.use(config => {
@@ -887,6 +902,21 @@ friendApi.interceptors.request.use(config => {
   }
   return config
 })
+// 响应拦截器：处理401错误
+friendApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const status = error?.response?.status
+    if (status === 401) {
+      localStorage.removeItem('crm_token')
+      localStorage.removeItem('crm_auth')
+      backendAvailable.value = false
+      ElMessage.warning('登录已过期，请重新登录')
+      window.location.href = '/login'
+    }
+    return Promise.reject(error)
+  }
+)
 
 const sortedEmulators = computed(() => {
   // 按序号(index)从小到大排序，保证最早创建/编号最小的排在最上面
@@ -1008,8 +1038,9 @@ onMounted(async () => {
   ]
   
   // 服务检查与数据加载并行
-  const serviceCheckPromise = checkBackend().then(ok => {
-    backendAvailable.value = ok
+  const serviceCheckPromise = checkBackend().then(result => {
+    backendAvailable.value = result.ok
+    // 如果是401错误，响应拦截器会处理跳转
   })
   
   // 并行执行所有任务
@@ -1062,8 +1093,13 @@ watch(selectedServerId, async () => {
 
 async function checkService() {
   // 首次检查不显示loading（页面已有loading状态保护）
-  const ok = await checkBackend()
-  backendAvailable.value = ok
+  const result = await checkBackend()
+  backendAvailable.value = result.ok
+  // 如果是401错误，让响应拦截器处理跳转
+  if (result.unauthorized) {
+    loading.value = false
+    return
+  }
   loading.value = false
 }
 
@@ -1071,8 +1107,14 @@ async function checkBackend() {
   try {
     // 缩短超时到5秒，避免长时间等待
     const resp = await emuApi.get('/emulators', { timeout: 5000 })
-    return Array.isArray(resp.data) || resp.status < 500
-  } catch { return false }
+    return { ok: true, isArray: Array.isArray(resp.data) }
+  } catch (error) {
+    // 401 错误由响应拦截器处理，这里直接返回
+    if (error?.response?.status === 401) {
+      return { ok: false, unauthorized: true }
+    }
+    return { ok: false, unauthorized: false }
+  }
 }
 
 // 健康检查防抖：连续失败 ≥ N 次才弹一次 warning，成功后再弹一次 success
@@ -1080,7 +1122,14 @@ const healthFailStreak = ref(0)
 const LAST_WARN_KEY = 'emu_view_last_warn_ts'
 function startHealthCheck() {
   healthCheckTimer = setInterval(async () => {
-    const ok = await checkBackend()
+    const result = await checkBackend()
+    const ok = result.ok
+    
+    // 如果是401错误，停止健康检查（响应拦截器已经处理了跳转）
+    if (result.unauthorized) {
+      return
+    }
+    
     if (!ok && backendAvailable.value) {
       healthFailStreak.value++
       // 连续失败 ≥ 3 次才认为真的断开（每 10s 检查一次，3次=30s）

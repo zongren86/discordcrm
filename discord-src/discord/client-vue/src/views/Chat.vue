@@ -444,8 +444,15 @@
                       </el-tooltip>
                     </div>
                     
+                    <!-- iframe嵌入（klipy.com等页面URL） -->
+                    <iframe v-if="isIframeGifUrl(gifUrlOf(msg))"
+                            :src="gifUrlOf(msg)"
+                            class="msg-gif-iframe"
+                            frameborder="0"
+                            allowfullscreen
+                            @error="onGifError"></iframe>
                     <!-- 视频格式的GIF（Discord动画常被转为MP4/WebM） -->
-                    <video v-if="isVideoGif(gifUrlOf(msg))" 
+                    <video v-else-if="isVideoGif(gifUrlOf(msg))" 
                            :src="proxiedUrl(gifUrlOf(msg))" 
                            class="msg-gif-img" 
                            autoplay loop muted playsinline
@@ -1145,18 +1152,21 @@ function initPendingLottieAnimations() {
   const msgs = conversations.currentMessages
   if (!msgs || msgs.length === 0) return
   
-  msgs.forEach(msg => {
-    if (!isStickerMsg(msg)) return
-    const items = stickerItemsOf(msg)
-    items.forEach((sticker, idx) => {
-      if (isLottieSticker(sticker)) {
-        const containerId = `lottie-sticker-${msg.id}-${idx}`
-        if (!lottieInstances.has(containerId)) {
-          nextTick(() => initLottieAnimation(msg.id, idx, sticker))
+  // 使用 setTimeout 延迟执行，确保 DOM 完全渲染
+  setTimeout(() => {
+    msgs.forEach(msg => {
+      if (!isStickerMsg(msg)) return
+      const items = stickerItemsOf(msg)
+      items.forEach((sticker, idx) => {
+        if (isLottieSticker(sticker)) {
+          const containerId = `lottie-sticker-${msg.id}-${idx}`
+          if (!lottieInstances.has(containerId)) {
+            initLottieAnimation(msg.id, idx, sticker)
+          }
         }
-      }
+      })
     })
-  })
+  }, 100)
 }
 
 // 翻译预览相关状态
@@ -1370,16 +1380,25 @@ const filteredConversations = computed(() => {
 
 // 账号筛选下拉框：显示所有当前用户能看到的会话中的账号（包括转移的账号），按名称升序排序
 const accountOptionsForFilter = computed(() => {
+  // 从 accounts.accounts 构建快速查找 Map
+  const accountValidMap = new Map()
+  for (const a of accounts.accounts) {
+    accountValidMap.set(a.id, a.tokenValid !== false) // 默认为true，只有明确为false时才失效
+  }
+  
   // 从会话列表中收集所有账号
   const accountMap = new Map()
   for (const c of conversations.conversations) {
     if (c.discordAccountId) {
       const name = c.discordAccountName || c.discordAccount?.name || c.accountName || `账号#${c.discordAccountId}`
       if (!accountMap.has(c.discordAccountId)) {
+        // 从accounts store获取tokenValid，默认为true
+        const tokenValid = accountValidMap.get(c.discordAccountId) ?? true
         accountMap.set(c.discordAccountId, {
           id: c.discordAccountId,
           name: name,
           discordName: name,
+          tokenValid: tokenValid,
           _hasConversations: true
         })
       }
@@ -1393,6 +1412,7 @@ const accountOptionsForFilter = computed(() => {
         id: a.id,
         name: a.name || a.nickname || a.discordName || `账号#${a.id}`,
         discordName: a.discordName || '',
+        tokenValid: a.tokenValid !== false, // 默认为true，只有明确为false时才失效
         _hasConversations: false
       })
     }
@@ -1666,7 +1686,17 @@ function gifUrlOf(msg) {
     resolveGifUrl(rawUrl)
   }
   
-  return normalizeGifUrl(rawUrl)
+  // 返回原始 URL（如果是 klipy.com 页面 URL，后续会用 iframe 嵌入）
+  return rawUrl
+}
+
+/** 判断 GIF URL 是否需要使用 iframe 嵌入（如 klipy.com 页面 URL） */
+function isIframeGifUrl(url) {
+  if (!url) return false
+  // 如果 URL 已经被解析为 CDN URL，不需要 iframe
+  if (resolvedGifUrls.value.has(url)) return false
+  // 如果是 klipy.com 页面 URL，需要 iframe
+  return isPageUrl(url)
 }
 
 /** 解析 klipy.com 页面 URL 为 CDN 直链 */
@@ -4757,6 +4787,18 @@ onUnmounted(() => {
 video.msg-gif-img {
   background: #000;
   pointer-events: none;  /* 防止视频被点击暂停 */
+}
+
+iframe.msg-gif-iframe {
+  width: 280px;
+  height: 280px;
+  max-width: 280px;
+  max-height: 280px;
+  border-radius: 10px;
+  border: none;
+  display: block;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  background: #2b2d31;
 }
 
 .gif-fallback {

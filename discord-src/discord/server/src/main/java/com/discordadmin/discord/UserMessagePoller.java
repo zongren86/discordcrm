@@ -719,6 +719,7 @@ public class UserMessagePoller {
             String resolvedAudioMime = null;
             Integer resolvedAudioDuration = null;
             String resolvedAudioData = null;
+            String resolvedGifUrl = null;
 
             // 解析 sticker items
             JsonNode stickerItems = msgNode.get("sticker_items");
@@ -732,18 +733,27 @@ public class UserMessagePoller {
 
             if (attachments != null && attachments.isArray() && !attachments.isEmpty()) {
                 JsonNode voiceAtt = null;
+                JsonNode gifAtt = null;
                 for (JsonNode a : attachments) {
                     String fn = a.path("filename").asText("").toLowerCase();
-                    boolean isAudioByCt = a.path("content_type").asText("").toLowerCase().startsWith("audio/");
+                    String ct = a.path("content_type").asText("").toLowerCase();
+                    boolean isAudioByCt = ct.startsWith("audio/");
                     boolean hasVoiceName = fn.startsWith("voice-message");
                     boolean hasDuration = a.has("duration_secs");
                     if ((hasVoiceName || isAudioByCt || hasDuration) && voiceAtt == null) {
                         voiceAtt = a;
                     }
+                    // 检测 GIF/视频格式附件
+                    if (gifAtt == null && isGifOrVideoAttachment(a, fn, ct)) {
+                        gifAtt = a;
+                    }
                 }
                 attachmentsJson = buildAttachmentsJsonFromNode(attachments);
                 if (voiceAtt != null) {
-                    resolvedMessageType = "voice";
+                    // 只有非 sticker 消息才覆盖为 voice 类型
+                    if (!"sticker".equals(resolvedMessageType)) {
+                        resolvedMessageType = "voice";
+                    }
                     String url = voiceAtt.path("url").asText(null);
                     String proxy = voiceAtt.path("proxy_url").asText(null);
                     resolvedAudioUrl = url != null ? url : proxy;
@@ -757,16 +767,30 @@ public class UserMessagePoller {
                     }
                     if (content == null || content.isBlank()) content = "[语音消息]";
                 }
+                // 设置 GIF 附件 URL
+                if (gifAtt != null) {
+                    String gifUrl = gifAtt.path("url").asText(null);
+                    String gifProxy = gifAtt.path("proxy_url").asText(null);
+                    resolvedGifUrl = gifUrl != null ? gifUrl : gifProxy;
+                    // 如果消息类型还是 text，改为 gif
+                    if ("text".equals(resolvedMessageType)) {
+                        resolvedMessageType = "gif";
+                    }
+                    log.debug("检测到GIF附件: conv={}, url={}", conv.getId(), resolvedGifUrl);
+                }
             }
 
             // 检测 URL 形式的 GIF/图片/视频消息
-            if ("text".equals(resolvedMessageType) && content != null && !content.isBlank()) {
+            if (("text".equals(resolvedMessageType) || "gif".equals(resolvedMessageType)) && content != null && !content.isBlank()) {
                 String trimmedContent = content.trim();
                 if (trimmedContent.matches("^https?://\\S+$")) {
                     // 检查是否是 GIF/图片/视频 URL
                     if (isGifOrMediaUrl(trimmedContent)) {
                         resolvedMessageType = "gif";
-                        msgEntity.setGifUrl(trimmedContent);
+                        // 如果还没有 gifUrl，使用 content 作为 gifUrl
+                        if (resolvedGifUrl == null) {
+                            resolvedGifUrl = trimmedContent;
+                        }
                         log.debug("检测到URL形式的GIF/媒体消息: conv={}, url={}", conv.getId(), trimmedContent);
                     }
                 }
@@ -776,6 +800,7 @@ public class UserMessagePoller {
             msgEntity.setAttachmentsJson(attachmentsJson);
             msgEntity.setStickerItemsJson(stickerItemsJson);
             msgEntity.setMessageType(resolvedMessageType);
+            msgEntity.setGifUrl(resolvedGifUrl);
             if ("voice".equals(resolvedMessageType)) {
                 msgEntity.setAudioUrl(resolvedAudioUrl);
                 msgEntity.setAudioMimeType(resolvedAudioMime);
@@ -1052,5 +1077,44 @@ public class UserMessagePoller {
             || lowerUrl.contains("giphy") 
             || lowerUrl.contains("klipy")
             || lowerUrl.contains("cdn.discordapp.com");
+    }
+
+    /**
+     * 检测附件是否为 GIF/视频格式
+     * Discord 动画 GIF 常被转为 MP4/WebM 格式
+     */
+    private boolean isGifOrVideoAttachment(JsonNode attachment, String filename, String contentType) {
+        if (attachment == null) return false;
+        
+        // 检查文件名扩展名
+        if (filename != null) {
+            if (filename.endsWith(".gif") || filename.endsWith(".webp") || 
+                filename.endsWith(".mp4") || filename.endsWith(".webm") || 
+                filename.endsWith(".mov")) {
+                return true;
+            }
+        }
+        
+        // 检查 content_type
+        if (contentType != null) {
+            if (contentType.startsWith("image/gif") || 
+                contentType.startsWith("image/webp") ||
+                contentType.startsWith("video/mp4") || 
+                contentType.startsWith("video/webm") ||
+                contentType.startsWith("video/quicktime")) {
+                return true;
+            }
+        }
+        
+        // 检查附件 URL
+        String url = attachment.path("url").asText("").toLowerCase();
+        if (!url.isEmpty()) {
+            return url.contains(".gif") || url.contains(".webp") || 
+                   url.contains(".mp4") || url.contains(".webm") ||
+                   url.contains("cdn.discordapp.com/attachments") ||
+                   url.contains("media.discordapp.net");
+        }
+        
+        return false;
     }
 }
