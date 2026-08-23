@@ -946,7 +946,7 @@
   </div>
 
   <!-- GIF/Sticker 选择器弹窗（根据 mode 只显示对应收藏） -->
-  <el-dialog v-model="gifPickerVisible" :title="gifPickerMode === 'gif' ? '选择 GIF' : '选择 Sticker'" width="500px" :close-on-click-modal="true">
+  <el-dialog v-model="gifPickerVisible" :title="gifPickerMode === 'gif' ? '收藏' : '贴纸'" width="500px" :close-on-click-modal="true">
     <div class="gif-picker">
       <!-- GIF 收藏 -->
       <template v-if="gifPickerMode === 'gif'">
@@ -970,7 +970,7 @@
       <!-- Sticker 收藏 -->
       <template v-else-if="gifPickerMode === 'sticker'">
         <div v-if="stickerFavorites.length === 0" class="gif-empty">
-          <p>暂无收藏的 Sticker</p>
+          <p>暂无收藏的贴纸</p>
         </div>
         <div v-else class="gif-grid">
           <div v-for="fav in stickerFavorites" :key="fav.id" class="gif-item" 
@@ -2721,6 +2721,7 @@ async function sendStickerFromFavorite(fav) {
   try {
     const url = fav.resolvedUrl || fav.favDisplayUrl || fav.gifUrl
     await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
+    gifPickerVisible.value = false
   } catch (e) {
     ElMessage.error('发送失败: ' + (e.message || ''))
   }
@@ -4965,12 +4966,16 @@ onUnmounted(() => {
 
 .gif-item {
   position: relative;
-  aspect-ratio: 1;
+  aspect-ratio: 1 / 1;
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
   border: 2px solid transparent;
   transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a2e;
 }
 
 .gif-item:hover {
@@ -4979,22 +4984,20 @@ onUnmounted(() => {
 }
 
 .gif-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
   display: block;
 }
-
 .gif-thumb-lottie {
-  width: 100%;
-  height: 100%;
-  min-width: 96px;
-  min-height: 96px;
+  max-width: 100%;
+  max-height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
 }
+
+
 
 .gif-item-actions {
   position: absolute;
@@ -5336,18 +5339,25 @@ video.msg-gif-img {
 .gif-grid,
 .sticker-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  padding: 8px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .gif-item,
 .sticker-item {
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 8px;
   overflow: hidden;
   position: relative;
-  transition: background 0.15s;
+  transition: all 0.2s;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a2e;
 }
 .gif-item:hover,
 .sticker-item:hover {
