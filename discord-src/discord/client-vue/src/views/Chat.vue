@@ -1668,9 +1668,6 @@ function isGifMsg(msg) {
 
 function gifUrlOf(msg) {
   if (!msg) return ''
-  
-  // 读取 gifRenderCounter 确保解析完成后会触发响应式更新
-  const _renderVersion = gifRenderCounter.value
 
   // 优先使用消息的gifUrl字段（后端存储的URL，可能是klipy.com页面URL或CDN直链）
   if (msg.gifUrl) {
@@ -1678,15 +1675,9 @@ function gifUrlOf(msg) {
     // 检查是否已解析过 klipy.com URL
     if (isGifUrlResolved(rawUrl)) {
       const resolved = resolvedGifUrls.value.get(rawUrl)
-      console.log('[gifUrlOf] 返回解析后URL:', rawUrl, '->', resolved)
       return resolved || rawUrl
     }
-    // 如果是 klipy.com 页面链接，触发异步解析
-    if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
-      console.log('[gifUrlOf] 触发解析:', rawUrl)
-      resolveGifUrl(rawUrl)
-    }
-    // 返回原始 URL
+    // 返回原始 URL（解析由外部 watch 触发）
     return normalizeGifUrl(rawUrl)
   }
 
@@ -1711,13 +1702,37 @@ function gifUrlOf(msg) {
     return resolved || rawUrl
   }
   
-  // 检查是否是 klipy.com 页面链接，需要解析
-  if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
-    resolveGifUrl(rawUrl)
-  }
-  
   // 返回原始 URL
   return rawUrl
+}
+
+/** 扫描消息列表中的 klipy.com URL 并触发解析（在 watch 中调用，避免渲染副作用） */
+function scanAndResolveKlipyUrls() {
+  const msgs = conversations.currentMessages
+  if (!msgs || msgs.length === 0) return
+  
+  let found = 0
+  for (const msg of msgs) {
+    // 检查 gifUrl 字段
+    if (msg.gifUrl && isPageUrl(msg.gifUrl) && !isGifUrlResolved(msg.gifUrl)) {
+      if (!resolvingGifUrls.value.has(msg.gifUrl)) {
+        console.log('[GIF解析] 扫描发现需要解析的URL:', msg.gifUrl)
+        resolveGifUrl(msg.gifUrl)
+        found++
+      }
+    }
+    // 检查 content 字段（兜底）
+    if (msg.content) {
+      const rawUrl = msg.content.trim()
+      if (isPageUrl(rawUrl) && !isGifUrlResolved(rawUrl)) {
+        if (!resolvingGifUrls.value.has(rawUrl)) {
+          resolveGifUrl(rawUrl)
+          found++
+        }
+      }
+    }
+  }
+  if (found > 0) console.log('[GIF解析] 本次扫描发现', found, '个待解析URL')
 }
 
 /** 判断 GIF URL 是否需要使用 iframe 嵌入（如 klipy.com 页面 URL）
@@ -2931,6 +2946,8 @@ watch(() => conversations.currentMessages.length, (cnt) => {
   updateDetectedLang()
   // 初始化新消息中的 Lottie 动画
   nextTick(() => initPendingLottieAnimations())
+  // 扫描并解析 klipy.com URL（避免在渲染函数中触发副作用）
+  nextTick(() => scanAndResolveKlipyUrls())
 })
 
 watch(() => conversations.currentConversationId, async (newId, oldId) => {
