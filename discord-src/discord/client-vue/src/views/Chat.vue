@@ -4966,7 +4966,7 @@ onUnmounted(() => {
 
 .gif-item {
   position: relative;
-  aspect-ratio: 1 / 1;
+  min-height: 100px;
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
@@ -4984,18 +4984,12 @@ onUnmounted(() => {
 }
 
 .gif-thumb {
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  max-height: 150px;
   object-fit: contain;
   display: block;
 }
-.gif-thumb-lottie {
-  max-width: 100%;
-  max-height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+
 
 
 
@@ -5353,7 +5347,7 @@ video.msg-gif-img {
   overflow: hidden;
   position: relative;
   transition: all 0.2s;
-  aspect-ratio: 1 / 1;
+  min-height: 100px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -5367,8 +5361,8 @@ video.msg-gif-img {
 .gif-thumb,
 .sticker-thumb {
   width: 100%;
-  height: 60px;
-  object-fit: cover;
+  max-height: 150px;
+  object-fit: contain;
   border-radius: 6px;
   display: block;
 }
