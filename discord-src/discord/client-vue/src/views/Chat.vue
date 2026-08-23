@@ -1694,9 +1694,13 @@ function gifUrlOf(msg) {
     // 检查是否已解析过 klipy.com URL
     if (isGifUrlResolved(rawUrl)) {
       const resolved = resolvedGifUrls.value.get(rawUrl)
-      return resolved || rawUrl
+      if (!resolved) return ''  // 解析失败收敛：返回空让模板显示错误占位
+      return resolved
     }
-    // 返回原始 URL（解析由外部 watch 触发）
+    // 未解析但属于 klipy.com 页面 URL → 渲染时自动触发解析（兜底，不依赖 watch）
+    if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
+      resolveGifUrl(rawUrl)
+    }
     return normalizeGifUrl(rawUrl)
   }
 
@@ -1708,7 +1712,13 @@ function gifUrlOf(msg) {
       return /\.(gif|webp|mp4|webm|mov)(\?|#|$)/i.test(url) ||
              /gif|imgur|tenor|giphy/i.test(url)
     })
-    if (gifAtt) return normalizeGifUrl(gifAtt.url)
+    if (gifAtt) {
+      const attUrl = normalizeGifUrl(gifAtt.url)
+      if (isPageUrl(attUrl) && !isGifUrlResolved(attUrl) && !resolvingGifUrls.value.has(attUrl)) {
+        resolveGifUrl(attUrl)
+      }
+      return attUrl
+    }
   }
 
   // 兜底：使用消息内容作为URL
@@ -1718,10 +1728,13 @@ function gifUrlOf(msg) {
   // 检查是否已解析过 klipy.com URL
   if (isGifUrlResolved(rawUrl)) {
     const resolved = resolvedGifUrls.value.get(rawUrl)
-    return resolved || rawUrl
+    if (!resolved) return ''
+    return resolved
   }
-  
-  // 返回原始 URL
+  // 未解析但属于 klipy.com 页面 URL → 自动触发解析
+  if (isPageUrl(rawUrl) && !resolvingGifUrls.value.has(rawUrl)) {
+    resolveGifUrl(rawUrl)
+  }
   return rawUrl
 }
 
