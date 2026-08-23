@@ -967,7 +967,10 @@
           <div v-else class="gif-grid">
             <div v-for="fav in stickerFavorites" :key="fav.id" class="gif-item" 
                  @click="sendStickerFromFavorite(fav)">
-              <img :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'Sticker'" 
+              <!-- Lottie JSON 格式贴纸：用容器加载 Lottie 动画（img 不能渲染 JSON） -->
+              <div v-if="isStickerJsonUrl(fav.gifUrl)" :id="'picker-sticker-' + fav.id" class="gif-thumb gif-thumb-lottie"></div>
+              <!-- 图片/视频格式贴纸：直接用 img -->
+              <img v-else :src="proxiedUrl(fav.gifUrl)" :alt="fav.title || 'Sticker'" 
                    class="gif-thumb" @error="onGifError" />
               <div class="gif-item-actions">
                 <button class="gif-item-btn" @click.stop="handleUnfavoriteById(fav.id)" title="取消收藏">
@@ -1085,6 +1088,22 @@ const aiLoading = ref(false)
 
 // Lottie 动画实例缓存
 const lottieInstances = new Map()
+
+// 监听 GIF 选择器：当显示且处于 Sticker 收藏 Tab 时，初始化贴纸 Lottie 预览
+watch([gifPickerVisible, gifPickerTab], ([vis, tab]) => {
+  if (vis && tab === 'stickerFavorites') {
+    initPickerStickerLotties()
+  } else if (!vis) {
+    disposePickerLotties()
+  }
+})
+
+// stickerFavorites 列表变化时（收藏/取消收藏后）重新初始化已显示的 Lottie
+watch(stickerFavorites, () => {
+  if (gifPickerVisible.value && gifPickerTab.value === 'stickerFavorites') {
+    initPickerStickerLotties()
+  }
+}, { deep: true })
 
 /** 初始化单个 Lottie 动画 */
 async function initLottieAnimation(msgId, idx, sticker) {
@@ -1754,25 +1773,37 @@ function isIframeGifUrl(url) {
 /** 强制重新渲染 GIF 消息的计数器 */
 const gifRenderCounter = ref(0)
 
-/** 解析 klipy.com 页面 URL 为 CDN 直链 */
+/** 解析 klipy.com 页面 URL 为 CDN 直链（含失败收敛与超时兜底，避免"加载中..."永不消失） */
 async function resolveGifUrl(url) {
   if (resolvingGifUrls.value.has(url)) return
+  if (failedGifUrls.value.has(url) || resolvedGifUrls.value.has(url)) return
   resolvingGifUrls.value.add(url)
+
+  // 失败收敛：统一写入 failedGifUrls 并触发响应式重渲染
+  function markFailed(reason) {
+    console.warn('[GIF解析] 标记失败收敛:', url, reason || '')
+    failedGifUrls.value.add(url)
+    failedGifUrls.value = new Set(failedGifUrls.value)
+    gifRenderCounter.value++
+  }
+
   try {
-    const res = await resolveGifUrlApi(url)
+    // 15s 超时兜底：防止 API 挂起导致 UI 无限显示加载中
+    const timeoutP = new Promise((_, rj) => setTimeout(() => rj(new Error('timeout')), 15000))
+    const res = await Promise.race([resolveGifUrlApi(url), timeoutP])
     console.log('[GIF解析] API返回:', url, res?.data)
     if (res?.data?.resolvedUrl) {
       resolvedGifUrls.value.set(url, res.data.resolvedUrl)
       console.log('[GIF解析] 成功:', url, '->', res.data.resolvedUrl)
-      // 触发 Vue 响应式更新
       resolvedGifUrls.value = new Map(resolvedGifUrls.value)
-      // 强制触发消息列表重新渲染（用于gifUrlOf函数的更新）
       gifRenderCounter.value++
     } else {
       console.warn('[GIF解析] resolvedUrl为空:', url, res?.data)
+      markFailed('empty resolvedUrl')
     }
   } catch (e) {
     console.warn('[GIF解析] 失败:', url, e)
+    markFailed(e?.message || 'exception')
   } finally {
     resolvingGifUrls.value.delete(url)
   }
@@ -1806,14 +1837,18 @@ const NO_PROXY_DOMAINS = [
 
 /** 已解析的 klipy.com URL 缓存：原始URL → CDN URL（CDN 也需要代理绕过 Cloudflare） */
 const resolvedGifUrls = ref(new Map())
+/** 解析失败的 URL 集合：一次失败就收敛到 UI 正常显示，避免无限加载中 */
+const failedGifUrls = ref(new Set())
 /** 正在解析的 URL 集合（防止并发重复解析） */
 const resolvingGifUrls = ref(new Set())
 
-/** 检查URL是否已解析（触发响应式更新） */
+/** 检查URL是否已解析/失败收敛（触发响应式更新） */
 function isGifUrlResolved(url) {
   if (!url) return false
-  // 读取 resolvedGifUrls.value 确保响应式追踪
-  return resolvedGifUrls.value.has(url)
+  // 读取响应式对象确保追踪
+  if (resolvedGifUrls.value.has(url)) return true
+  if (failedGifUrls.value.has(url)) return true
+  return false
 }
 
 /** 需要代理的外部 GIF/动画域名（浏览器直接加载会被 CORS/Cloudflare 阻止） */
@@ -1843,7 +1878,7 @@ function needsProxy(url) {
 /** 检查URL是否为页面链接（非直接资源），如 klipy.com/gifs/xxx */
 function isPageUrl(url) {
   if (!url) return false
-  // 如果已经解析过，返回 false（已变为 CDN 直链）
+  // 已解析 或 已失败收敛，都不再视为页面（显示最终图片/错误占位）
   if (isGifUrlResolved(url)) return false
   try {
     const hostname = new URL(url).hostname.toLowerCase()
@@ -1898,17 +1933,23 @@ function isStickerMsg(msg) {
   return false
 }
 
+/** 判断附件是否是 Sticker（cdn.discordapp.com/stickers/ 资源），避免在附件区重复显示 */
+function isStickerAttachment(att) {
+  if (!att?.url) return false
+  return /cdn\.discordapp\.com\/stickers\//i.test(att.url)
+}
+
 /** 获取 Sticker 项列表 */
 function stickerItemsOf(msg) {
-  // 如果有 stickerItemsJson，直接解析
+  // 如果有 stickerItemsJson，直接解析，成功后不再走 content URL 兜底（防止重复叠加）
   if (msg.stickerItemsJson) {
     try {
       const items = JSON.parse(msg.stickerItemsJson)
       if (Array.isArray(items) && items.length > 0) return items
     } catch { /* ignore */ }
   }
-  
-  // 从 content 中提取 Sticker URL（兼容 URL 形式的 Sticker 消息）
+
+  // stickerItemsJson 没有结果时，才从 content 中提取 Sticker URL（兼容 URL 形式的 Sticker 消息）
   if (msg.content && /^https?:\/\/\S+$/.test(msg.content.trim())) {
     const url = msg.content.trim()
     const lowerUrl = url.toLowerCase()
@@ -1947,6 +1988,55 @@ function stickerItemsOf(msg) {
 /** 判断是否 Lottie 格式 Sticker */
 function isLottieSticker(sticker) {
   return sticker && (sticker.formatType === 3 || sticker.format === 'lottie')
+}
+
+/** 判断收藏的 URL 是否是 Lottie JSON 形式（Sticker 收藏 Tab 判断渲染方式） */
+function isStickerJsonUrl(url) {
+  if (!url) return false
+  return /cdn\.discordapp\.com\/stickers\/.+\.json(\?|#|$)/i.test(url) || /\.json(\?|#|$)/i.test(url)
+}
+
+// Sticker 收藏 Tab 的 Lottie 实例缓存（与聊天区缓存分开，避免ID冲突）
+const pickerLottieInstances = new Map()
+
+/** 销毁所有 Sticker 收藏 Tab 的 Lottie 实例（弹窗关闭时释放） */
+function disposePickerLotties() {
+  for (const [k, v] of pickerLottieInstances) {
+    try { v.destroy() } catch {}
+    pickerLottieInstances.delete(k)
+  }
+}
+
+/** 扫描并初始化 Sticker 收藏 Tab 中所有 Lottie JSON 的贴纸 */
+function initPickerStickerLotties() {
+  disposePickerLotties()
+  setTimeout(() => {
+    stickerFavorites.value.forEach(fav => {
+      if (!isStickerJsonUrl(fav.gifUrl)) return
+      const boxId = 'picker-sticker-' + fav.id
+      const box = document.getElementById(boxId)
+      if (!box) return
+      if (pickerLottieInstances.has(boxId)) return
+      const fetchUrl = needsProxy(fav.gifUrl) ? proxiedUrl(fav.gifUrl) : fav.gifUrl
+      fetch(fetchUrl)
+        .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json() })
+        .then(json => {
+          const inst = lottie.loadAnimation({ container: box, renderer: 'svg', loop: true, autoplay: true, animationData: json })
+          pickerLottieInstances.set(boxId, inst)
+        })
+        .catch(err => {
+          console.warn('[PickerLottie] 加载失败:', fav.gifUrl, err)
+          box.innerHTML = '<div style="color:#888;font-size:12px;text-align:center;padding:14px;">预览加载失败</div>'
+        })
+    })
+  }, 80)
+}
+
+/** 判断聊天消息中的贴纸 gifUrl 是否为 Lottie JSON URL（用于收藏功能构造正确的 assetUrl） */
+function stickerUrlToFavoriteDisplay(url) {
+  if (!url) return url
+  // Lottie JSON 没有"缩略图"，直接把 JSON 链接存回，发送时由后端处理
+  return url
 }
 
 /** 获取 Sticker 的资源 URL（Lottie 返回 JSON，图片返回 CDN 链接） */
@@ -2289,7 +2379,7 @@ function isGifAttachment(att) {
 }
 
 function nonGifAttachments(msg) {
-  return parseAttachments(msg).filter(a => !isGifAttachment(a))
+  return parseAttachments(msg).filter(a => !isGifAttachment(a) && !isStickerAttachment(a))
 }
 
 function toggleAttachment() {
@@ -2465,7 +2555,7 @@ async function handleFavoriteGif(msg) {
   
   try {
     const normalizedUrl = normalizeGifUrlLocal(url)
-    await addGifFavorite(currentAccountId.value, normalizedUrl, '')
+    await addGifFavorite(currentAccountId.value, normalizedUrl, '', 'gif')
     ElMessage.success('已收藏')
     await loadGifFavorites()
   } catch (e) {
@@ -4804,6 +4894,17 @@ onUnmounted(() => {
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.gif-thumb-lottie {
+  width: 100%;
+  height: 100%;
+  min-width: 96px;
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
 
 .gif-item-actions {
