@@ -198,22 +198,29 @@ public class EmuInstanceService {
                             int memMb = ((Number) memoryMB).intValue();
                             emu.put("memoryGb", memMb / 1024);
                         }
-                        // 合并自动加好友相关字段
-                        Object autoRunning = phys.get("autoRunning");
-                        if (autoRunning != null) {
-                            emu.put("autoRunning", autoRunning);
+                        // 合并自动加好友相关字段（物理层有有效值时才覆盖，避免默认值0/null覆盖DB）
+                        Object physAutoRunning = phys.get("autoRunning");
+                        if (physAutoRunning != null) {
+                            boolean pAR = Boolean.TRUE.equals(physAutoRunning);
+                            Boolean dbAR = (Boolean) emu.get("autoRunning");
+                            // 只有物理层为 true 时才升级，否则保留 DB 原值
+                            if (pAR) {
+                                emu.put("autoRunning", true);
+                            } else if (dbAR != null) {
+                                emu.put("autoRunning", dbAR);
+                            }
                         }
-                        Object addedCount = phys.get("addedCount");
-                        if (addedCount != null) {
-                            emu.put("addedCount", addedCount);
+                        Object physAddedCount = phys.get("addedCount");
+                        if (physAddedCount instanceof Number && ((Number) physAddedCount).intValue() > 0) {
+                            emu.put("addedCount", ((Number) physAddedCount).intValue());
                         }
-                        Object nextAddAt = phys.get("nextAddAt");
-                        if (nextAddAt != null) {
-                            emu.put("nextAddAt", nextAddAt);
+                        Object physNextAddAt = phys.get("nextAddAt");
+                        if (physNextAddAt instanceof Number && ((Number) physNextAddAt).longValue() > 0) {
+                            emu.put("nextAddAt", ((Number) physNextAddAt).longValue());
                         }
-                        Object autoLastResult = phys.get("autoLastResult");
-                        if (autoLastResult != null) {
-                            emu.put("autoLastResult", autoLastResult.toString());
+                        Object physAutoLastResult = phys.get("autoLastResult");
+                        if (physAutoLastResult != null && !physAutoLastResult.toString().isEmpty()) {
+                            emu.put("autoLastResult", physAutoLastResult.toString());
                         }
                         break;
                     }
