@@ -2491,10 +2491,10 @@ function formatCountdown(timestamp) {
   margin: 0;
 }
 
-/* 服务器卡片列表 */
+/* 服务器卡片列表 - 一行显示两个 */
 .server-card-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 10px;
 }
 
