@@ -364,7 +364,6 @@
                       <img v-if="isImage(att.filename)" :src="proxiedUrl(att.url)" class="attachment-image" @error="onGifError" />
                       <a v-else :href="att.url" target="_blank" class="attachment-file">
                         <el-icon><Document /></el-icon>
-                        <span>{{ att.filename }}</span>
                       </a>
                     </div>
                   </div>
@@ -606,6 +605,15 @@
         <!-- 工具栏 -->
         <div class="toolbar-row">
           <div class="toolbar-left">
+            <!-- Sticker 选择器入口（第1个位置） -->
+            <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('sticker')" title="选择 Sticker">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><text x="12" y="16" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">GIF</text></svg>
+            </button>
+            <!-- GIF 选择器入口（第2个位置） -->
+            <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('gif')" title="选择 GIF">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/><path d="M8.5 14c1.2 1 2.5 1.5 3.5 1.5s2.3-.5 3.5-1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
+            </button>
+            <!-- 表情包入口（第3个位置） -->
             <el-popover placement="top" :width="260" trigger="click">
               <template #reference>
                 <el-button size="small" circle class="toolbar-btn"><el-icon><Stamp /></el-icon></el-button>
@@ -614,15 +622,6 @@
                 <span v-for="e in emojiList" :key="e" class="emoji-item" @click="insertEmoji(e)">{{ e }}</span>
               </div>
             </el-popover>
-
-            <!-- Sticker 选择器入口 -->
-            <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('sticker')" title="选择 Sticker">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2" ry="2"></rect><text x="12" y="16" text-anchor="middle" font-size="7" fill="currentColor" stroke="none">GIF</text></svg>
-            </button>
-            <!-- GIF 选择器入口 -->
-            <button class="toolbar-btn gif-picker-btn-inline" @click="openGifPicker('gif')" title="选择 GIF">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/><path d="M8.5 14c1.2 1 2.5 1.5 3.5 1.5s2.3-.5 3.5-1.5" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/></svg>
-            </button>
 
             <el-popover v-model:visible="showMentionPanel" placement="top-start" width="240" trigger="click">
               <template #reference>
@@ -703,7 +702,6 @@
             <div v-for="(att, i) in pendingAttachments" :key="i" class="attachment-preview-item">
               <img v-if="isImage(att.name)" :src="att.url" class="attachment-thumb" />
               <el-icon v-else><Document /></el-icon>
-              <span>{{ att.name }}</span>
               <el-icon class="close-icon" @click="pendingAttachments.splice(i, 1)"><Close /></el-icon>
             </div>
           </div>

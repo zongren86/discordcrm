@@ -566,7 +566,7 @@ public class MessageService {
                         sent.put("contentType", mimeType);
                         sent.put("size", String.valueOf(fileBytes.length));
                         sentAttachments.add(sent);
-                        attachmentDesc.append("[附件:").append(name).append("] ");
+                        // 不再在消息内容中添加 [附件:文件名] 文本，改为由前端附件区域渲染
                     }
                 } catch (Exception e) {
                     log.error("发送附件失败: {}", e.getMessage());
@@ -579,7 +579,8 @@ public class MessageService {
                 attMsg.setConversation(conversation);
                 attMsg.setDirection(Message.Direction.OUTBOUND);
                 attMsg.setSenderName(agentDisplayName != null ? agentDisplayName : "我");
-                attMsg.setContent(attachmentDesc.toString().trim());
+                // 附件消息内容设为空字符串，附件信息由 attachmentsJson 传递给前端渲染
+                attMsg.setContent("");
                 attMsg.setAttachmentsJson(toJson(sentAttachments));
                 attMsg.setMessageType("attachment");
                 attMsg.setCreatedAt(Instant.now());
