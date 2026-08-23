@@ -1212,8 +1212,13 @@ public class MessageService {
         String discordAttachmentUrl;
         String sentContent;
 
+        // Sticker/Lottie JSON 强制走下载上传路径，避免 Discord 显示 URL 文本
+        boolean isStickerJson = gifUrl != null && (
+            gifUrl.toLowerCase().endsWith(".json") ||
+            gifUrl.toLowerCase().contains("/stickers/")
+        );
         // 判断 URL 类型：直接媒体URL 还是 分享链接
-        if (isDirectMediaUrl(gifUrl)) {
+        if (!isStickerJson && isDirectMediaUrl(gifUrl)) {
             // 直接URL：直接发送，Discord 会自动 embedding 显示
             log.info("发送直接媒体URL: {}", gifUrl);
             try {
@@ -1243,7 +1248,7 @@ public class MessageService {
         message.setConversation(conversation);
         message.setDirection(Message.Direction.OUTBOUND);
         message.setSenderName(account.getName());
-        message.setContent("[GIF] " + (title != null ? title : gifUrl));
+        message.setContent("");
         message.setMessageType("gif");
         message.setGifUrl(discordAttachmentUrl);
         Instant now = Instant.now();
@@ -1322,7 +1327,7 @@ public class MessageService {
             JsonNode resp = discordUserClient.sendMessageWithFile(
                     account.getToken(),
                     conversation.getChannelId(),
-                    gifUrl, // content 保留原始 URL
+                    "", // content 为空，避免 Discord 显示 URL 文本
                     fileName,
                     gifData,
                     mimeType,
@@ -1333,7 +1338,7 @@ public class MessageService {
             String messageId = resp.path("id").asText(null);
             String attachmentUrl = extractAttachmentUrl(resp);
 
-            return new GifSendResult(messageId, attachmentUrl, gifUrl);
+            return new GifSendResult(messageId, attachmentUrl, "");
 
         } catch (Exception e) {
             log.error("GIF 下载上传失败: {}", e.getMessage(), e);
