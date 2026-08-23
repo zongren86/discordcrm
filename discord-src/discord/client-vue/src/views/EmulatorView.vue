@@ -40,72 +40,7 @@
           label="模拟器列表" 
           name="list"
         >
-          <el-row :gutter="12">
-            <!-- 左侧：控制面板 -->
-            <el-col :span="6">
-              <el-card class="panel" shadow="hover">
-                <template #header>
-                  <div class="panel-header">
-                    <el-icon><Setting /></el-icon>
-                    <span>模拟器控制</span>
-                    <el-button type="primary" size="small" link @click="syncPhysical" :disabled="emuLoading">
-                      🔄 同步
-                    </el-button>
-                  </div>
-                </template>
-                <div class="panel-body">
-                  <div class="action-row">
-                    <el-button type="primary" @click="startAll" :disabled="emuLoading || !physicalStatus.available" size="small">
-                      全部启动
-                    </el-button>
-                    <el-button type="primary" @click="stopAll" :disabled="emuLoading || !physicalStatus.available" size="small">
-                      全部停止
-                    </el-button>
-                    <el-button type="primary" @click="restartAll" :disabled="emuLoading || !physicalStatus.available" size="small">
-                      全部重启
-                    </el-button>
-                  </div>
-                </div>
-              </el-card>
-
-              <el-card class="panel" shadow="hover" style="margin-top: 8px">
-                <template #header>
-                  <div class="panel-header">
-                    <el-icon><ChatDotRound /></el-icon>
-                    <span>Discord 管理</span>
-                  </div>
-                </template>
-                <div class="panel-body">
-                  <div class="form-row">
-                    <label>APK</label>
-                    <el-tag :type="apkDownloaded ? 'success' : 'info'" size="small">
-                      {{ apkDownloaded ? '已上传' : '未上传' }}
-                    </el-tag>
-                    <el-button 
-                      v-if="apkDownloaded" 
-                      size="small" 
-                      @click="downloadApk" 
-                      :disabled="apkLoading"
-                    >下载</el-button>
-                    <el-button 
-                      v-else 
-                      size="small" 
-                      type="primary"
-                      @click="triggerApkUpload" 
-                      :disabled="apkLoading"
-                    >上传</el-button>
-                    <input ref="apkInput" type="file" accept=".apk" @change="handleApkUpload" style="display:none" />
-                    <el-button type="primary" size="small" @click="installAllDiscord" :disabled="emuLoading">
-                      全部安装DS
-                    </el-button>
-                  </div>
-                </div>
-              </el-card>
-            </el-col>
-
-            <!-- 右侧：服务器+好友号池合并 -->
-            <el-col :span="18">
-              <el-card class="panel" shadow="hover">
+          <el-card class="panel" shadow="hover">
                 <template #header>
                   <div class="panel-header">
                     <el-icon><User /></el-icon>
@@ -207,8 +142,6 @@
                   </div>
                 </div>
               </el-card>
-            </el-col>
-          </el-row>
 
           <!-- 批量操作工具栏 -->
           <div class="batch-toolbar">
@@ -222,6 +155,20 @@
               >
                 + 新增
               </el-button>
+              <!-- 移到工具栏的控制按钮 -->
+              <el-button type="primary" size="small" @click="syncPhysical" :disabled="emuLoading">
+                同步
+              </el-button>
+              <el-button type="primary" size="small" @click="startAll" :disabled="emuLoading || !physicalStatus.available">
+                全部启动
+              </el-button>
+              <el-button type="primary" size="small" @click="stopAll" :disabled="emuLoading || !physicalStatus.available">
+                全部停止
+              </el-button>
+              <el-button type="primary" size="small" @click="restartAll" :disabled="emuLoading || !physicalStatus.available">
+                全部重启
+              </el-button>
+              <el-divider direction="vertical" />
               <el-button type="primary" size="small" @click="batchAction('start')" :disabled="!canBatchStart || !physicalStatus.available">
                 批量启动
               </el-button>
@@ -234,6 +181,7 @@
               <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall || !physicalStatus.available">
                 批量安装DS
               </el-button>
+              <el-divider direction="vertical" />
               <el-button v-if="!autoAddTaskRunning" type="primary" size="small" @click="startAutoAll">
                 全部开始加好友
               </el-button>
@@ -253,15 +201,15 @@
           </div>
 
           <!-- 模拟器列表 -->
-      <el-table 
-        v-if="emulators.length > 0" 
-        :data="sortedEmulators" 
-        style="margin-top: 8px; width: 100%"
-        max-height="calc(100vh - 560px)"
-        @selection-change="handleSelectionChange"
-        :row-class-name="rowClassName"
-        size="small"
-      >
+      <div v-if="emulators.length > 0" class="table-container">
+        <el-table 
+          :data="paginatedEmulators" 
+          style="margin-top: 8px; width: 100%"
+          height="calc(100vh - 520px)"
+          @selection-change="handleSelectionChange"
+          :row-class-name="rowClassName"
+          size="small"
+        >
         <el-table-column type="selection" width="40" class-name="checkbox-column" />
         <el-table-column label="ID" width="45">
           <template #default="{ row }">
@@ -403,8 +351,21 @@
           </template>
         </el-table-column>
       </el-table>
+          <!-- 分页 -->
+          <div class="pagination-container">
+            <el-pagination
+              v-model:current-page="currentPage"
+              v-model:page-size="pageSize"
+              :page-sizes="[100]"
+              :total="sortedEmulators.length"
+              layout="total, prev, pager, next"
+              background
+              small
+            />
+          </div>
+      </div>
 
-          <el-empty v-else-if="!loading" description="暂无模拟器，点击上方「新增」按钮创建" />
+      <el-empty v-else-if="!loading" description="暂无模拟器，点击上方「新增」按钮创建" />
         </el-tab-pane>
 
         <!-- Tab 2: 配置 -->
@@ -919,6 +880,15 @@ const sortedEmulators = computed(() => {
     const nameB = b.name || ''
     return nameA.localeCompare(nameB, 'zh', { numeric: true, sensitivity: 'base' })
   })
+})
+
+// 分页相关
+const currentPage = ref(1)
+const pageSize = ref(100)
+const paginatedEmulators = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return sortedEmulators.value.slice(start, end)
 })
 
 function handleSelectionChange(selection) {
@@ -1987,13 +1957,22 @@ function formatCountdown(timestamp) {
 
 <style scoped>
 .emulator-view {
-  padding: 12px;
+  width: 100%;
   height: 100%;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   background: var(--color-bg, #f5f7fa);
+  overflow: hidden;
 }
 
-.content { max-width: 1600px; }
+.content { 
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  overflow: hidden;
+}
 
 .panel { margin-bottom: 8px; }
 .panel-header { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 14px; }
@@ -2037,10 +2016,55 @@ function formatCountdown(timestamp) {
   align-items: center;
   padding: 8px 12px;
   margin-bottom: 8px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
+  background: var(--color-bg-2, #fff);
+  border: 1px solid var(--color-border, #e4e7ed);
   border-radius: 6px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+.pagination-container {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid var(--color-border, #e4e7ed);
+  background: var(--color-bg-2, #fff);
+}
+
+/* TAB 样式 */
+:deep(.el-tabs--border-card > .el-tabs__header) {
+  background: var(--color-bg-2, #f5f7fa);
+  border: 1px solid var(--color-border, #e4e7ed);
+  border-bottom: none;
+}
+
+:deep(.el-tabs--border-card > .el-tabs__content) {
+  border: 1px solid var(--color-border, #e4e7ed);
+  border-top: none;
+  padding: 12px;
+  background: var(--color-bg-2, #fff);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.el-tab-pane) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 表格容器 */
+.table-container {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-container :deep(.el-table) {
+  flex: 1;
+  min-height: 0;
 }
 
 .table-wrap {
