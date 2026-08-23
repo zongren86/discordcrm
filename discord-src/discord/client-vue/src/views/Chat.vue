@@ -1908,12 +1908,13 @@ function isPageUrl(url) {
 /** 将外部 GIF URL 转为后端代理 URL，绕过浏览器 CORS/Cloudflare 限制 */
 function proxiedUrl(url) {
   if (!url) return ''
-  // 如果是 klipy.com 页面链接且已解析，返回解析后的 CDN URL（CDN 也需要代理）
+  // 如果是 klipy.com 页面链接且已解析，返回解析后的 CDN URL
+  // CDN URL 已支持 CORS（static2.klipy.com 返回 Access-Control-Allow-Origin: *），
+  // 直接返回让浏览器加载，绕过后端代理的 500 错误
   if (isPageUrl(url) && isGifUrlResolved(url)) {
     const cdnUrl = resolvedGifUrls.value.get(url)
     console.log('[proxiedUrl] 使用解析后CDN:', url, '->', cdnUrl)
-    // CDN URL 也走代理（绕过 Cloudflare）
-    return '/api/proxy/fetch?url=' + encodeURIComponent(cdnUrl)
+    return cdnUrl || url  // CDN URL 直接返回，不代理
   }
   if (needsProxy(url)) {
     return '/api/proxy/fetch?url=' + encodeURIComponent(url)
