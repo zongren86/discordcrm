@@ -67,18 +67,10 @@ public class EmuInstanceService {
      * 获取当前用户的所有模拟器实例
      */
     public List<Map<String, Object>> getCurrentUserInstances() {
+        Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
-        List<EmuInstance> instances;
-        
-        if (SecurityUtils.isPlatformAdmin()) {
-            // 平台管理员：查询所有 merchant_id 的当前用户模拟器
-            log.info("获取模拟器列表: 平台管理员模式, userId={}", userId);
-            instances = instanceRepository.findByUserId(userId);
-        } else {
-            Long merchantId = resolveMerchantId();
-            log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
-            instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
-        }
+        log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
+        List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         log.info("查询结果: 找到 {} 个模拟器", instances.size());
         
         // 使用原生查询获取 auto_running 字段值，解决 JPA 映射问题
@@ -207,14 +199,9 @@ public class EmuInstanceService {
                             emu.put("memoryGb", memMb / 1024);
                         }
                         // 合并自动加好友相关字段
-                        // 优先使用数据库中的值（autoRunningMap）
-                        Object autoRunningFromPhys = phys.get("autoRunning");
-                        Boolean autoRunningFromDb = autoRunningMap.get(((Number) emu.get("id")).longValue());
-                        // 如果数据库中有值，优先使用数据库的值
-                        if (autoRunningFromDb != null) {
-                            emu.put("autoRunning", autoRunningFromDb);
-                        } else if (autoRunningFromPhys != null) {
-                            emu.put("autoRunning", autoRunningFromPhys);
+                        Object autoRunning = phys.get("autoRunning");
+                        if (autoRunning != null) {
+                            emu.put("autoRunning", autoRunning);
                         }
                         Object addedCount = phys.get("addedCount");
                         if (addedCount != null) {
@@ -1112,7 +1099,7 @@ public class EmuInstanceService {
             throw new RuntimeException("Discord未在首页，请先跳转到首页");
         }
 
-        // 如果前端传了serverId，保存到实例中
+        // 如果前端传了serverId，保存到实例中，供AutoAddService使用
         if (serverId != null) {
             instance.setGuildServerId(serverId);
         }
