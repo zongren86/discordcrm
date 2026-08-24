@@ -24,6 +24,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -73,6 +74,9 @@ public class MessageService {
     private final LanguageDetectionService languageDetectionService;
     private final SpeechRecognitionService speechRecognitionService;
     private final TranslationCacheRepository translationCacheRepository;
+    @Value("${app.base-url:http://localhost:8090}")
+    private String baseUrl;
+
 
     public MessageService(ConversationRepository conversationRepository,
                            MessageRepository messageRepository,
@@ -1200,6 +1204,20 @@ public class MessageService {
      * 确保对方 Discord 客户端能正常显示动画
      */
     @Transactional
+
+    /**
+     * 判断 URL 是否为本地服务器上传的文件（需要下载后重新上传到 Discord CDN）
+     */
+    private boolean isLocalUploadUrl(String url) {
+        if (url == null || url.isBlank() || baseUrl == null) return false;
+        try {
+            String base = baseUrl.replaceAll("/+$", "");
+            return url.startsWith(base + "/uploads/") || url.startsWith(base + "/api/gif-favorites/");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public Message sendGifMessage(Long conversationId, String gifUrl, String title) {
         if (gifUrl == null || gifUrl.isBlank()) {
             throw new IllegalArgumentException("GIF URL 不能为空");
@@ -1285,6 +1303,13 @@ public class MessageService {
                     throw new RuntimeException("发送Sticker失败: " + e2.getMessage(), e2);
                 }
             }
+        } else if (isLocalUploadUrl(gifUrl)) {
+            // 本地服务器上传的文件（如 Sticker 转换后的 GIF）：下载后重新上传到 Discord CDN
+            log.info("发送本地上传文件(Sticker GIF): {}", gifUrl);
+            var localResult = downloadAndUploadGif(account, conversation, gifUrl, title);
+            discordMessageId = localResult.messageId();
+            discordAttachmentUrl = localResult.attachmentUrl();
+            sentContent = localResult.sentContent();
         } else if (isDirectMediaUrl(gifUrl)) {
             // 直接媒体URL：直接发送，Discord 会自动 embedding 显示
             log.info("发送直接媒体URL: {}", gifUrl);
