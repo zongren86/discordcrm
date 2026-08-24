@@ -151,8 +151,8 @@ public class DiscordUserClient {
                 }
             }
         }
-        throw new RuntimeException("Discord API 调用失败（重试3次后仍失败）: "
-                + (lastException != null ? lastException.getMessage() : "unknown"), lastException);
+        String errMsg = lastException != null ? lastException.getClass().getSimpleName() + ": " + lastException.getMessage() : "timeout";
+        throw new RuntimeException("Discord API 调用失败（重试3次后仍失败）: " + errMsg, lastException);
     }
 
     public String openDmChannel(String token, String targetUserId) throws Exception {
@@ -377,11 +377,9 @@ public class DiscordUserClient {
                 }
             }
         }
-        log.warn("轮询请求失败: path={}, err={}", path,
-                lastException != null ? lastException.getMessage() : "unknown");
-        throw new RuntimeException("轮询API调用失败: " + path + " - "
-                + (lastException != null ? lastException.getClass().getSimpleName() + ": " + lastException.getMessage() : "timeout"),
-                lastException);
+        String errMsg = lastException != null ? lastException.getClass().getSimpleName() + ": " + lastException.getMessage() : "unknown";
+        log.warn("轮询请求失败: path={}, err={}", path, errMsg);
+        throw new RuntimeException("轮询API调用失败: " + path + " - " + errMsg, lastException);
     }
 
     /**
@@ -491,8 +489,8 @@ public class DiscordUserClient {
                 }
             }
         }
-        throw new RuntimeException("Discord API 调用失败（重试3次后仍失败）: "
-                + (lastException != null ? lastException.getMessage() : "unknown"), lastException);
+        String errMsg = lastException != null ? lastException.getClass().getSimpleName() + ": " + lastException.getMessage() : "timeout";
+        throw new RuntimeException("Discord API 调用失败（重试3次后仍失败）: " + errMsg, lastException);
     }
 
     /**

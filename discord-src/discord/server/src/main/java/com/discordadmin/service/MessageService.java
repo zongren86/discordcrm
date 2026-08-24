@@ -46,6 +46,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class MessageService {
@@ -268,6 +269,7 @@ public class MessageService {
                     msgEntity.setTranslatedContent(content);
                     msgEntity.setMessageType("voice");
                 } else {
+                    msgEntity.setMessageType("text");
                     try {
                         translateAndSave(msgEntity, "zh-CN");
                     } catch (Exception e) {
@@ -1317,22 +1319,41 @@ private boolean isLocalUploadUrl(String url) {
             sentContent = result.sentContent();
         }
 
-        // 保存消息记录
-        Message message = new Message();
-        message.setConversation(conversation);
-        message.setDirection(Message.Direction.OUTBOUND);
-        message.setSenderName(account.getName());
-        message.setContent("");
-        message.setMessageType("gif");
-        message.setGifUrl(discordAttachmentUrl);
-        Instant now = Instant.now();
-        message.setDiscordCreatedAt(now);
-        message.setCreatedAt(now);
+        // 保存消息记录（先查重，避免唯一索引冲突）
+        Message saved;
         if (discordMessageId != null) {
-            message.setDiscordMessageId(discordMessageId);
+            // 检查是否已存在该消息（防止重复保存）
+            Optional<Message> existing = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
+            if (existing.isPresent()) {
+                log.warn("消息已存在，跳过保存: conversationId={}, discordMessageId={}", conversationId, discordMessageId);
+                saved = existing.get();
+            } else {
+                Message message = new Message();
+                message.setConversation(conversation);
+                message.setDirection(Message.Direction.OUTBOUND);
+                message.setSenderName(account.getName());
+                message.setContent("");
+                message.setMessageType("gif");
+                message.setGifUrl(discordAttachmentUrl);
+                Instant now = Instant.now();
+                message.setDiscordCreatedAt(now);
+                message.setCreatedAt(now);
+                message.setDiscordMessageId(discordMessageId);
+                saved = messageRepository.save(message);
+            }
+        } else {
+            Message message = new Message();
+            message.setConversation(conversation);
+            message.setDirection(Message.Direction.OUTBOUND);
+            message.setSenderName(account.getName());
+            message.setContent("");
+            message.setMessageType("gif");
+            message.setGifUrl(discordAttachmentUrl);
+            Instant now = Instant.now();
+            message.setDiscordCreatedAt(now);
+            message.setCreatedAt(now);
+            saved = messageRepository.save(message);
         }
-
-        Message saved = messageRepository.save(message);
 
         // 推送 WebSocket 消息（使用 DTO 避免 Hibernate 懒加载序列化问题）
         MessageDtos.MessageDto dto = MessageDto.from(saved, conversation, account);
