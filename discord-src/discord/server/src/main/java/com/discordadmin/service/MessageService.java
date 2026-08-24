@@ -1212,14 +1212,27 @@ public class MessageService {
         String discordAttachmentUrl;
         String sentContent;
 
-        // Sticker/Lottie JSON 强制走下载上传路径，避免 Discord 显示 URL 文本
+        // Sticker/Lottie JSON：直接发送URL，管理后台前端用Lottie渲染
+        // Discord原生不支持Lottie JSON渲染，只能显示URL
         boolean isStickerJson = gifUrl != null && (
             gifUrl.toLowerCase().endsWith(".json") ||
             gifUrl.toLowerCase().contains("/stickers/")
         );
-        // 判断 URL 类型：直接媒体URL 还是 分享链接
-        if (!isStickerJson && isDirectMediaUrl(gifUrl)) {
-            // 直接URL：直接发送，Discord 会自动 embedding 显示
+
+        if (isStickerJson) {
+            // Sticker JSON：直接发送URL，Discord显示URL，管理后台前端用Lottie渲染
+            log.info("发送Sticker JSON URL: {}", gifUrl);
+            try {
+                discordMessageId = discordUserClient.sendMessage(
+                        account.getToken(), conversation.getChannelId(), gifUrl);
+                discordAttachmentUrl = gifUrl;
+                sentContent = gifUrl;
+            } catch (Exception e) {
+                log.error("发送Sticker JSON失败: {}", e.getMessage());
+                throw new RuntimeException("发送Sticker失败: " + e.getMessage(), e);
+            }
+        } else if (isDirectMediaUrl(gifUrl)) {
+            // 直接媒体URL：直接发送，Discord 会自动 embedding 显示
             log.info("发送直接媒体URL: {}", gifUrl);
             try {
                 discordMessageId = discordUserClient.sendMessage(
