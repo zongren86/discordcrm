@@ -1,5 +1,5 @@
 {
-  "userId": "merchantadmin2",
+  "userId": "merchantadmin",
   "merchantId": 2,
   "serverUrl": "ws://localhost:8090/ws/agent",
   "heartbeatInterval": 30000,

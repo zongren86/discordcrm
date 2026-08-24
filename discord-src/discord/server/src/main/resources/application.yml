@@ -65,7 +65,7 @@ mumu:
 # 模拟器执行模式
 emulator:
   # 本地模式（true: 直接调用本地 MumuManager；false: 通过 Agent 远程控制）
-  local-mode: ${EMULATOR_LOCAL_MODE:true}
+  local-mode: ${EMULATOR_LOCAL_MODE:false}
 
 jwt:
   secret: ${JWT_SECRET:discord-admin-dev-secret-key-change-me-in-prod-0123456789}
