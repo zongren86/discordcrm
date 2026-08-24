@@ -1068,15 +1068,18 @@ public class EmulatorService {
             String state = json.path("return").path("state").asText("");
             // 兼容 running / launching / booting 等运行中状态
             boolean isActive = "running".equals(state) || "launching".equals(state) || "booting".equals(state);
-            if (!isActive) {
-                return -1;
+            if (isActive) {
+                int port = json.path("return").path("adb_port").asInt(-1);
+                if (port <= 0) {
+                    // 虽然返回 running 但端口无效，尝试通过 ADB 兜底检测
+                    port = tryAdbFallback(index);
+                }
+                return port;
             }
-            int port = json.path("return").path("adb_port").asInt(-1);
-            if (port <= 0) {
-                // 虽然返回 running 但端口无效，尝试通过 ADB 兜底检测
-                port = tryAdbFallback(index);
-            }
-            return port;
+            // Mumu 返回 stopped/other 状态时，仍尝试 ADB 兜底检测
+            // 防止 Mumu 守护进程未就绪或状态延迟导致误判
+            log.debug("mumutool info {} 返回 state={}，尝试 ADB 兜底检测", index, state);
+            return tryAdbFallback(index);
         } catch (Exception e) {
             log.warn("mumutool info {} 失败: {}，尝试 ADB 兜底", index, e.getMessage());
             return tryAdbFallback(index);

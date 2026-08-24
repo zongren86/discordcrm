@@ -339,20 +339,20 @@ public class DiscordAccountService {
             return accountRepository.findAllWithAgents();
         }
 
-        // 商户管理员：查看商户下所有账号
+        // 商户管理员：查看商户下所有账号 + 无商户归属的账号
         if (isMerchantAdmin) {
             if (hasKeyword && hasStatus) {
-                return accountRepository.searchWithAgentsByMerchantIdAndKeywordAndStatus(
+                return accountRepository.searchWithAgentsByMerchantOrNullAndKeywordAndStatus(
                         merchantId, keyword.trim(), DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
             }
             if (hasKeyword) {
-                return accountRepository.searchWithAgentsByMerchantId(merchantId, keyword.trim());
+                return accountRepository.searchWithAgentsByMerchantOrNullAndKeyword(merchantId, keyword.trim());
             }
             if (hasStatus) {
-                return accountRepository.findWithAgentsByMerchantIdAndStatus(
+                return accountRepository.findWithAgentsByMerchantIdOrNullAndStatus(
                         merchantId, DiscordAccount.AccountStatus.valueOf(status.toUpperCase()));
             }
-            return accountRepository.findWithAgentsByMerchantId(merchantId);
+            return accountRepository.findWithAgentsByMerchantIdOrNull(merchantId);
         }
 
         // 普通用户：只能看到分配给自己的账号
