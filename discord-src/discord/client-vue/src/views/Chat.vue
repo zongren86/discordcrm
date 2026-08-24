@@ -2734,20 +2734,17 @@ async function handleDownloadGif(msg) {
 /** 发送收藏的 GIF */
 async function sendGifFromFavorite(favorite) {
   if (!favorite || !conversations.currentConversationId) return
-  if (sendingGif.value) return  // 防止重复提交
+  if (sendingGif.value) return
   sendingGif.value = true
   
-  const loadingMsg = ElMessage({ message: '正在发送...', duration: 0, type: 'info' })
   try {
     await sendGifMessageApi(conversations.currentConversationId, favorite.gifUrl, favorite.title)
-    loadingMsg.close()
-    ElMessage.success('已发送')
     gifPickerVisible.value = false
-    // 发送成功后强制滚到底部
+    // 等待消息加载到列表后再滚动到底部
+    await nextTick()
     await nextTick()
     scrollToBottom({ force: true })
   } catch (e) {
-    loadingMsg.close()
     console.error('发送GIF失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，文件可能过大，请选择较小的动图')
@@ -2761,35 +2758,25 @@ async function sendGifFromFavorite(favorite) {
 
 /** 发送收藏的 Sticker */
 async function sendStickerFromFavorite(fav) {
-  if (!conversations.currentConversationId) {
-    ElMessage.warning('请选择会话')
-    return
-  }
-  if (!fav || !fav.gifUrl) {
-    ElMessage.error('无效的贴纸数据')
-    return
-  }
-  if (sendingGif.value) return  // 防止重复提交
+  if (!conversations.currentConversationId) return
+  if (!fav || !fav.gifUrl) return
+  if (sendingGif.value) return
   sendingGif.value = true
   
-  const loadingMsg = ElMessage({ message: '正在发送...', duration: 0, type: 'info' })
   try {
-    // Sticker优先使用原始CDN URL（Discord原生支持渲染），本地转换的GIF仅用于展示
     const url = fav.gifUrl || fav.resolvedUrl || fav.favDisplayUrl || fav.convertedGifUrl
     await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
-    loadingMsg.close()
-    ElMessage.success('已发送')
     gifPickerVisible.value = false
-    // 发送成功后强制滚到底部
+    // 等待消息加载到列表后再滚动到底部
+    await nextTick()
     await nextTick()
     scrollToBottom({ force: true })
   } catch (e) {
-    loadingMsg.close()
     console.error('发送Sticker失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
-      ElMessage.error('发送超时，文件可能过大')
+      ElMessage.error('发送超时，请重试')
     } else {
-      ElMessage.error('发送失败: ' + (e.message || '未知错误'))
+      ElMessage.error('发送失败，请重试')
     }
   } finally {
     sendingGif.value = false
