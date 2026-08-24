@@ -685,19 +685,41 @@ public class EmuInstanceService {
     public Map<String, Object> startInstance(int index) {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
+        
+        log.info("startInstance 开始: index={}, merchantId={}, userId={}", index, merchantId, userId);
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
-            .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
+            .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%d, userId=%s)", index, merchantId, userId)));
 
-        if (!mumuClientService.emulatorExists(index)) {
+        // 检查是否有在线 Agent
+        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
+        boolean useAgent = !onlineAgents.isEmpty();
+        log.info("startInstance: 在线Agent数量={}, useAgent={}", onlineAgents.size(), useAgent);
+
+        // 如果没有在线 Agent，检查本地模拟器是否存在
+        if (!useAgent && !mumuClientService.emulatorExists(index)) {
             throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法启动。请先创建模拟器。", index));
+        }
+        // 如果有在线 Agent，信任 Agent 端的模拟器状态，跳过本地检查
+        if (useAgent) {
+            log.info("Agent 模式: 通过 Agent {} 启动模拟器 #{}", onlineAgents.get(0).getDeviceId(), index);
         }
 
         // 异步启动，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                // 1. 启动模拟器（内部会检查 Discord 安装状态）
-                Map<String, Object> startResult = mumuClientService.startEmulator(index);
+                // 1. 启动模拟器（优先通过 Agent，否则本地）
+                Map<String, Object> startResult;
+                if (useAgent) {
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("index", index - 1); // 转为 Mumu 0-based 索引
+                    AgentRegistration agent = onlineAgents.get(0);
+                    startResult = webSocketService.sendCommandAndWait(agent.getDeviceId(), "START_EMULATOR", params)
+                        .get(60, TimeUnit.SECONDS);
+                    log.info("通过 Agent {} 启动模拟器 #{}", agent.getDeviceId(), index);
+                } else {
+                    startResult = mumuClientService.startEmulator(index);
+                }
                 log.info("模拟器 #{} 启动指令执行完成, discordInstalled={}", index, startResult.get("discordInstalled"));
 
                 // 2. 等待模拟器完全启动（8秒）
@@ -776,14 +798,28 @@ public class EmuInstanceService {
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
-        if (!mumuClientService.emulatorExists(index)) {
+        // 检查是否有在线 Agent
+        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
+        boolean useAgent = !onlineAgents.isEmpty();
+
+        // 如果没有在线 Agent，检查本地模拟器是否存在
+        if (!useAgent && !mumuClientService.emulatorExists(index)) {
             throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法停止", index));
         }
 
         // 异步停止，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                mumuClientService.stopEmulator(index);
+                if (useAgent) {
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("index", index - 1);
+                    AgentRegistration agent = onlineAgents.get(0);
+                    webSocketService.sendCommandAndWait(agent.getDeviceId(), "STOP_EMULATOR", params)
+                        .get(60, TimeUnit.SECONDS);
+                    log.info("通过 Agent {} 停止模拟器 #{}", agent.getDeviceId(), index);
+                } else {
+                    mumuClientService.stopEmulator(index);
+                }
                 log.info("模拟器 #{} 停止指令执行完成", index);
             } catch (Exception e) {
                 log.warn("模拟器 #{} 停止指令执行失败: {}", index, e.getMessage());
@@ -810,14 +846,32 @@ public class EmuInstanceService {
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
-        if (!mumuClientService.emulatorExists(index)) {
+        // 检查是否有在线 Agent
+        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
+        boolean useAgent = !onlineAgents.isEmpty();
+
+        // 如果没有在线 Agent，检查本地模拟器是否存在
+        if (!useAgent && !mumuClientService.emulatorExists(index)) {
             throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法重启", index));
         }
 
         // 异步重启，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                mumuClientService.restartEmulator(index);
+                if (useAgent) {
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("index", index - 1);
+                    AgentRegistration agent = onlineAgents.get(0);
+                    // 先停止再启动
+                    webSocketService.sendCommandAndWait(agent.getDeviceId(), "STOP_EMULATOR", params)
+                        .get(30, TimeUnit.SECONDS);
+                    Thread.sleep(3000);
+                    webSocketService.sendCommandAndWait(agent.getDeviceId(), "START_EMULATOR", params)
+                        .get(60, TimeUnit.SECONDS);
+                    log.info("通过 Agent {} 重启模拟器 #{}", agent.getDeviceId(), index);
+                } else {
+                    mumuClientService.restartEmulator(index);
+                }
                 log.info("模拟器 #{} 重启指令执行完成", index);
             } catch (Exception e) {
                 log.warn("模拟器 #{} 重启指令执行失败: {}", index, e.getMessage());

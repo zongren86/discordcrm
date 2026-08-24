@@ -199,13 +199,31 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             String deviceId = (String) data.get("deviceId");
             if (deviceId != null) {
                 AgentRegistration agent = onlineAgents.get(deviceId);
-                if (agent != null) {
-                    agent.setLastHeartbeatAt(Instant.now());
-                    agent.setStatus("ONLINE");
-                    agentRepository.save(agent);
-                    
-                    syncEmulatorStatusFromHeartbeat(agent, data);
+                if (agent == null) {
+                    // 从数据库查找或创建
+                    final String finalDeviceId = deviceId;
+                    agent = agentRepository.findByUserIdAndDeviceId(
+                        (String) data.get("userId"), deviceId)
+                        .orElseGet(() -> {
+                            AgentRegistration newAgent = new AgentRegistration();
+                            newAgent.setUserId((String) data.get("userId"));
+                            newAgent.setDeviceId(finalDeviceId);
+                            return newAgent;
+                        });
+                    // 尝试设置 merchantId
+                    if (agent.getMerchantId() == null && agent.getUserId() != null) {
+                        agentEntityRepository.findByUsername(agent.getUserId())
+                            .map(Agent::getMerchantId)
+                            .ifPresent(agent::setMerchantId);
+                    }
+                    onlineAgents.put(deviceId, agent);
+                    log.info("心跳恢复 Agent: deviceId={}, userId={}", deviceId, agent.getUserId());
                 }
+                agent.setLastHeartbeatAt(Instant.now());
+                agent.setStatus("ONLINE");
+                agentRepository.save(agent);
+                
+                syncEmulatorStatusFromHeartbeat(agent, data);
             }
         }
     }
@@ -441,11 +459,30 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     
     /**
      * 获取指定 userId 的在线 Agent；若 userId 为空则返回所有在线 Agent
+     * 优先从内存 Map 获取，如果内存为空则从数据库回退查询
      */
     public List<AgentRegistration> getOnlineAgentsByUserId(String userId) {
-        return onlineAgents.values().stream()
+        List<AgentRegistration> result = onlineAgents.values().stream()
             .filter(a -> "ONLINE".equals(a.getStatus()))
             .filter(a -> userId == null || userId.isEmpty() || userId.equals(a.getUserId()))
+            .collect(java.util.stream.Collectors.toList());
+
+        if (!result.isEmpty()) {
+            return result;
+        }
+
+        // 回退：从数据库查询最近 2 分钟内心跳过的 Agent
+        Instant threshold = Instant.now().minusSeconds(120);
+        return agentRepository.findAll().stream()
+            .filter(a -> "ONLINE".equals(a.getStatus()))
+            .filter(a -> a.getLastHeartbeatAt() != null && a.getLastHeartbeatAt().isAfter(threshold))
+            .filter(a -> userId == null || userId.isEmpty() || userId.equals(a.getUserId()))
+            .peek(a -> {
+                if (!onlineAgents.containsKey(a.getDeviceId())) {
+                    onlineAgents.put(a.getDeviceId(), a);
+                    log.info("从数据库恢复在线 Agent: deviceId={}, userId={}", a.getDeviceId(), a.getUserId());
+                }
+            })
             .collect(java.util.stream.Collectors.toList());
     }
     

@@ -44,15 +44,16 @@ class MuMuController {
     constructor() {
         this.adbPath = this.findAdbPath();
         this.mumuPath = config.mumuPath || this.findMuMuPath();
+        this.mumutoolPath = this.findMumutoolPath();
         console.log('[MuMu] ADB 路径:', this.adbPath);
         console.log('[MuMu] MuMu 路径:', this.mumuPath);
+        console.log('[MuMu] mumutool 路径:', this.mumutoolPath || '未找到');
     }
 
     findAdbPath() {
         try {
             return execSync('which adb', { encoding: 'utf8' }).trim();
         } catch {
-            // 尝试常见路径
             const paths = [
                 '/usr/local/bin/adb',
                 '/opt/homebrew/bin/adb',
@@ -61,10 +62,22 @@ class MuMuController {
                 '/mnt/c/Windows/System32/adb.exe'
             ];
             for (const p of paths) {
-                if (fs.existsSync(p)) return p;
+                if (p && fs.existsSync(p)) return p;
             }
             return null;
         }
+    }
+
+    findMumutoolPath() {
+        const os = process.platform;
+        if (os === 'darwin') {
+            const p = `${this.mumuPath}/Contents/MacOS/mumutool`;
+            if (fs.existsSync(p)) return p;
+        } else if (os === 'win32') {
+            const p = `${this.mumuPath}/shell/mumutool.exe`;
+            if (fs.existsSync(p)) return p;
+        }
+        return null;
     }
 
     findMuMuPath() {
@@ -90,11 +103,58 @@ class MuMuController {
         }
     }
 
+    async execMumutool(args, timeout = 30000) {
+        if (!this.mumutoolPath) {
+            throw new Error('mumutool 未找到');
+        }
+        const cmd = `"${this.mumutoolPath}" ${args.join(' ')}`;
+        try {
+            const result = execSync(cmd, { timeout, encoding: 'utf8' });
+            return JSON.parse(result);
+        } catch (e) {
+            throw new Error(`mumutool 执行失败: ${e.message}`);
+        }
+    }
+
+    async connectAdb(port) {
+        if (!this.adbPath) return false;
+        try {
+            execSync(`"${this.adbPath}" connect 127.0.0.1:${port}`, { timeout: 5000 });
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
     async getEmulators() {
         const emulators = [];
         try {
+            if (this.mumutoolPath) {
+                const result = await this.execMumutool(['info', 'all']);
+                if (result.errcode === 0 && result.return) {
+                    for (const item of result.return.results) {
+                        const index = item.index;
+                        let status = 'STOPPED';
+                        if (item.state === 'running') {
+                            status = 'RUNNING';
+                            if (item.adb_port) {
+                                await this.connectAdb(item.adb_port);
+                            }
+                        }
+                        emulators.push({
+                            index,
+                            adbPort: item.adb_port || (16384 + index * 32),
+                            status,
+                            name: item.name || `V${String(index + 1).padStart(3, '0')}`
+                        });
+                    }
+                    return emulators;
+                }
+            }
+
+            // Fallback: 通过 ADB 检测
             const devicesOutput = await this.execAdb(['devices']);
-            const lines = devicesOutput.split('\n').slice(1); // 跳过标题行
+            const lines = devicesOutput.split('\n').slice(1);
             
             for (const line of lines) {
                 const trimmed = line.trim();
@@ -108,12 +168,14 @@ class MuMuController {
                     if (deviceId.startsWith('127.0.0.1:')) {
                         const port = parseInt(deviceId.split(':')[1]);
                         const index = Math.floor((port - 16384) / 32);
-                        emulators.push({
-                            index,
-                            adbPort: port,
-                            status: state === 'device' ? 'RUNNING' : 'STOPPED',
-                            name: `V${String(index + 1).padStart(3, '0')}`
-                        });
+                        if (index >= 0 && index < 100) {
+                            emulators.push({
+                                index,
+                                adbPort: port,
+                                status: state === 'device' ? 'RUNNING' : 'STOPPED',
+                                name: `V${String(index + 1).padStart(3, '0')}`
+                            });
+                        }
                     }
                 }
             }
@@ -124,19 +186,30 @@ class MuMuController {
     }
 
     async startEmulator(index) {
-        const port = 16384 + index * 32;
         try {
-            // 检查是否已连接
-            const devices = await this.getEmulators();
-            const existing = devices.find(d => d.index === index);
-            if (existing && existing.status === 'RUNNING') {
-                return { success: true, message: '模拟器已在运行' };
+            if (this.mumutoolPath) {
+                const result = await this.execMumutool(['open', String(index)]);
+                if (result.errcode === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    try {
+                        const info = await this.execMumutool(['info', String(index)]);
+                        if (info.return && info.return.adb_port) {
+                            await this.connectAdb(info.return.adb_port);
+                        }
+                    } catch {}
+                    return { success: true, message: '启动命令已发送' };
+                } else {
+                    return { success: false, message: result.message || '启动失败' };
+                }
             }
-            
-            // 尝试通过 MuMu 命令行启动
+
+            // Fallback: 使用 open 命令
             if (process.platform === 'darwin') {
                 const cmd = `open "${this.mumuPath}" --args -v ${index}`;
                 execSync(cmd, { timeout: 5000 });
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                const port = 16384 + index * 32;
+                await this.connectAdb(port);
                 return { success: true, message: '启动命令已发送' };
             }
             return { success: false, message: '需要手动启动模拟器' };
@@ -146,11 +219,48 @@ class MuMuController {
     }
 
     async stopEmulator(index) {
-        const port = 16384 + index * 32;
-        const deviceId = `127.0.0.1:${port}`;
         try {
+            if (this.mumutoolPath) {
+                const result = await this.execMumutool(['close', String(index)]);
+                if (result.errcode === 0) {
+                    return { success: true, message: '关闭命令已发送' };
+                } else {
+                    return { success: false, message: result.message || '关闭失败' };
+                }
+            }
+
+            // Fallback: 使用 ADB 关机
+            const port = 16384 + index * 32;
+            const deviceId = `127.0.0.1:${port}`;
             await this.execAdb(['-s', deviceId, 'shell', 'reboot', '-p']);
             return { success: true, message: '关闭命令已发送' };
+        } catch (e) {
+            return { success: false, message: e.message };
+        }
+    }
+
+    async restartEmulator(index) {
+        try {
+            if (this.mumutoolPath) {
+                const result = await this.execMumutool(['restart', String(index)]);
+                if (result.errcode === 0) {
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    try {
+                        const info = await this.execMumutool(['info', String(index)]);
+                        if (info.return && info.return.adb_port) {
+                            await this.connectAdb(info.return.adb_port);
+                        }
+                    } catch {}
+                    return { success: true, message: '重启命令已发送' };
+                } else {
+                    return { success: false, message: result.message || '重启失败' };
+                }
+            }
+
+            // Fallback: 先关闭再启动
+            await this.stopEmulator(index);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return await this.startEmulator(index);
         } catch (e) {
             return { success: false, message: e.message };
         }
@@ -305,28 +415,247 @@ async function handleMessage(msg) {
                 });
             }
             break;
+
+        case 'RESTART_EMULATOR':
+            {
+                const index = msg.params?.index;
+                const result = await mumu.restartEmulator(index);
+                send({
+                    type: 'TASK_RESULT',
+                    taskId: msg.taskId,
+                    params: { status: result.success ? 'SUCCESS' : 'FAILED' },
+                    data: result
+                });
+            }
+            break;
             
         case 'PING':
             send({ type: 'PONG' });
             break;
             
+        case 'BATCH_START':
+            {
+                const emulators = await mumu.getEmulators();
+                let successCount = 0;
+                let failCount = 0;
+                const results = [];
+                
+                for (const emu of emulators) {
+                    if (emu.status === 'RUNNING') {
+                        successCount++;
+                        results.push({ index: emu.index, success: true, message: '已在运行' });
+                        continue;
+                    }
+                    try {
+                        const result = await mumu.startEmulator(emu.index);
+                        if (result.success) {
+                            successCount++;
+                        } else {
+                            failCount++;
+                        }
+                        results.push({ index: emu.index, ...result });
+                    } catch (e) {
+                        failCount++;
+                        results.push({ index: emu.index, success: false, message: e.message });
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                }
+                
+                send({
+                    type: 'TASK_RESULT',
+                    taskId: msg.taskId,
+                    params: { status: failCount === 0 ? 'SUCCESS' : 'PARTIAL' },
+                    data: {
+                        total: emulators.length,
+                        successCount,
+                        failCount,
+                        results
+                    }
+                });
+            }
+            break;
+            
+        case 'BATCH_STOP':
+            {
+                const emulators = await mumu.getEmulators();
+                let successCount = 0;
+                let failCount = 0;
+                const results = [];
+                
+                for (const emu of emulators) {
+                    if (emu.status !== 'RUNNING') {
+                        successCount++;
+                        results.push({ index: emu.index, success: true, message: '已停止' });
+                        continue;
+                    }
+                    try {
+                        const result = await mumu.stopEmulator(emu.index);
+                        if (result.success) {
+                            successCount++;
+                        } else {
+                            failCount++;
+                        }
+                        results.push({ index: emu.index, ...result });
+                    } catch (e) {
+                        failCount++;
+                        results.push({ index: emu.index, success: false, message: e.message });
+                    }
+                }
+                
+                send({
+                    type: 'TASK_RESULT',
+                    taskId: msg.taskId,
+                    params: { status: failCount === 0 ? 'SUCCESS' : 'PARTIAL' },
+                    data: {
+                        total: emulators.length,
+                        successCount,
+                        failCount,
+                        results
+                    }
+                });
+            }
+            break;
+            
+        case 'CREATE_EMULATOR':
+            {
+                const index = msg.params?.index;
+                const count = msg.params?.count || 1;
+                
+                if (mumu.mumutoolPath) {
+                    try {
+                        const cmd = `open "${config.mumuPath || '/Applications/MuMuPlayer.app'}" --args -v ${index}`;
+                        execSync(cmd, { timeout: 10000 });
+                        send({
+                            type: 'TASK_RESULT',
+                            taskId: msg.taskId,
+                            params: { status: 'SUCCESS' },
+                            data: { success: true, message: '创建命令已发送', index }
+                        });
+                    } catch (e) {
+                        send({
+                            type: 'TASK_RESULT',
+                            taskId: msg.taskId,
+                            params: { status: 'FAILED' },
+                            data: { success: false, message: e.message }
+                        });
+                    }
+                } else {
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'FAILED' },
+                        data: { success: false, message: 'mumutool 未找到' }
+                    });
+                }
+            }
+            break;
+            
+        case 'INSTALL_APK':
+            {
+                const index = msg.params?.index;
+                const apkPath = msg.params?.apkPath;
+                
+                try {
+                    const port = 16384 + index * 32;
+                    await mumu.connectAdb(port);
+                    const adbCmd = `${mumu.adbPath} -s 127.0.0.1:${port} install -r "${apkPath}"`;
+                    execSync(adbCmd, { timeout: 60000 });
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'SUCCESS' },
+                        data: { success: true, message: 'APK 安装完成' }
+                    });
+                } catch (e) {
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'FAILED' },
+                        data: { success: false, message: e.message }
+                    });
+                }
+            }
+            break;
+            
+        case 'LAUNCH_APP':
+            {
+                const index = msg.params?.index;
+                const packageName = msg.params?.packageName || 'com.discord.app';
+                
+                try {
+                    const port = 16384 + index * 32;
+                    await mumu.connectAdb(port);
+                    const cmd = `${mumu.adbPath} -s 127.0.0.1:${port} shell am start -n ${packageName}/.MainActivity`;
+                    execSync(cmd, { timeout: 10000 });
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'SUCCESS' },
+                        data: { success: true, message: '应用启动命令已发送' }
+                    });
+                } catch (e) {
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'FAILED' },
+                        data: { success: false, message: e.message }
+                    });
+                }
+            }
+            break;
+            
+        case 'SCREENSHOT':
+            {
+                const index = msg.params?.index;
+                
+                try {
+                    const port = 16384 + index * 32;
+                    await mumu.connectAdb(port);
+                    const screenshotPath = `/tmp/mumu-screenshot-${index}.png`;
+                    const cmd = `${mumu.adbPath} -s 127.0.0.1:${port} exec screencap -p /sdcard/screen.png && ${mumu.adbPath} -s 127.0.0.1:${port} pull /sdcard/screen.png "${screenshotPath}"`;
+                    execSync(cmd, { timeout: 15000 });
+                    
+                    const base64 = fs.readFileSync(screenshotPath, { encoding: 'base64' });
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'SUCCESS' },
+                        data: { success: true, screenshot: base64 }
+                    });
+                } catch (e) {
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'FAILED' },
+                        data: { success: false, message: e.message }
+                    });
+                }
+            }
+            break;
+            
         default:
             console.log(`[Agent] 未处理的消息类型: ${type}`);
+            send({
+                type: 'TASK_RESULT',
+                taskId: msg.taskId,
+                params: { status: 'FAILED' },
+                data: { success: false, message: `未处理的命令类型: ${type}` }
+            });
     }
 }
 
 // ========== 主程序入口 ==========
 function main() {
     console.log('========================================');
-    console.log('  MuMu Agent v1.0.0');
+    console.log('  MuMu Agent v2.0.0 (mumutool 增强版)');
     console.log('========================================');
     
     if (!loadConfig()) {
         console.error('[Agent] 请创建 config.json 配置文件');
         console.error('[Agent] 模板:');
         console.error(JSON.stringify({
-            userId: 'merchantadmin2',
-            serverUrl: 'wss://your-server.com/ws/agent',
+            userId: 'merchantadmin',
+            serverUrl: 'ws://localhost:8090/ws/agent',
             mumuPath: '/Applications/MuMuPlayer.app'
         }, null, 2));
         process.exit(1);
