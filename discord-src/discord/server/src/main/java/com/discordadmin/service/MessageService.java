@@ -1234,79 +1234,27 @@ public class MessageService {
         String discordAttachmentUrl;
         String sentContent;
 
-        // Sticker/Lottie JSON：仅识别外部Discord CDN的Sticker JSON，排除本地上传的GIF文件
-        boolean isLocalUpload = isLocalUploadUrl(gifUrl);
-        boolean isStickerJson = !isLocalUpload && gifUrl != null && (
-            gifUrl.toLowerCase().endsWith(".json") ||
-            gifUrl.toLowerCase().contains("/stickers/")
-        );
+        // Discord Sticker CDN URL：直接发送，Discord 原生支持渲染为动画
+        boolean isDiscordStickerUrl = gifUrl != null && 
+            gifUrl.toLowerCase().contains("cdn.discordapp.com/stickers");
 
-        if (isStickerJson) {
-            // Sticker JSON：下载后生成PNG预览图上传到Discord
-            log.info("发送Sticker PNG预览: {}", gifUrl);
+        boolean isLocalUpload = isLocalUploadUrl(gifUrl);
+
+        if (isDiscordStickerUrl) {
+            // Sticker CDN URL：直接发送原始URL，Discord会自动渲染为Sticker动画
+            log.info("发送Discord Sticker URL: {}", gifUrl);
             try {
-                // 下载Sticker JSON
-                byte[] stickerJsonData = downloadGifFile(gifUrl);
-                if (stickerJsonData != null && stickerJsonData.length > 0) {
-                    // 解析JSON获取Sticker名称
-                    String stickerName = "Sticker";
-                    try {
-                        JsonNode root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(new String(stickerJsonData));
-                        if (root.has("nm")) {
-                            stickerName = root.get("nm").asText("Sticker");
-                        }
-                    } catch (Exception ignored) {}
-                    
-                    // 生成PNG预览图
-                    byte[] gifData = generateStickerGif(stickerName);
-                    
-                    if (gifData != null && gifData.length > 0) {
-                        // 上传GIF到Discord
-                        String filename = "sticker_preview.gif";
-                        JsonNode resp = discordUserClient.sendMessageWithFile(
-                                account.getToken(),
-                                conversation.getChannelId(),
-                                "",
-                                filename,
-                                gifData,
-                                "image/gif",
-                                null,
-                                null
-                        );
-                        discordMessageId = resp.path("id").asText(null);
-                        discordAttachmentUrl = gifUrl; // 保留原始URL供前端Lottie渲染
-                        sentContent = gifUrl; // 保留原始URL供前端识别为Sticker
-                        log.info("Sticker GIF动画上传成功: {}", discordAttachmentUrl);
-                    } else {
-                        // 降级：直接发送URL
-                        log.warn("PNG生成失败，降级发送URL");
-                        discordMessageId = discordUserClient.sendMessage(
-                                account.getToken(), conversation.getChannelId(), gifUrl);
-                        discordAttachmentUrl = gifUrl;
-                        sentContent = gifUrl;
-                    }
-                } else {
-                    // 降级：直接发送URL
-                    log.warn("Sticker JSON下载失败，降级发送URL");
-                    discordMessageId = discordUserClient.sendMessage(
-                            account.getToken(), conversation.getChannelId(), gifUrl);
-                    discordAttachmentUrl = gifUrl;
-                    sentContent = gifUrl;
-                }
+                discordMessageId = discordUserClient.sendMessage(
+                        account.getToken(), conversation.getChannelId(), gifUrl);
+                discordAttachmentUrl = gifUrl;
+                sentContent = gifUrl;
             } catch (Exception e) {
-                log.error("发送Sticker失败，降级直接发送: {}", e.getMessage());
-                try {
-                    discordMessageId = discordUserClient.sendMessage(
-                            account.getToken(), conversation.getChannelId(), gifUrl);
-                    discordAttachmentUrl = gifUrl;
-                    sentContent = gifUrl;
-                } catch (Exception e2) {
-                    throw new RuntimeException("发送Sticker失败: " + e2.getMessage(), e2);
-                }
+                log.error("Sticker URL发送失败: {}", e.getMessage());
+                throw new RuntimeException("Sticker发送失败: " + e.getMessage(), e);
             }
-        } else if (isLocalUploadUrl(gifUrl)) {
-            // 本地服务器上传的文件（如 Sticker 转换后的 GIF）：下载后重新上传到 Discord CDN
-            log.info("发送本地上传文件(Sticker GIF): {}", gifUrl);
+        } else if (isLocalUpload) {
+            // 本地服务器上传的文件：下载后重新上传到 Discord CDN
+            log.info("发送本地上传文件: {}", gifUrl);
             var localResult = downloadAndUploadGif(account, conversation, gifUrl, title);
             discordMessageId = localResult.messageId();
             discordAttachmentUrl = localResult.attachmentUrl();

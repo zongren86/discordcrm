@@ -2774,8 +2774,8 @@ async function sendStickerFromFavorite(fav) {
   
   const loadingMsg = ElMessage({ message: '正在发送...', duration: 0, type: 'info' })
   try {
-    // 优先使用转换后的 GIF URL（如果有的话）
-    const url = fav.convertedGifUrl || fav.resolvedUrl || fav.favDisplayUrl || fav.gifUrl
+    // Sticker优先使用原始CDN URL（Discord原生支持渲染），本地转换的GIF仅用于展示
+    const url = fav.gifUrl || fav.resolvedUrl || fav.favDisplayUrl || fav.convertedGifUrl
     await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
     loadingMsg.close()
     ElMessage.success('已发送')
