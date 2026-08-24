@@ -1196,19 +1196,28 @@ async function batchAction(action) {
   }
 }
 
+// 带超时的Promise包装
+function withTimeout(promise, ms, fallback = null) {
+  return Promise.race([
+    promise.catch(() => fallback),
+    new Promise(resolve => setTimeout(() => resolve(fallback), ms))
+  ])
+}
+
 onMounted(async () => {
-  // 并行执行所有加载，不等待服务检查
+  // 并行执行所有加载，不等待服务检查，每个任务最多8秒超时
+  const LOAD_TIMEOUT = 8000
   const loadTasks = [
-    fetchEmulators(),
-    loadAddedServers(),
-    loadAvailableServers(),
-    loadAutoConfig(),
-    checkApkStatus(),
-    loadFriendPoolStats(),
-    loadAllServerFriendPoolStats(),
-    loadFriendPool(),
-    checkPhysicalStatus(),
-    fetchAutoAddStatus()
+    withTimeout(fetchEmulators(), LOAD_TIMEOUT),
+    withTimeout(loadAddedServers(), LOAD_TIMEOUT),
+    withTimeout(loadAvailableServers(), LOAD_TIMEOUT),
+    withTimeout(loadAutoConfig(), LOAD_TIMEOUT),
+    withTimeout(checkApkStatus(), LOAD_TIMEOUT),
+    withTimeout(loadFriendPoolStats(), LOAD_TIMEOUT),
+    withTimeout(loadAllServerFriendPoolStats(), LOAD_TIMEOUT),
+    withTimeout(loadFriendPool(), LOAD_TIMEOUT),
+    withTimeout(checkPhysicalStatus(), LOAD_TIMEOUT),
+    withTimeout(fetchAutoAddStatus(), LOAD_TIMEOUT)
   ]
   
   // 服务检查与数据加载并行
@@ -1216,10 +1225,10 @@ onMounted(async () => {
     backendAvailable.value = ok
   })
   
-  // 并行执行所有任务
+  // 并行执行所有任务，最多等待10秒
   await Promise.all([
     serviceCheckPromise,
-    ...loadTasks.map(t => t.catch(() => null)) // 单个任务失败不影响其他
+    ...loadTasks
   ])
   
   loading.value = false
