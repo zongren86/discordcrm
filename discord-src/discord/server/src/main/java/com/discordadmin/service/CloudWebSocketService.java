@@ -458,6 +458,45 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     }
     
     /**
+     * 通过 Agent 执行 ADB 命令
+     * @param userId 用户 ID
+     * @param index 模拟器索引 (0-based)
+     * @param args ADB 命令参数
+     * @return ADB 命令输出
+     */
+    public String execAdb(String userId, int index, String... args) {
+        List<AgentRegistration> agents = getOnlineAgentsByUserId(userId);
+        if (agents.isEmpty()) {
+            log.warn("Agent 模式: 无在线 Agent, userId={}", userId);
+            return "ERROR: 无在线 Agent";
+        }
+
+        AgentRegistration agent = agents.get(0);
+        Map<String, Object> params = new HashMap<>();
+        params.put("index", index);
+        params.put("args", java.util.Arrays.asList(args));
+
+        try {
+            Map<String, Object> result = sendCommandAndWait(agent.getDeviceId(), "EXEC_ADB", params)
+                .get(30, TimeUnit.SECONDS);
+
+            if ("SUCCESS".equals(result.get("status"))) {
+                Map<String, Object> data = (Map<String, Object>) result.get("data");
+                if (data != null && Boolean.TRUE.equals(data.get("success"))) {
+                    return (String) data.getOrDefault("output", "");
+                } else {
+                    return "ERROR: " + (data != null ? data.get("message") : "未知错误");
+                }
+            } else {
+                return "ERROR: " + result.getOrDefault("message", "命令执行失败");
+            }
+        } catch (Exception e) {
+            log.error("通过 Agent 执行 ADB 命令失败", e);
+            return "ERROR: " + e.getMessage();
+        }
+    }
+
+    /**
      * 获取指定 userId 的在线 Agent；若 userId 为空则返回所有在线 Agent
      * 优先从内存 Map 获取，如果内存为空则从数据库回退查询
      */

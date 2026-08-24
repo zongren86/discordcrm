@@ -2,7 +2,9 @@ package com.discordadmin.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.discordadmin.entity.AgentRegistration;
 import com.discordadmin.model.EmulatorInfo;
+import com.discordadmin.repository.AgentRegistrationRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -12,6 +14,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -48,6 +51,24 @@ public class EmulatorService {
     private String resolvedMumutoolPath;
     private String resolvedAdbPath;
     private String resolvedVmsBasePath;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private CloudWebSocketService cloudWebSocketService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private AgentRegistrationRepository agentRegistrationRepository;
+
+    private String currentUserId;
+
+    /** 设置当前操作用户 ID（用于 Agent 模式） */
+    public void setCurrentUserId(String userId) {
+        this.currentUserId = userId;
+    }
+
+    /** 获取当前操作用户 ID */
+    public String getCurrentUserId() {
+        return this.currentUserId;
+    }
 
     /** 写入模拟器实时抓取的 Discord 用户名（显示用） */
     public void setDiscordActualUser(int index, String user) {
@@ -1004,6 +1025,16 @@ public class EmulatorService {
      * vm.json 中的 adbPort 是静态值，与运行时的真实端口不匹配。
      */
     public String execAdb(int index, String... args) {
+        // 如果有在线 Agent，优先通过 Agent 执行
+        if (cloudWebSocketService != null && currentUserId != null) {
+            List<AgentRegistration> agents = cloudWebSocketService.getOnlineAgentsByUserId(currentUserId);
+            if (!agents.isEmpty()) {
+                log.debug("Agent 模式: 通过 Agent 执行 ADB 命令, userId={}, index={}", currentUserId, index);
+                return cloudWebSocketService.execAdb(currentUserId, index, args);
+            }
+        }
+        
+        // 本地模式执行
         try {
             // 优先使用真实动态端口
             int realPort = getMumuRunningPort(index);

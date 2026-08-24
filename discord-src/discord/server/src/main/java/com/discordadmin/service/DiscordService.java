@@ -36,8 +36,21 @@ public class DiscordService {
         "https://play.google.com/store/apps/details?id=com.discord"
     };
 
+    private String currentUserId;
+
     public DiscordService(EmulatorService emulatorService) {
         this.emulatorService = emulatorService;
+    }
+
+    /** 设置当前操作用户 ID */
+    public void setCurrentUserId(String userId) {
+        this.currentUserId = userId;
+        this.emulatorService.setCurrentUserId(userId);
+    }
+
+    /** 获取当前操作用户 ID */
+    public String getCurrentUserId() {
+        return this.currentUserId;
     }
 
     public boolean isApkDownloaded() {

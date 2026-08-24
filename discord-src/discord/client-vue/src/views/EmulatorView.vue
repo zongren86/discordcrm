@@ -12,11 +12,14 @@
           <p class="page-desc">管理模拟器实例，配置自动加好友，监控添加状态</p>
         </div>
         <div class="header-actions">
-          <el-tag v-if="!physicalStatus.available" type="warning" effect="light">
-            未检测到本地模拟器
+          <el-tag v-if="physicalStatus.agentOnline" type="success" effect="light">
+            Agent 已连接 ({{ physicalStatus.agentCount }}台设备)
           </el-tag>
-          <el-tag v-else type="success" effect="light">
-            模拟器已连接
+          <el-tag v-else-if="physicalStatus.localReachable" type="success" effect="light">
+            本地模拟器已连接
+          </el-tag>
+          <el-tag v-else type="warning" effect="light">
+            未检测到在线 Agent
           </el-tag>
           <el-button
             v-if="!physicalStatus.available"
@@ -40,7 +43,7 @@
           style="margin-bottom: 12px"
         />
 
-        <!-- Agent 未连接引导 -->
+        <!-- 状态提示 -->
         <el-alert
           v-if="backendAvailable && !physicalStatus.available"
           type="warning"
@@ -57,21 +60,24 @@
           </template>
         </el-alert>
 
-        <!-- Agent 已连接显示 -->
         <el-alert
-          v-else-if="backendAvailable && physicalStatus.available"
+          v-else-if="backendAvailable && physicalStatus.agentOnline"
           type="success"
           show-icon
           :closable="false"
-          :title="physicalStatus.message || 'Agent 已连接'"
+          :title="'Agent 已连接 - 当前商户共 ' + physicalStatus.agentCount + ' 台设备在线'"
           style="margin-bottom: 12px"
-        >
-          <template #default v-if="physicalStatus.agentCount">
-            <span style="font-size: 12px; color: var(--el-text-color-secondary)">
-              当前商户共 {{ physicalStatus.agentCount }} 台设备在线
-            </span>
-          </template>
-        </el-alert>
+        />
+
+        <el-alert
+          v-else-if="backendAvailable && physicalStatus.localReachable"
+          type="info"
+          show-icon
+          :closable="false"
+          title="本地模拟器已连接（非 Agent 模式）"
+          description="当前使用本地模式管理模拟器，建议安装 mumu-agent 以支持远程管理。"
+          style="margin-bottom: 12px"
+        />
 
         <!-- Agent 引导弹窗 -->
         <el-dialog

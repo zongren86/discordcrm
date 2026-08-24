@@ -1728,8 +1728,12 @@ public class EmuInstanceService {
      */
     private void checkAndUpdateDiscordStatus(int index) {
         try {
+            // 设置当前用户 ID，以便 DiscordService 在 Agent 模式下正确执行 ADB 命令
+            String userId = resolveUserId();
+            discordService.setCurrentUserId(userId);
+            
             EmuInstance inst = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(
-                    resolveMerchantId(), resolveUserId(), index).orElse(null);
+                    resolveMerchantId(), userId, index).orElse(null);
             if (inst == null) {
                 log.warn("模拟器 #{} 不存在，跳过Discord状态检查", index);
                 return;
@@ -1887,6 +1891,9 @@ public class EmuInstanceService {
      * @param physData 物理模拟器数据（来自 getAllEmulatorsWithError）
      */
     private void checkAndUpdateDiscordStatusForInstance(EmuInstance inst, Map<String, Object> physData) {
+        // 设置当前用户 ID，以便 DiscordService 在 Agent 模式下正确执行 ADB 命令
+        discordService.setCurrentUserId(resolveUserId());
+        
         int index = inst.getInstanceIndex();
         int mumuIndex = index - 1;
         boolean updated = false;

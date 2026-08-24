@@ -51,21 +51,41 @@ class MuMuController {
     }
 
     findAdbPath() {
+        // 1. 首先尝试从 PATH 查找
         try {
-            return execSync('which adb', { encoding: 'utf8' }).trim();
-        } catch {
-            const paths = [
-                '/usr/local/bin/adb',
-                '/opt/homebrew/bin/adb',
-                process.env.ANDROID_HOME + '/platform-tools/adb',
-                process.env.LOCALAPPDATA + '/Android/Sdk/platform-tools/adb.exe',
-                '/mnt/c/Windows/System32/adb.exe'
-            ];
-            for (const p of paths) {
-                if (p && fs.existsSync(p)) return p;
-            }
-            return null;
+            const path = execSync('which adb 2>/dev/null || command -v adb 2>/dev/null', { encoding: 'utf8', shell: true }).trim();
+            if (path && fs.existsSync(path)) return path;
+        } catch {}
+
+        // 2. 从 ANDROID_HOME 环境变量查找
+        const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
+        if (androidHome) {
+            const p = path.join(androidHome, 'platform-tools', 'adb');
+            if (fs.existsSync(p)) return p;
         }
+
+        // 3. 常见路径搜索
+        const commonPaths = [
+            // macOS
+            '/Users/' + (process.env.USER || '') + '/Library/Android/sdk/platform-tools/adb',
+            '/usr/local/bin/adb',
+            '/opt/homebrew/bin/adb',
+            '/Users/' + (process.env.USER || '') + '/Library/Android/sdk/platform-tools/adb',
+            // Windows
+            process.env.LOCALAPPDATA + '/Android/Sdk/platform-tools/adb.exe',
+            process.env.ANDROID_HOME + '/platform-tools/adb.exe',
+            '/mnt/c/Windows/System32/adb.exe',
+            // Linux
+            '/usr/lib/android-sdk/platform-tools/adb',
+            '/opt/android-sdk/platform-tools/adb'
+        ];
+
+        for (const p of commonPaths) {
+            if (p && !p.includes('undefined') && fs.existsSync(p)) return p;
+        }
+
+        console.warn('[MuMu] ADB 未找到，请确保已安装 Android SDK 并配置 ANDROID_HOME 环境变量');
+        return null;
     }
 
     findMumutoolPath() {
@@ -83,8 +103,30 @@ class MuMuController {
     findMuMuPath() {
         const os = process.platform;
         if (os === 'darwin') {
+            const paths = [
+                '/Applications/MuMuPlayer.app',
+                '/Applications/MuMu Player.app'
+            ];
+            for (const p of paths) {
+                if (fs.existsSync(p)) return p;
+            }
             return '/Applications/MuMuPlayer.app';
         } else if (os === 'win32') {
+            // 搜索 MuMu 安装路径
+            const searchPaths = [
+                'C:\\Program Files\\Netease\\MuMuPlayer-12.0',
+                'C:\\Program Files (x86)\\Netease\\MuMuPlayer-12.0',
+                'D:\\Program Files\\Netease\\MuMuPlayer-12.0',
+                process.env.MUMU_PATH,
+                'C:\\MuMuPlayer',
+                'D:\\MuMuPlayer'
+            ];
+            for (const p of searchPaths) {
+                if (p && fs.existsSync(p)) {
+                    console.log('[MuMu] 找到 MuMu 安装路径:', p);
+                    return p;
+                }
+            }
             return 'C:\\Program Files\\Netease\\MuMuPlayer-12.0';
         }
         return '/opt/MuMuPlayer';
@@ -203,7 +245,7 @@ class MuMuController {
                 }
             }
 
-            // Fallback: 使用 open 命令
+            // Fallback: macOS 使用 open 命令，Windows 使用 start 命令
             if (process.platform === 'darwin') {
                 const cmd = `open "${this.mumuPath}" --args -v ${index}`;
                 execSync(cmd, { timeout: 5000 });
@@ -211,6 +253,17 @@ class MuMuController {
                 const port = 16384 + index * 32;
                 await this.connectAdb(port);
                 return { success: true, message: '启动命令已发送' };
+            } else if (process.platform === 'win32') {
+                // Windows: 查找 MuMuPlayer.exe 并启动
+                const exePath = path.join(this.mumuPath, 'MuMuPlayer.exe');
+                if (fs.existsSync(exePath)) {
+                    execSync(`start "" "${exePath}" -v ${index}`, { timeout: 5000, shell: true });
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    const port = 16384 + index * 32;
+                    await this.connectAdb(port);
+                    return { success: true, message: '启动命令已发送' };
+                }
+                return { success: false, message: '未找到 MuMuPlayer.exe' };
             }
             return { success: false, message: '需要手动启动模拟器' };
         } catch (e) {
@@ -628,6 +681,58 @@ async function handleMessage(msg) {
                         taskId: msg.taskId,
                         params: { status: 'FAILED' },
                         data: { success: false, message: e.message }
+                    });
+                }
+            }
+            break;
+            
+        case 'EXEC_ADB':
+            {
+                const index = msg.params?.index;
+                const adbArgs = msg.params?.args || [];
+                
+                try {
+                    if (!mumu.adbPath) {
+                        send({
+                            type: 'TASK_RESULT',
+                            taskId: msg.taskId,
+                            params: { status: 'FAILED' },
+                            data: { success: false, message: 'ADB 未找到' }
+                        });
+                        break;
+                    }
+                    
+                    const port = 16384 + index * 32;
+                    await mumu.connectAdb(port);
+                    
+                    // Build ADB command - handle Windows paths with spaces
+                    let cmdStr;
+                    if (process.platform === 'win32') {
+                        // Windows: use quotes for paths with spaces
+                        cmdStr = `"${mumu.adbPath}" -s 127.0.0.1:${port} ${adbArgs.join(' ')}`;
+                    } else {
+                        cmdStr = [mumu.adbPath, '-s', `127.0.0.1:${port}`, ...adbArgs].join(' ');
+                    }
+                    console.log(`[ADB] Executing: ${cmdStr}`);
+                    
+                    const result = execSync(cmdStr, { 
+                        encoding: 'utf8', 
+                        timeout: 30000,
+                        shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/sh'
+                    });
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'SUCCESS' },
+                        data: { success: true, output: result?.trim() || '' }
+                    });
+                } catch (e) {
+                    console.error(`[ADB] Error: ${e.message}`);
+                    send({
+                        type: 'TASK_RESULT',
+                        taskId: msg.taskId,
+                        params: { status: 'FAILED' },
+                        data: { success: false, message: e.message, output: e.stdout?.toString() || '' }
                     });
                 }
             }
