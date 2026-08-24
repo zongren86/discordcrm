@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.time.Instant;
 import java.util.List;
@@ -69,8 +70,9 @@ public class RelationshipSyncService {
     /**
      * 同步单个账号的好友列表 + 待接收请求 + DM 频道。
      * @return 同步后的好友数量；token 失效会抛 DiscordUserApiException(401)
+     * 使用 REQUIRES_NEW 确保该方法的事务独立，即使外层事务失败也不影响
      */
-    @Transactional
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public int syncOne(Long accountId) {
         // 防止并发同步同一账号
         if (syncingAccounts.putIfAbsent(accountId, Boolean.TRUE) != null) {
