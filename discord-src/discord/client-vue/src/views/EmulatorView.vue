@@ -129,7 +129,7 @@
                 <div class="config-preview">
                   <pre style="background: #f5f5f5; padding: 12px; border-radius: 4px; overflow: auto;">{{ JSON.stringify(agentConfig?.config, null, 2) }}</pre>
                   <el-button size="small" @click="copyToClipboard(JSON.stringify(agentConfig?.config, null, 2))">
-                    <el-icon><Copy /></el-icon> 复制配置
+                    <el-icon><CopyDocument /></el-icon> 复制配置
                   </el-button>
                 </div>
               </div>
@@ -155,7 +155,7 @@
           </div>
           <div style="margin-top: 16px; display: flex; gap: 8px;">
             <el-button @click="copyToClipboard(agentScriptContent)">
-              <el-icon><Copy /></el-icon> 复制脚本
+              <el-icon><CopyDocument /></el-icon> 复制脚本
             </el-button>
             <el-button type="primary" @click="downloadAsFile(agentScriptContent, 'install-mumu-agent.sh')">
               <el-icon><Download /></el-icon> 下载脚本
@@ -819,7 +819,7 @@
 import {
   Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
   ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Avatar,
-  Edit, Check, Close, Flag, Copy, Download, Guide
+  Edit, Check, Close, Flag, CopyDocument, Download, Guide
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElDialog, ElSteps, ElStep } from 'element-plus'
 import axios from 'axios'
