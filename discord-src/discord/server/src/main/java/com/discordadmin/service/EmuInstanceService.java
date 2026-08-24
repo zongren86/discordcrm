@@ -1517,15 +1517,34 @@ public class EmuInstanceService {
      */
     public Map<String, Object> getPhysicalStatus() {
         Map<String, Object> status = new HashMap<>();
-        boolean agentOnline = !webSocketService.getAllOnlineAgents().isEmpty();
+        String userId = resolveUserId();
+        Long merchantId = resolveMerchantId();
+
+        // 检查当前商户的 Agent 是否在线（不是全局所有 Agent）
+        List<AgentRegistration> myAgents = webSocketService.getOnlineAgentsByUserId(userId);
+        boolean agentOnline = !myAgents.isEmpty();
+
+        // 本地（云服务器）是否有 MuMu 模拟器
         boolean localReachable = mumuClientService.isReachable();
+
+        // 可用条件：当前商户有在线 Agent，或者本地有 MuMu
         boolean available = agentOnline || localReachable;
 
         status.put("available", available);
         status.put("agentOnline", agentOnline);
+        status.put("agentCount", myAgents.size());
         status.put("localReachable", localReachable);
-        status.put("message", available ? "物理模拟器已连接" : 
-            "未检测到本地模拟器。请确保 MuMuPlayer 已安装并启动");
+        status.put("userId", userId);
+        status.put("merchantId", merchantId);
+
+        if (agentOnline) {
+            status.put("message", "已连接 Agent (" + myAgents.size() + " 台设备在线)");
+        } else if (localReachable) {
+            status.put("message", "本地模拟器已连接");
+        } else {
+            status.put("message", "未检测到在线 Agent。请在本地运行 mumu-agent 客户端");
+        }
+
         return status;
     }
 

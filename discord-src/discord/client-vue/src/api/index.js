@@ -570,3 +570,17 @@ export function normalizeGifUrl(url) {
 export function resolveGifUrl(url) {
   return http.get('/proxy/resolve-gif-url', { params: { url } })
 }
+
+// === Agent 管理 (mumu-agent 客户端) ===
+export function getAgentStatus() {
+  return http.get('/emu/agent/status')
+}
+export function getAgentConfig() {
+  return http.get('/emu/agent/config')
+}
+export function downloadAgentScript() {
+  return http.get('/emu/agent/download-script')
+}
+export function getAgentGuide() {
+  return http.get('/emu/agent/guide')
+}

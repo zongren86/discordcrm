@@ -40,6 +40,138 @@
           style="margin-bottom: 12px"
         />
 
+        <!-- Agent 未连接引导 -->
+        <el-alert
+          v-if="backendAvailable && !physicalStatus.available"
+          type="warning"
+          show-icon
+          :closable="false"
+          title="未检测到在线 Agent"
+          description="请在本地服务器上安装并启动 mumu-agent 客户端，以便管理 MuMu 模拟器。点击下方按钮查看安装指引。"
+          style="margin-bottom: 12px"
+        >
+          <template #default>
+            <el-button type="primary" link size="small" @click="openAgentGuide">
+              查看安装指引
+            </el-button>
+          </template>
+        </el-alert>
+
+        <!-- Agent 已连接显示 -->
+        <el-alert
+          v-else-if="backendAvailable && physicalStatus.available"
+          type="success"
+          show-icon
+          :closable="false"
+          :title="physicalStatus.message || 'Agent 已连接'"
+          style="margin-bottom: 12px"
+        >
+          <template #default v-if="physicalStatus.agentCount">
+            <span style="font-size: 12px; color: var(--el-text-color-secondary)">
+              当前商户共 {{ physicalStatus.agentCount }} 台设备在线
+            </span>
+          </template>
+        </el-alert>
+
+        <!-- Agent 引导弹窗 -->
+        <el-dialog
+          v-model="showAgentGuide"
+          title="安装 mumu-agent 客户端"
+          width="600px"
+          :close-on-click-modal="false"
+        >
+          <div v-if="agentGuideData">
+            <el-steps :active="guideStep" finish-status="success" align-center>
+              <el-step
+                v-for="(step, index) in agentGuideData.steps"
+                :key="index"
+                :title="step.title"
+              />
+            </el-steps>
+            
+            <div class="agent-guide-content" style="margin-top: 24px;">
+              <div class="guide-section">
+                <h4>📋 当前商户信息</h4>
+                <el-descriptions :column="1" border size="small">
+                  <el-descriptions-item label="商户账号">
+                    {{ agentGuideData.userId }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="商户ID">
+                    {{ agentGuideData.merchantId }}
+                  </el-descriptions-item>
+                </el-descriptions>
+              </div>
+
+              <div class="guide-section" style="margin-top: 16px;">
+                <h4>🚀 快速安装步骤</h4>
+                <ol class="install-steps">
+                  <li>
+                    <strong>安装 MuMu 模拟器</strong>
+                    <p>确保本地服务器已安装 MuMuPlayer 模拟器</p>
+                  </li>
+                  <li>
+                    <strong>下载 mumu-agent 客户端</strong>
+                    <p>点击下方按钮获取安装脚本，在本地服务器上执行</p>
+                  </li>
+                  <li>
+                    <strong>启动并连接</strong>
+                    <p>执行安装脚本后，mumu-agent 将自动连接云端</p>
+                  </li>
+                  <li>
+                    <strong>验证连接</strong>
+                    <p>点击页面上的"重新检测"按钮，确认 Agent 已连接</p>
+                  </li>
+                </ol>
+              </div>
+
+              <div class="guide-section" style="margin-top: 16px;">
+                <h4>⚙️ 生成配置</h4>
+                <div class="config-preview">
+                  <pre style="background: #f5f5f5; padding: 12px; border-radius: 4px; overflow: auto;">{{ JSON.stringify(agentConfig?.config, null, 2) }}</pre>
+                  <el-button size="small" @click="copyToClipboard(JSON.stringify(agentConfig?.config, null, 2))">
+                    <el-icon><Copy /></el-icon> 复制配置
+                  </el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="showAgentGuide = false">关闭</el-button>
+            <el-button type="primary" :loading="agentScriptLoading" @click="generateAgentScript">
+              <el-icon><Download /></el-icon> 生成启动脚本
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <!-- 脚本预览弹窗 -->
+        <el-dialog
+          v-model="showScriptModal"
+          title="启动脚本内容"
+          width="700px"
+        >
+          <div class="script-preview">
+            <pre style="background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; max-height: 400px; overflow: auto; font-size: 13px; line-height: 1.6;">{{ agentScriptContent }}</pre>
+          </div>
+          <div style="margin-top: 16px; display: flex; gap: 8px;">
+            <el-button @click="copyToClipboard(agentScriptContent)">
+              <el-icon><Copy /></el-icon> 复制脚本
+            </el-button>
+            <el-button type="primary" @click="downloadAsFile(agentScriptContent, 'install-mumu-agent.sh')">
+              <el-icon><Download /></el-icon> 下载脚本
+            </el-button>
+          </div>
+          <div style="margin-top: 12px; padding: 12px; background: #f0f9ff; border-radius: 4px; font-size: 13px;">
+            <strong>💡 使用说明:</strong>
+            <ol style="margin: 8px 0 0 20px;">
+              <li>将下载的脚本文件保存到本地服务器</li>
+              <li>执行: <code>chmod +x install-mumu-agent.sh</code></li>
+              <li>执行: <code>./install-mumu-agent.sh</code></li>
+              <li>等待安装完成，mumu-agent 将自动连接</li>
+            </ol>
+          </div>
+        </el-dialog>
+
         <!-- TAB 结构 -->
         <el-tabs v-model="activeTab" type="card">
         <!-- Tab 1: 模拟器列表 -->
@@ -619,7 +751,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+// vue imports - already imported above
 import {
   Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
   ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Avatar,
@@ -628,6 +760,11 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { config } from '@/config'
+import { getAgentConfig, downloadAgentScript, getAgentGuide } from '@/api'
+import { useAuthStore } from '@/stores/auth'
+import { Copy, Download, Guide } from '@element-plus/icons-vue'
+import { ElDialog, ElSteps, ElStep } from 'element-plus'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'  # fix duplicate
 import { useAuthStore } from '@/stores/auth'
 
 const loading = ref(true)
@@ -651,6 +788,15 @@ function hideLoading() {
 
 // 物理模拟器连接状态
 const physicalStatus = ref({ available: false, message: '检测中...' })
+
+// Agent 引导弹窗状态
+const showAgentGuide = ref(false)
+const agentConfig = ref(null)
+const agentGuideData = ref(null)
+const agentScriptLoading = ref(false)
+const agentScriptContent = ref('')
+const showScriptModal = ref(false)
+const guideStep = ref(0)
 
 const apkDownloaded = ref(false)
 const apkLoading = ref(false)
@@ -719,7 +865,7 @@ const serverFriendPoolStats = ref({})
 // TAB 相关
 const activeTab = ref('list')
 const showAddDialog = ref(false)
-const addEmuCount = ref(3)
+const addEmuCount = ref(1)
 const addEmuConfig = ref({ cpuCores: 1, memoryGb: 1 })
 
 // 权限检查
@@ -1117,6 +1263,61 @@ async function checkPhysicalStatus() {
   } catch {
     physicalStatus.value = { available: false, message: '无法检测物理模拟器状态' }
   }
+}
+
+// ========== Agent 引导功能 ==========
+
+async function openAgentGuide() {
+  try {
+    const [configResp, guideResp] = await Promise.all([
+      getAgentConfig(),
+      getAgentGuide()
+    ])
+    agentConfig.value = configResp
+    agentGuideData.value = guideResp
+    showAgentGuide.value = true
+  } catch (e) {
+    ElMessage.error('加载引导信息失败')
+  }
+}
+
+async function generateAgentScript() {
+  agentScriptLoading.value = true
+  try {
+    const resp = await downloadAgentScript()
+    agentScriptContent.value = resp.script || ''
+    showScriptModal.value = true
+  } catch (e) {
+    ElMessage.error('生成脚本失败')
+  } finally {
+    agentScriptLoading.value = false
+  }
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    ElMessage.success('已复制到剪贴板')
+  }).catch(() => {
+    // 降级方案
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    document.body.appendChild(textarea)
+    textarea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textarea)
+    ElMessage.success('已复制到剪贴板')
+  })
+}
+
+function downloadAsFile(content, filename) {
+  const blob = new Blob([content], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('文件已下载')
 }
 
 async function syncPhysical() {
@@ -2711,4 +2912,59 @@ function formatCountdown(timestamp) {
 :deep(.el-table .cell .el-button) {
   margin-right: 0;
 }
+/* Agent 引导样式 */
+.agent-guide-content .guide-section {
+  margin-bottom: 16px;
+}
+
+.agent-guide-content h4 {
+  margin: 0 0 8px 0;
+  color: var(--el-text-color-primary);
+}
+
+.install-steps {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.install-steps li {
+  margin-bottom: 12px;
+}
+
+.install-steps li strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--el-color-primary);
+}
+
+.install-steps li p {
+  margin: 0;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+}
+
+.config-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.config-preview pre {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.script-preview pre {
+  margin: 0;
+}
+
+code {
+  background: var(--el-fill-color-light);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 13px;
+}
+
 </style>

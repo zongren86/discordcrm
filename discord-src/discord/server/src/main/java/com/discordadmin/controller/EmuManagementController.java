@@ -865,4 +865,157 @@ public class EmuManagementController {
         result.put("success", true);
         return result;
     }
+
+    // ========== Agent 管理 (mumu-agent 客户端) ==========
+
+    /**
+     * 获取当前商户的 Agent 连接状态
+     */
+    @GetMapping("/agent/status")
+    public Map<String, Object> getAgentStatus() {
+        return instanceService.getPhysicalStatus();
+    }
+
+    /**
+     * 生成 mumu-agent 配置文件内容（供商户下载）
+     */
+    @GetMapping("/agent/config")
+    public Map<String, Object> getAgentConfig() {
+        String userId = resolveUserId();
+        Long merchantId = resolveMerchantId();
+        
+        Map<String, Object> config = new HashMap<>();
+        config.put("userId", userId);
+        config.put("merchantId", merchantId);
+        config.put("serverUrl", "/ws/agent");
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("userId", userId);
+        result.put("merchantId", merchantId);
+        result.put("config", config);
+        result.put("installInstructions", getInstallInstructions());
+        return result;
+    }
+
+    /**
+     * 下载 mumu-agent 启动脚本 (macOS)
+     */
+    @GetMapping("/agent/download-script")
+    public Map<String, Object> downloadAgentScript() {
+        String userId = resolveUserId();
+        Long merchantId = resolveMerchantId();
+        
+        // 生成安装脚本内容
+        String script = generateInstallScript(userId, merchantId);
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("script", script);
+        result.put("filename", "install-mumu-agent.sh");
+        result.put("message", "请将此脚本保存为 install-mumu-agent.sh，然后执行: chmod +x install-mumu-agent.sh && ./install-mumu-agent.sh");
+        return result;
+    }
+
+    /**
+     * 获取安装指引
+     */
+    @GetMapping("/agent/guide")
+    public Map<String, Object> getAgentGuide() {
+        String userId = resolveUserId();
+        Long merchantId = resolveMerchantId();
+        
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("userId", userId);
+        result.put("merchantId", merchantId);
+        result.put("steps", List.of(
+            Map.of("step", 1, "title", "安装 MuMu 模拟器", "description", "在本地服务器上安装 MuMu 模拟器，确保模拟器可以正常启动和运行", "completed", false),
+            Map.of("step", 2, "title", "安装 mumu-agent 客户端", "description", "下载并安装 mumu-agent 客户端，用于连接云端管理后台", "completed", false),
+            Map.of("step", 3, "title", "配置并启动 mumu-agent", "description", "使用当前账号生成的配置文件启动 mumu-agent 客户端", "completed", false),
+            Map.of("step", 4, "title", "验证连接", "description", "刷新本页面，检查 Agent 连接状态是否显示为在线", "completed", false)
+        ));
+        result.put("downloadUrl", "/api/emu/agent/download-script");
+        result.put("configUrl", "/api/emu/agent/config");
+        return result;
+    }
+
+    /**
+     * 生成 macOS 安装脚本
+     */
+    private String generateInstallScript(String userId, Long merchantId) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("#!/bin/bash\n");
+        sb.append("# MuMu Agent 安装脚本\n");
+        sb.append("# 商户: ").append(userId).append(" (merchantId: ").append(merchantId).append(")\n");
+        sb.append("# 生成时间: $(date)\n");
+        sb.append("\n");
+        sb.append("echo \"===========================================\"\n");
+        sb.append("echo \"  MuMu Agent 安装脚本\"\n");
+        sb.append("echo \"  商户账号: ").append(userId).append("\"\n");
+        sb.append("echo \"===========================================\"\n");
+        sb.append("echo \"\"\n");
+        sb.append("\n");
+        sb.append("# 检查 Node.js\n");
+        sb.append("if ! command -v node &> /dev/null; then\n");
+        sb.append("    echo \"未检测到 Node.js，请先安装 https://nodejs.org/\"\n");
+        sb.append("    exit 1\n");
+        sb.append("fi\n");
+        sb.append("\n");
+        sb.append("echo \"Node.js 版本: $(node -v)\"\n");
+        sb.append("\n");
+        sb.append("# 创建安装目录\n");
+        sb.append("INSTALL_DIR=\"$HOME/mumu-agent\"\n");
+        sb.append("mkdir -p \"$INSTALL_DIR\"\n");
+        sb.append("cd \"$INSTALL_DIR\"\n");
+        sb.append("\n");
+        sb.append("# 生成配置文件\n");
+        sb.append("cat > config.json << 'CONFIGEOF'\n");
+        sb.append("{\n");
+        sb.append("  \"userId\": \"").append(userId).append("\",\n");
+        sb.append("  \"merchantId\": ").append(merchantId).append(",\n");
+        sb.append("  \"serverUrl\": \"ws://localhost:8090/ws/agent\",\n");
+        sb.append("  \"heartbeatInterval\": 30000,\n");
+        sb.append("  \"mumuPath\": \"/Applications/MuMuPlayer.app\",\n");
+        sb.append("  \"autoStart\": true\n");
+        sb.append("}\n");
+        sb.append("CONFIGEOF\n");
+        sb.append("\n");
+        sb.append("echo \"配置文件已生成: $INSTALL_DIR/config.json\"\n");
+        sb.append("\n");
+        sb.append("# 创建启动脚本\n");
+        sb.append("cat > start.sh << 'STARTEOF'\n");
+        sb.append("#!/bin/bash\n");
+        sb.append("cd \"$(dirname \"$0\")\"\n");
+        sb.append("echo \"启动 MuMu Agent...\"\n");
+        sb.append("echo \"用户: $(cat config.json | grep userId | head -1 | cut -d'\"' -f4)\"\n");
+        sb.append("node agent.js\n");
+        sb.append("STARTEOF\n");
+        sb.append("\n");
+        sb.append("chmod +x start.sh\n");
+        sb.append("\n");
+        sb.append("echo \"\"\n");
+        sb.append("echo \"===========================================\"\n");
+        sb.append("echo \"  安装完成！\"\n");
+        sb.append("echo \"===========================================\"\n");
+        sb.append("echo \"\"\n");
+        sb.append("echo \"启动命令: cd $INSTALL_DIR && ./start.sh\"\n");
+        sb.append("echo \"\"\n");
+        sb.append("echo \"注意: 首次使用前请先安装 mumu-agent 依赖\"\n");
+        sb.append("echo \"  cd $INSTALL_DIR && npm install\"\n");
+        return sb.toString();
+    }
+
+    /**
+     * 获取安装指引文本
+     */
+    private List<Map<String, String>> getInstallInstructions() {
+        return List.of(
+            Map.of("step", "1", "text", "在本地电脑上安装 MuMu 模拟器（确保版本支持命令行调用）"),
+            Map.of("step", "2", "text", "下载 mumu-agent 客户端安装包"),
+            Map.of("step", "3", "text", "使用下方「生成配置」按钮，生成专属配置文件"),
+            Map.of("step", "4", "text", "将配置文件复制到 mumu-agent 安装目录"),
+            Map.of("step", "5", "text", "启动 mumu-agent，等待连接成功")
+        );
+    }
 }
