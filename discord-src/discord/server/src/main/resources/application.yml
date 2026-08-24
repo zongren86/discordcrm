@@ -78,3 +78,8 @@ logging:
 
 # 启动性能优化
 spring.main.allow-bean-definition-overriding: false
+
+app:
+  upload:
+    path: ${APP_UPLOAD_PATH:uploads}
+  base-url: ${APP_BASE_URL:http://localhost:8090}

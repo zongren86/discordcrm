@@ -1239,25 +1239,25 @@ public class MessageService {
                     } catch (Exception ignored) {}
                     
                     // 生成PNG预览图
-                    byte[] pngData = generateStickerPreviewPng(stickerName);
+                    byte[] gifData = generateStickerGif(stickerName);
                     
-                    if (pngData != null && pngData.length > 0) {
-                        // 上传PNG到Discord
-                        String filename = "sticker_preview.png";
+                    if (gifData != null && gifData.length > 0) {
+                        // 上传GIF到Discord
+                        String filename = "sticker_preview.gif";
                         JsonNode resp = discordUserClient.sendMessageWithFile(
                                 account.getToken(),
                                 conversation.getChannelId(),
                                 "",
                                 filename,
-                                pngData,
-                                "image/png",
+                                gifData,
+                                "image/gif",
                                 null,
                                 null
                         );
                         discordMessageId = resp.path("id").asText(null);
                         discordAttachmentUrl = gifUrl; // 保留原始URL供前端Lottie渲染
                         sentContent = gifUrl; // 保留原始URL供前端识别为Sticker
-                        log.info("Sticker PNG预览上传成功: {}", discordAttachmentUrl);
+                        log.info("Sticker GIF动画上传成功: {}", discordAttachmentUrl);
                     } else {
                         // 降级：直接发送URL
                         log.warn("PNG生成失败，降级发送URL");
@@ -1581,62 +1581,410 @@ public class MessageService {
     }
 
     /**
-     * 生成Sticker预览PNG图片
+     * 生成Sticker动画GIF
      */
-    private byte[] generateStickerPreviewPng(String stickerName) {
+    private byte[] generateStickerGif(String stickerName) {
         try {
             int size = 256;
-            BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
-            Graphics2D g2d = image.createGraphics();
+            int frameCount = 8;
+            int delayMs = 100;
             
-            // 抗锯齿设置
-            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            // 生成每帧的BufferedImage
+            BufferedImage[] frames = new BufferedImage[frameCount];
             
-            // 绘制圆角矩形背景（Discord风格）
-            g2d.setColor(new Color(255, 113, 128)); // Discord Sticker 橙色
-            g2d.fillRoundRect(8, 8, size - 16, size - 16, 40, 40);
-            
-            // 绘制边框
-            g2d.setColor(new Color(255, 255, 255, 100));
-            g2d.setStroke(new BasicStroke(3));
-            g2d.drawRoundRect(12, 12, size - 24, size - 24, 35, 35);
-            
-            // 绘制Sticker名称
-            g2d.setColor(Color.WHITE);
-            
-            // 自适应字体大小
-            String displayName = stickerName;
-            int fontSize = 28;
-            if (stickerName.length() > 12) {
-                fontSize = 22;
-                displayName = stickerName.substring(0, Math.min(stickerName.length(), 14)) + "...";
+            for (int frame = 0; frame < frameCount; frame++) {
+                BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_RGB);
+                Graphics2D g2d = image.createGraphics();
+                
+                g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                
+                // 动画参数
+                double progress = (double) frame / frameCount;
+                double bounce = Math.sin(progress * Math.PI * 2);
+                double scale = 0.85 + 0.15 * Math.abs(bounce);
+                
+                // 背景渐变色
+                int hueShift = (int) (frame * 15);
+                Color bgColor = new Color(
+                        Math.min(255, 255 - hueShift), 
+                        Math.max(0, 113 - hueShift / 2), 
+                        Math.max(0, 128 - hueShift / 3));
+                
+                // 绘制圆角矩形背景
+                g2d.setColor(bgColor);
+                g2d.fillRoundRect(8, 8, size - 16, size - 16, 40, 40);
+                
+                // 绘制Sticker名称
+                g2d.setColor(Color.WHITE);
+                
+                String displayName = stickerName;
+                int fontSize = 28;
+                if (stickerName.length() > 12) {
+                    fontSize = 22;
+                    displayName = stickerName.substring(0, Math.min(stickerName.length(), 14)) + "...";
+                }
+                if (stickerName.length() > 20) {
+                    fontSize = 18;
+                    displayName = stickerName.substring(0, Math.min(stickerName.length(), 18)) + "...";
+                }
+                
+                Font font = new Font("SansSerif", Font.BOLD, (int)(fontSize * scale));
+                g2d.setFont(font);
+                
+                FontMetrics metrics = g2d.getFontMetrics(font);
+                int textWidth = metrics.stringWidth(displayName);
+                int x = (size - textWidth) / 2;
+                int y = (size - metrics.getHeight()) / 2 + metrics.getAscent();
+                
+                int yOffset = (int) (bounce * 10);
+                g2d.drawString(displayName, x, y + yOffset);
+                
+                g2d.dispose();
+                frames[frame] = image;
             }
-            if (stickerName.length() > 20) {
-                fontSize = 18;
-                displayName = stickerName.substring(0, Math.min(stickerName.length(), 18)) + "...";
-            }
             
-            Font font = new Font("SansSerif", Font.BOLD, fontSize);
-            g2d.setFont(font);
-            
-            FontMetrics metrics = g2d.getFontMetrics(font);
-            int textWidth = metrics.stringWidth(displayName);
-            int x = (size - textWidth) / 2;
-            int y = (size - metrics.getHeight()) / 2 + metrics.getAscent();
-            
-            g2d.drawString(displayName, x, y);
-            
-            g2d.dispose();
-            
-            // 转换为PNG
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(image, "png", baos);
-            return baos.toByteArray();
+            // 使用ImageIO生成动画GIF（需要自定义GIF写出器）
+            return encodeAnimatedGif(frames, delayMs);
             
         } catch (Exception e) {
-            log.error("生成Sticker PNG失败: {}", e.getMessage());
+            log.error("生成Sticker GIF失败: {}", e.getMessage());
             return null;
+        }
+    }
+    
+    /**
+     * 将多帧BufferedImage编码为动画GIF
+     */
+    private byte[] encodeAnimatedGif(BufferedImage[] frames, int delayMs) throws Exception {
+        int width = frames[0].getWidth();
+        int height = frames[0].getHeight();
+        
+        // 将所有帧转为RGB数据
+        byte[][] rgbData = new byte[frames.length][];
+        for (int f = 0; f < frames.length; f++) {
+            rgbData[f] = new byte[width * height * 3];
+            int idx = 0;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int pixel = frames[f].getRGB(x, y);
+                    rgbData[f][idx++] = (byte) ((pixel >> 16) & 0xFF); // R
+                    rgbData[f][idx++] = (byte) ((pixel >> 8) & 0xFF);  // G
+                    rgbData[f][idx++] = (byte) (pixel & 0xFF);         // B
+                }
+            }
+        }
+        
+        // 量化颜色（简化版：使用固定调色板）
+        // 生成调色板
+        byte[] colorTable = generateColorTable(rgbData);
+        int colorsPerSlot = 3;
+        int numColors = colorTable.length / colorsPerSlot;
+        
+        // 将每帧映射到调色板索引
+        byte[][] indexedFrames = new byte[frames.length][];
+        for (int f = 0; f < frames.length; f++) {
+            indexedFrames[f] = mapToColorTable(rgbData[f], colorTable, numColors);
+        }
+        
+        // 组装GIF文件
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        
+        // 1. Header
+        baos.write("GIF89a".getBytes());
+        
+        // 2. Logical Screen Descriptor
+        baos.write(width & 0xFF);        // Width low byte
+        baos.write((width >> 8) & 0xFF);  // Width high byte
+        baos.write(height & 0xFF);        // Height low byte
+        baos.write((height >> 8) & 0xFF); // Height high byte
+        
+        // Global Color Table Flag = 1, Color Resolution = 7, Sort Flag = 0, Size of GCT
+        int gctSize = (int) Math.ceil(Math.log(numColors) / Math.log(2)) - 1;
+        if (gctSize < 0) gctSize = 0;
+        if (gctSize > 7) gctSize = 7;
+        byte packed = (byte) (0x80 | (7 << 4) | gctSize);
+        baos.write(packed);
+        baos.write(0); // Background Color Index
+        baos.write(0); // Pixel Aspect Ratio
+        
+        // 3. Global Color Table
+        baos.write(colorTable);
+        // 填充到完整的2^(gctSize+1)个颜色
+        int totalColors = 1 << (gctSize + 1);
+        int paddingNeeded = totalColors * 3 - colorTable.length;
+        for (int i = 0; i < paddingNeeded; i++) {
+            baos.write(0);
+        }
+        
+        // 4. Netscape 2.0 Loop Extension
+        baos.write(0x21); // Extension Introducer
+        baos.write(0xFF); // Application Extension Label
+        baos.write(11);    // Block Size
+        baos.write("NETSCAPE2.0".getBytes());
+        baos.write(3);     // Block Size
+        baos.write(1);     // Sub-block ID (loop)
+        baos.write(0);     // Loop count (0 = infinite)
+        baos.write(0);
+        baos.write(0);     // Block Terminator
+        
+        // 5. 每帧
+        for (int f = 0; f < frames.length; f++) {
+            // Graphic Control Extension
+            baos.write(0x21); // Extension Introducer
+            baos.write(0xF9); // Graphic Control Label
+            baos.write(4);    // Block Size
+            
+            // Disposal Method = 2 (restore to background), Transparent Color Index = 0
+            baos.write(0x28); // packed: Disposal=2, Transparent=1
+            int delayCentiseconds = delayMs / 10;
+            baos.write(delayCentiseconds & 0xFF);
+            baos.write((delayCentiseconds >> 8) & 0xFF);
+            baos.write(0); // Transparent Color Index
+            
+            baos.write(0); // Block Terminator
+            
+            // Image Descriptor
+            baos.write(0x2C); // Image Separator
+            baos.write(0);    // Left Position
+            baos.write(0);
+            baos.write(0);    // Top Position
+            baos.write(0);
+            baos.write(width & 0xFF);
+            baos.write((width >> 8) & 0xFF);
+            baos.write(height & 0xFF);
+            baos.write((height >> 8) & 0xFF);
+            baos.write(0);    // Packed Field (no local color table)
+            
+            // LZW Compressed Data
+            int minCodeSize = Math.max(2, gctSize + 1);
+            byte[] compressed = lzwCompress(indexedFrames[f], minCodeSize);
+            writeDataSubBlocks(baos, compressed);
+        }
+        
+        // 6. Trailer
+        baos.write(0x3B);
+        
+        return baos.toByteArray();
+    }
+    
+    /**
+     * 生成量化后的调色板（简化版：收集所有颜色并量化）
+     */
+    private byte[] generateColorTable(byte[][] rgbData) {
+        // 收集所有唯一颜色
+        java.util.Set<Integer> uniqueColors = new java.util.HashSet<>();
+        for (byte[] frame : rgbData) {
+            for (int i = 0; i < frame.length; i += 3) {
+                int r = frame[i] & 0xFF;
+                int g = frame[i + 1] & 0xFF;
+                int b = frame[i + 2] & 0xFF;
+                uniqueColors.add((r << 16) | (g << 8) | b);
+            }
+        }
+        
+        // 限制颜色数量（最多256色）
+        if (uniqueColors.size() > 256) {
+            // 简化：直接量化到256色（通过降低精度）
+            byte[] result = new byte[256 * 3];
+            int idx = 0;
+            for (int r = 0; r < 256; r += 32) {
+                for (int g = 0; g < 256; g += 32) {
+                    for (int b = 0; b < 256; b += 32) {
+                        result[idx++] = (byte) r;
+                        result[idx++] = (byte) g;
+                        result[idx++] = (byte) b;
+                        if (idx >= 256 * 3) break;
+                    }
+                    if (idx >= 256 * 3) break;
+                }
+                if (idx >= 256 * 3) break;
+            }
+            return result;
+        }
+        
+        // 构建调色板
+        byte[] result = new byte[uniqueColors.size() * 3];
+        int idx = 0;
+        for (int color : uniqueColors) {
+            result[idx++] = (byte) ((color >> 16) & 0xFF);
+            result[idx++] = (byte) ((color >> 8) & 0xFF);
+            result[idx++] = (byte) (color & 0xFF);
+        }
+        
+        // 确保至少有2个颜色
+        if (uniqueColors.size() < 2) {
+            byte[] padded = new byte[6];
+            System.arraycopy(result, 0, padded, 0, result.length);
+            return padded;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * 将RGB数据映射到调色板索引
+     */
+    private byte[] mapToColorTable(byte[] rgbData, byte[] colorTable, int numColors) {
+        byte[] result = new byte[rgbData.length / 3];
+        
+        // 构建RGB到索引的映射
+        java.util.Map<Integer, Byte> colorToIndex = new java.util.HashMap<>();
+        for (int i = 0; i < numColors; i++) {
+            int r = colorTable[i * 3] & 0xFF;
+            int g = colorTable[i * 3 + 1] & 0xFF;
+            int b = colorTable[i * 3 + 2] & 0xFF;
+            colorToIndex.put((r << 16) | (g << 8) | b, (byte) i);
+        }
+        
+        for (int i = 0, j = 0; i < rgbData.length; i += 3, j++) {
+            int r = rgbData[i] & 0xFF;
+            int g = rgbData[i + 1] & 0xFF;
+            int b = rgbData[i + 2] & 0xFF;
+            int rgb = (r << 16) | (g << 8) | b;
+            
+            Byte idx = colorToIndex.get(rgb);
+            if (idx != null) {
+                result[j] = idx;
+            } else {
+                // 找最接近的颜色
+                int bestIdx = 0;
+                int bestDist = Integer.MAX_VALUE;
+                for (int k = 0; k < numColors; k++) {
+                    int cr = colorTable[k * 3] & 0xFF;
+                    int cg = colorTable[k * 3 + 1] & 0xFF;
+                    int cb = colorTable[k * 3 + 2] & 0xFF;
+                    int dist = (r - cr) * (r - cr) + (g - cg) * (g - cg) + (b - cb) * (b - cb);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestIdx = k;
+                    }
+                }
+                result[j] = (byte) bestIdx;
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * LZW压缩（GIF标准）
+     */
+    private byte[] lzwCompress(byte[] data, int minCodeSize) {
+        int clearCode = 1 << minCodeSize;
+        int eoiCode = clearCode + 1;
+        int codeSize = minCodeSize + 1;
+        int nextCode = eoiCode + 1;
+        int maxCode = 1 << codeSize;
+        
+        // 字典
+        java.util.Map<String, Integer> dictionary = new java.util.HashMap<>();
+        for (int i = 0; i < clearCode; i++) {
+            dictionary.put(String.valueOf((char) i), i);
+        }
+        
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        BitWriter bitWriter = new BitWriter();
+        
+        // 写入Clear Code
+        bitWriter.write(clearCode, codeSize);
+        
+        String current = "";
+        int code = -1;
+        
+        for (byte b : data) {
+            String symbol = String.valueOf((char) (b & 0xFF));
+            String currentSymbol = current + symbol;
+            
+            if (dictionary.containsKey(currentSymbol)) {
+                code = dictionary.get(currentSymbol);
+                current = currentSymbol;
+            } else {
+                bitWriter.write(code, codeSize);
+                
+                // 添加新条目
+                if (nextCode < 4096) {
+                    dictionary.put(currentSymbol, nextCode++);
+                    if (nextCode > maxCode && codeSize < 12) {
+                        codeSize++;
+                        maxCode = 1 << codeSize;
+                    }
+                } else {
+                    // 字典已满，发送Clear Code
+                    bitWriter.write(clearCode, codeSize);
+                    codeSize = minCodeSize + 1;
+                    maxCode = 1 << codeSize;
+                    nextCode = eoiCode + 1;
+                    dictionary.clear();
+                    for (int i = 0; i < clearCode; i++) {
+                        dictionary.put(String.valueOf((char) i), i);
+                    }
+                }
+                
+                current = symbol;
+                code = dictionary.get(symbol);
+            }
+        }
+        
+        // 写入最后一个code
+        if (code != -1) {
+            bitWriter.write(code, codeSize);
+        }
+        
+        // 写入EOI
+        bitWriter.write(eoiCode, codeSize);
+        
+        bitWriter.flush(output);
+        return output.toByteArray();
+    }
+    
+    /**
+     * 写入GIF数据子块
+     */
+    private void writeDataSubBlocks(ByteArrayOutputStream baos, byte[] data) {
+        int offset = 0;
+        while (offset < data.length) {
+            int blockSize = Math.min(255, data.length - offset);
+            baos.write(blockSize);
+            baos.write(data, offset, blockSize);
+            offset += blockSize;
+        }
+        baos.write(0); // Block Terminator
+    }
+    
+    /**
+     * 位写入器（用于LZW编码输出）
+     */
+    private static class BitWriter {
+        private int buffer = 0;
+        private int bits = 0;
+        private final ByteArrayOutputStream output = new ByteArrayOutputStream();
+        
+        void write(int code, int codeSize) {
+            buffer |= (code << bits);
+            bits += codeSize;
+            while (bits >= 8) {
+                output.write(buffer & 0xFF);
+                buffer >>= 8;
+                bits -= 8;
+            }
+        }
+        
+        void flush(ByteArrayOutputStream baos) {
+            if (bits > 0) {
+                output.write(buffer & 0xFF);
+                buffer = 0;
+                bits = 0;
+            }
+            byte[] data = output.toByteArray();
+            int offset = 0;
+            while (offset < data.length) {
+                int blockSize = Math.min(255, data.length - offset);
+                baos.write(blockSize);
+                baos.write(data, offset, blockSize);
+                offset += blockSize;
+            }
+            baos.write(0); // Block Terminator
         }
     }
 

@@ -5,17 +5,22 @@ import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.GifFavoriteService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
-/**
- * GIF 收藏 Controller
- */
 @RestController
 @RequestMapping("/api/gif-favorites")
 public class GifFavoriteController {
@@ -24,13 +29,16 @@ public class GifFavoriteController {
 
     private final GifFavoriteService gifFavoriteService;
 
+    @Value("${app.upload.path:uploads}")
+    private String uploadPath;
+
+    @Value("${app.base-url:http://localhost:8090}")
+    private String baseUrl;
+
     public GifFavoriteController(GifFavoriteService gifFavoriteService) {
         this.gifFavoriteService = gifFavoriteService;
     }
 
-    /**
-     * 获取当前账号的 GIF/Sticker 收藏列表
-     */
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> listFavorites(
             @RequestParam(value = "accountId", required = false) Long accountId,
@@ -46,7 +54,6 @@ public class GifFavoriteController {
         }
         
         List<GifFavorite> favorites = gifFavoriteService.getFavoritesByAccount(targetAccountId);
-        // 按类型过滤
         if (type != null && !type.isEmpty()) {
             final String filterType = type;
             favorites = favorites.stream()
@@ -60,27 +67,22 @@ public class GifFavoriteController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * 添加 GIF/Sticker 收藏
-     */
     @PostMapping
     public ResponseEntity<Map<String, Object>> addFavorite(@RequestBody Map<String, String> body) {
         String gifUrl = body.get("gifUrl");
         Long accountId = Long.parseLong(body.get("accountId"));
         String title = body.get("title");
         String type = body.getOrDefault("type", "gif");
+        String convertedGifUrl = body.get("convertedGifUrl");
         
         if (gifUrl == null || gifUrl.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "URL 不能为空"));
         }
         
-        GifFavorite favorite = gifFavoriteService.addFavorite(accountId, gifUrl, title, type);
+        GifFavorite favorite = gifFavoriteService.addFavorite(accountId, gifUrl, title, type, convertedGifUrl);
         return ResponseEntity.ok(toDto(favorite));
     }
 
-    /**
-     * 删除 GIF 收藏
-     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> removeFavorite(
             @PathVariable Long id,
@@ -89,9 +91,6 @@ public class GifFavoriteController {
         return ResponseEntity.ok(Map.of("success", true));
     }
 
-    /**
-     * 检查 GIF/Sticker 是否已收藏
-     */
     @GetMapping("/check")
     public ResponseEntity<Map<String, Object>> checkFavorited(
             @RequestParam Long accountId,
@@ -103,18 +102,45 @@ public class GifFavoriteController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * 规范化 GIF URL（确保可直接发送）
-     */
     @GetMapping("/normalize-url")
     public ResponseEntity<Map<String, String>> normalizeUrl(@RequestParam String url) {
         String normalized = gifFavoriteService.normalizeGifUrl(url);
         return ResponseEntity.ok(Map.of("originalUrl", url, "normalizedUrl", normalized));
     }
 
-    /**
-     * 转换为 DTO
-     */
+    @PostMapping("/upload-gif")
+    public ResponseEntity<Map<String, String>> uploadGif(@RequestParam("file") MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "文件不能为空"));
+        }
+        
+        try {
+            String originalFilename = file.getOriginalFilename();
+            String ext = originalFilename != null && originalFilename.contains(".") 
+                    ? originalFilename.substring(originalFilename.lastIndexOf(".") + 1) 
+                    : "gif";
+            
+            String newFilename = "sticker_" + UUID.randomUUID().toString().replace("-", "") + "." + ext;
+            
+            Path uploadDir = Paths.get(uploadPath, "stickers");
+            if (!Files.exists(uploadDir)) {
+                Files.createDirectories(uploadDir);
+            }
+            
+            Path filePath = uploadDir.resolve(newFilename);
+            file.transferTo(filePath.toFile());
+            
+            String fileUrl = baseUrl + "/uploads/stickers/" + newFilename;
+            
+            log.info("GIF 文件上传成功: {}", fileUrl);
+            return ResponseEntity.ok(Map.of("url", fileUrl, "filename", newFilename));
+            
+        } catch (IOException e) {
+            log.error("GIF 文件上传失败", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "上传失败: " + e.getMessage()));
+        }
+    }
+
     private Map<String, Object> toDto(GifFavorite favorite) {
         Map<String, Object> dto = new HashMap<>();
         dto.put("id", favorite.getId());
@@ -124,6 +150,7 @@ public class GifFavoriteController {
         dto.put("type", favorite.getType() != null ? favorite.getType() : "gif");
         dto.put("createdAt", favorite.getCreatedAt());
         dto.put("accountId", favorite.getDiscordAccountId());
+        dto.put("convertedGifUrl", favorite.getConvertedGifUrl());
         return dto;
     }
 }

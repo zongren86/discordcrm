@@ -14,9 +14,6 @@ import java.security.MessageDigest;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * GIF 收藏 Service
- */
 @Service
 public class GifFavoriteService {
 
@@ -31,59 +28,50 @@ public class GifFavoriteService {
         this.discordAccountRepository = discordAccountRepository;
     }
 
-    /**
-     * 获取指定账号的 GIF 收藏列表
-     */
     @Transactional(readOnly = true)
     public List<GifFavorite> getFavoritesByAccount(Long accountId) {
         return gifFavoriteRepository.findByDiscordAccountIdOrderByCreatedAtDesc(accountId);
     }
 
-    /**
-     * 获取指定商户的 GIF 收藏列表（管理员查看所有）
-     */
     @Transactional(readOnly = true)
     public List<GifFavorite> getFavoritesByMerchant(Long merchantId) {
         return gifFavoriteRepository.findByMerchantIdOrderByCreatedAtDesc(merchantId);
     }
 
-    /**
-     * 添加 GIF 收藏
-     * 
-     * @param accountId Discord 账号ID
-     * @param gifUrl GIF URL（会自动规范化为可直接发送的 URL）
-     * @param title 标题（可选）
-     * @return 收藏记录，如果已存在则返回 null
-     */
     @Transactional
     public GifFavorite addFavorite(Long accountId, String gifUrl, String title) {
-        return addFavorite(accountId, gifUrl, title, "gif");
+        return addFavorite(accountId, gifUrl, title, "gif", null);
     }
 
     @Transactional
     public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type) {
-        // 规范化 URL
+        return addFavorite(accountId, gifUrl, title, type, null);
+    }
+
+    @Transactional
+    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type, String convertedGifUrl) {
         String normalizedUrl = normalizeGifUrl(gifUrl);
-        
-        // 计算 URL 哈希
         String urlHash = hashUrl(normalizedUrl);
         
-        // 检查是否已收藏
         Optional<GifFavorite> existing = gifFavoriteRepository
                 .findByDiscordAccountIdAndGifUrlHash(accountId, urlHash);
         if (existing.isPresent()) {
+            GifFavorite fav = existing.get();
+            // 如果已有 convertedGifUrl 且新的也有，更新它
+            if (convertedGifUrl != null && !convertedGifUrl.equals(fav.getConvertedGifUrl())) {
+                fav.setConvertedGifUrl(convertedGifUrl);
+                gifFavoriteRepository.save(fav);
+                log.info("更新 convertedGifUrl: id={}", fav.getId());
+            }
             log.info("已收藏: accountId={}, url={}", accountId, normalizedUrl);
-            return existing.get();
+            return fav;
         }
         
-        // 获取账号信息
         DiscordAccount account = discordAccountRepository.findById(accountId)
                 .orElseThrow(() -> new IllegalArgumentException("账号不存在: " + accountId));
         
-        // 解析来源域名
         String sourceDomain = extractDomain(normalizedUrl);
         
-        // 创建收藏记录
         GifFavorite favorite = new GifFavorite();
         favorite.setDiscordAccount(account);
         favorite.setMerchantId(account.getMerchantId());
@@ -92,25 +80,21 @@ public class GifFavoriteService {
         favorite.setTitle(title);
         favorite.setSourceDomain(sourceDomain);
         favorite.setType(type != null ? type : "gif");
+        favorite.setConvertedGifUrl(convertedGifUrl);
         
         GifFavorite saved = gifFavoriteRepository.save(favorite);
-        log.info("收藏成功: id={}, accountId={}, url={}, type={}", saved.getId(), accountId, normalizedUrl, type);
+        log.info("收藏成功: id={}, accountId={}, url={}, type={}, hasConvertedGif={}", 
+                saved.getId(), accountId, normalizedUrl, type, convertedGifUrl != null);
         
         return saved;
     }
 
-    /**
-     * 删除 GIF 收藏
-     */
     @Transactional
     public void removeFavorite(Long id, Long accountId) {
         gifFavoriteRepository.deleteByIdAndDiscordAccountId(id, accountId);
         log.info("GIF 收藏已删除: id={}, accountId={}", id, accountId);
     }
 
-    /**
-     * 检查是否已收藏
-     */
     @Transactional(readOnly = true)
     public boolean isFavorited(Long accountId, String gifUrl) {
         String normalizedUrl = normalizeGifUrl(gifUrl);
@@ -118,15 +102,9 @@ public class GifFavoriteService {
         return gifFavoriteRepository.findByDiscordAccountIdAndGifUrlHash(accountId, urlHash).isPresent();
     }
 
-    /**
-     * 规范化 GIF URL
-     * 将分享链接转换为可直接发送的 URL（确保对方 Discord 客户端能自动展开动画）
-     */
     public String normalizeGifUrl(String url) {
         if (url == null || url.isEmpty()) return url;
         
-        // 处理 tenor.com 分享链接
-        // https://tenor.com/view/xxx → https://tenor.com/view/xxx.gif
         if (url.contains("tenor.com/view/") && !url.matches(".*\\.(gif|mp4|webm|webp)(\\?|#|$).*")) {
             return url + ".gif";
         }
@@ -134,9 +112,6 @@ public class GifFavoriteService {
         return url;
     }
 
-    /**
-     * 计算 URL 的 SHA-256 哈希
-     */
     private String hashUrl(String url) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -150,13 +125,10 @@ public class GifFavoriteService {
             return hexString.toString();
         } catch (Exception e) {
             log.error("计算 URL 哈希失败: {}", e.getMessage());
-            return url; // 降级使用原始 URL
+            return url;
         }
     }
 
-    /**
-     * 提取域名
-     */
     private String extractDomain(String url) {
         try {
             int start = url.indexOf("://");

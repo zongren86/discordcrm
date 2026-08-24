@@ -542,11 +542,22 @@ export function listGifFavorites(accountId, type) {
   if (type) params.type = type
   return http.get('/gif-favorites', { params })
 }
-export function addGifFavorite(accountId, gifUrl, title, type) {
+export function addGifFavorite(accountId, gifUrl, title, type, convertedGifUrl) {
   const body = { accountId, gifUrl, title }
   if (type) body.type = type
+  if (convertedGifUrl) body.convertedGifUrl = convertedGifUrl
   return http.post('/gif-favorites', body)
 }
+
+export function uploadGifFile(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return http.post('/gif-favorites/upload-gif', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000
+  });
+}
+
 export function removeGifFavorite(id, accountId) {
   return http.delete(`/gif-favorites/${id}`, { params: { accountId } })
 }

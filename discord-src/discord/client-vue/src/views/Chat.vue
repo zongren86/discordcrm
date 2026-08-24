@@ -1020,10 +1020,11 @@ import {
   updateMessageTemplate, deleteMessageTemplate,
   transcribeVoiceAsr, translateAsrText, translateText,
   getSupportedLanguages, getAISettingByFeature,
-  listGifFavorites, addGifFavorite, removeGifFavorite, checkGifFavorited, normalizeGifUrl as normalizeGifUrlApi,
+  listGifFavorites, addGifFavorite, removeGifFavorite, checkGifFavorited, normalizeGifUrl as normalizeGifUrlApi, uploadGifFile,
   sendGifMessage as sendGifMessageApi, resolveGifUrl as resolveGifUrlApi
 } from '@/api'
 import lottie from 'lottie-web'
+import { lottieToGif } from '@/utils/lottieToGif'
 
 const auth = useAuthStore()
 const accounts = useAccountsStore()
@@ -2154,11 +2155,38 @@ function isStickerFavorited(sticker) {
 async function handleStickerFavorite(sticker) {
   const url = stickerLottieUrl(sticker)
   try {
-    await addGifFavorite(currentAccountId.value, url, sticker.name || 'Sticker', 'sticker')
+    // 下载 Sticker JSON
+    let lottieData = null
+    try {
+      const response = await fetch(url)
+      if (response.ok) {
+        lottieData = await response.json()
+      }
+    } catch (e) {
+      console.warn('下载 Sticker JSON 失败，跳过 GIF 转换:', e.message)
+    }
+    
+    // 如果成功获取 Lottie JSON，生成 GIF
+    let convertedGifUrl = null
+    if (lottieData) {
+      try {
+        const gifBlob = await lottieToGif(lottieData, { width: 320, height: 320, fps: 15, duration: 3 })
+        const ext = 'gif'
+        const filename = `sticker_${Date.now()}.${ext}`
+        const uploadResult = await uploadGifFile(new File([gifBlob], filename, { type: 'image/gif' }))
+        convertedGifUrl = uploadResult?.url || null
+        console.log('Sticker GIF 已生成:', convertedGifUrl)
+      } catch (gifErr) {
+        console.warn('Sticker GIF 生成失败，将使用原始 URL:', gifErr.message)
+      }
+    }
+    
+    // 保存收藏（带或不带 convertedGifUrl）
+    await addGifFavorite(currentAccountId.value, url, sticker.name || 'Sticker', 'sticker', convertedGifUrl)
     await loadGifFavorites()
-    ElMessage.success('已收藏')
+    ElMessage.success(convertedGifUrl ? '已收藏（动图已生成）' : '已收藏')
   } catch (e) {
-    ElMessage.error('收藏失败')
+    ElMessage.error('收藏失败: ' + (e.message || '未知错误'))
   }
 }
 
@@ -2746,7 +2774,8 @@ async function sendStickerFromFavorite(fav) {
   
   const loadingMsg = ElMessage({ message: '正在发送...', duration: 0, type: 'info' })
   try {
-    const url = fav.resolvedUrl || fav.favDisplayUrl || fav.gifUrl
+    // 优先使用转换后的 GIF URL（如果有的话）
+    const url = fav.convertedGifUrl || fav.resolvedUrl || fav.favDisplayUrl || fav.gifUrl
     await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
     loadingMsg.close()
     ElMessage.success('已发送')
