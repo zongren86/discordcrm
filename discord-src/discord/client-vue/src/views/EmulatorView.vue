@@ -601,6 +601,70 @@
             </div>
           </el-card>
         </el-tab-pane>
+        <!-- Tab 3: 下载 -->
+        <el-tab-pane 
+          label="下载" 
+          name="download"
+        >
+          <el-card class="panel" shadow="hover" style="max-width: 700px">
+            <template #header>
+              <div class="panel-header">
+                <el-icon><Download /></el-icon>
+                <span>mumu-agent 客户端下载</span>
+              </div>
+            </template>
+            
+            <div style="padding: 20px;">
+              <h3 style="margin-top: 0;">MuMu Agent 客户端</h3>
+              <p style="color: #666;">
+                mumu-agent 是运行在商户服务器上的客户端程序，用于连接云端管理后台并控制本地 MuMu 模拟器。
+              </p>
+              
+              <el-divider />
+              
+              <h4>安装步骤</h4>
+              <ol style="padding-left: 20px; line-height: 2;">
+                <li>在商户服务器上安装 Node.js (>= 18)
+                  <br/>
+                  <el-link type="primary" href="https://nodejs.org/" target="_blank">https://nodejs.org/</el-link>
+                </li>
+                <li>点击下方按钮下载 mumu-agent 完整包</li>
+                <li>解压下载的压缩包</li>
+                <li>进入 mumu-agent 目录，运行 <code>npm install</code> 安装依赖</li>
+                <li>运行 <code>node agent.js</code> 启动客户端</li>
+                <li>刷新本页面，检查连接状态</li>
+              </ol>
+              
+              <el-divider />
+              
+              <h4>快捷下载</h4>
+              <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                <el-button type="primary" size="large" @click="handleDownloadAgentPackage" :loading="downloadLoading">
+                  <el-icon><Download /></el-icon> 下载 mumu-agent.zip
+                </el-button>
+                <el-button size="large" @click="openAgentGuide">
+                  <el-icon><Guide /></el-icon> 查看完整引导
+                </el-button>
+              </div>
+              
+              <el-divider />
+              
+              <el-alert 
+                type="warning" 
+                :closable="false"
+                show-icon
+                title="注意事项"
+                style="margin-top: 16px;"
+              >
+                <ul style="margin: 0; padding-left: 20px;">
+                  <li>同一商户账号只能在一台服务器上运行 mumu-agent</li>
+                  <li>如需更换服务器，请先停止旧服务器上的 Agent</li>
+                  <li>请确保服务器已安装 MuMu 模拟器</li>
+                </ul>
+              </el-alert>
+            </div>
+          </el-card>
+        </el-tab-pane>
       </el-tabs>
       </div>
     </template>
@@ -755,17 +819,14 @@
 import {
   Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
   ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Avatar,
-  Edit, Check, Close, Flag
+  Edit, Check, Close, Flag, Copy, Download, Guide
 } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElDialog, ElSteps, ElStep } from 'element-plus'
 import axios from 'axios'
 import { config } from '@/config'
-import { getAgentConfig, downloadAgentScript, getAgentGuide } from '@/api'
+import { getAgentConfig, downloadAgentScript, getAgentGuide, downloadAgentPackage } from '@/api'
 import { useAuthStore } from '@/stores/auth'
-import { Copy, Download, Guide } from '@element-plus/icons-vue'
-import { ElDialog, ElSteps, ElStep } from 'element-plus'
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'  # fix duplicate
-import { useAuthStore } from '@/stores/auth'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 const loading = ref(true)
 const backendAvailable = ref(false)
@@ -791,6 +852,7 @@ const physicalStatus = ref({ available: false, message: '检测中...' })
 
 // Agent 引导弹窗状态
 const showAgentGuide = ref(false)
+const downloadLoading = ref(false)
 const agentConfig = ref(null)
 const agentGuideData = ref(null)
 const agentScriptLoading = ref(false)
@@ -1307,6 +1369,25 @@ function copyToClipboard(text) {
     document.body.removeChild(textarea)
     ElMessage.success('已复制到剪贴板')
   })
+}
+
+async function handleDownloadAgentPackage() {
+  downloadLoading.value = true
+  try {
+    const response = await downloadAgentPackage()
+    const blob = new Blob([response.data], { type: 'application/zip' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'mumu-agent.zip'
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('下载成功')
+  } catch (e) {
+    ElMessage.error('下载失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    downloadLoading.value = false
+  }
 }
 
 function downloadAsFile(content, filename) {

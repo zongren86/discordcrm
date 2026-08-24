@@ -17,6 +17,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.ResponseEntity;
+import org.springframework.core.io.Resource;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.HashMap;
@@ -1006,6 +1009,21 @@ public class EmuManagementController {
         return sb.toString();
     }
 
+    /**
+     * 获取安装指引文本
+     */
+    
+    /**
+     * 下载 mumu-agent 完整包
+     */
+    @GetMapping("/agent/download-package")
+    public ResponseEntity<Resource> downloadAgentPackage(HttpServletRequest request) {
+        String userId = resolveUserId();
+        Long merchantId = resolveMerchantId();
+        String serverName = request.getServerName();
+        return AgentDownloadHelper.downloadAgentPackage(userId, merchantId, serverName);
+    }
+    
     /**
      * 获取安装指引文本
      */

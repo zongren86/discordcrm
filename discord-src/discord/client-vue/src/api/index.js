@@ -584,3 +584,6 @@ export function downloadAgentScript() {
 export function getAgentGuide() {
   return http.get('/emu/agent/guide')
 }
+export function downloadAgentPackage() {
+  return http.get('/emu/agent/download-package', { responseType: 'blob' })
+}
