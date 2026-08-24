@@ -1051,6 +1051,7 @@ const gifPickerMode = ref('gif')  // 当前模式: 'gif' | 'sticker'
 const gifPickerTab = ref('gifFavorites')  // 当前 Tab (保留兼容)
 const stickerFavorites = ref([])  // Sticker 收藏列表
 const hoveredStickerMsgId = ref(null)
+const sendingGif = ref(false)  // 防止重复提交GIF/Sticker
 
 // 当前会话对应的 Discord 账号 ID
 const currentAccountId = computed(() => {
@@ -2705,6 +2706,8 @@ async function handleDownloadGif(msg) {
 /** 发送收藏的 GIF */
 async function sendGifFromFavorite(favorite) {
   if (!favorite || !conversations.currentConversationId) return
+  if (sendingGif.value) return  // 防止重复提交
+  sendingGif.value = true
   
   const loadingMsg = ElMessage({ message: '正在发送...', duration: 0, type: 'info' })
   try {
@@ -2720,6 +2723,8 @@ async function sendGifFromFavorite(favorite) {
     } else {
       ElMessage.error('发送失败: ' + (e.message || '未知错误'))
     }
+  } finally {
+    sendingGif.value = false
   }
 }
 
@@ -2733,6 +2738,9 @@ async function sendStickerFromFavorite(fav) {
     ElMessage.error('无效的贴纸数据')
     return
   }
+  if (sendingGif.value) return  // 防止重复提交
+  sendingGif.value = true
+  
   const loadingMsg = ElMessage({ message: '正在发送...', duration: 0, type: 'info' })
   try {
     const url = fav.resolvedUrl || fav.favDisplayUrl || fav.gifUrl
@@ -2748,6 +2756,8 @@ async function sendStickerFromFavorite(fav) {
     } else {
       ElMessage.error('发送失败: ' + (e.message || '未知错误'))
     }
+  } finally {
+    sendingGif.value = false
   }
 }
 
