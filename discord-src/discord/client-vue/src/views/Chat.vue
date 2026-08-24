@@ -18,6 +18,7 @@
               :label="acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id)">
               {{ acc.name || acc.nickname || acc.discordName || ('账号#' + acc.id) }}
               <span v-if="!acc.tokenValid" style="color:#f56c6c;font-size:12px;margin-left:4px;">(失效)</span>
+              <span v-if="acc.tokenValid" style="color:#67c23a;font-size:12px;margin-left:4px;">(有效)</span>
               <span v-if="!acc._hasConversations && acc.tokenValid" style="color:#999;font-size:12px;margin-left:4px;">(无消息)</span>
             </el-option>
           </el-select>
