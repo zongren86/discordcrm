@@ -107,7 +107,7 @@ public class EmuInstanceService {
         // 从 MumuManager 获取最新物理状态并合并
         List<Map<String, Object>> physicalList = null;
         try {
-            physicalList = mumuClientService.getAllEmulatorsWithError();
+            physicalList = localMode ? mumuClientService.getAllEmulatorsWithError() : webSocketService.getEmulatorsFromAgent(userId);
         } catch (Exception e) {
             log.warn("无法获取物理模拟器列表: {}", e.getMessage());
         }
@@ -728,8 +728,13 @@ public class EmuInstanceService {
                 // 3. 从启动结果或物理数据判断是否安装了 Discord
                 boolean discordInstalled = Boolean.TRUE.equals(startResult.get("discordInstalled"));
                 if (!discordInstalled) {
-                    // 从物理模拟器数据再检查一次
-                    List<Map<String, Object>> physList = mumuClientService.getAllEmulatorsWithError();
+                    // 从物理模拟器数据再检查一次（Agent模式通过Agent获取，本地模式通过本地获取）
+                    List<Map<String, Object>> physList;
+                    if (useAgent) {
+                        physList = webSocketService.getEmulatorsFromAgent(userId);
+                    } else {
+                        physList = mumuClientService.getAllEmulatorsWithError();
+                    }
                     if (physList != null) {
                         int mumuIdx = index - 1;
                         for (Map<String, Object> phys : physList) {
@@ -795,6 +800,8 @@ public class EmuInstanceService {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
 
+        log.info("stopInstance 开始: index={}, merchantId={}, userId={}", index, merchantId, userId);
+
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
@@ -842,6 +849,8 @@ public class EmuInstanceService {
     public Map<String, Object> restartInstance(int index) {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
+
+        log.info("restartInstance 开始: index={}, merchantId={}, userId={}", index, merchantId, userId);
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
@@ -1278,23 +1287,40 @@ public class EmuInstanceService {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
 
+        // 添加权限校验日志
+        log.info("删除模拟器请求: merchantId={}, userId={}, index={}, localMode={}", merchantId, userId, index, localMode);
+
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
-        log.info("开始同步删除模拟器 #{} (name={})", index, instance.getName());
+        log.info("开始同步删除模拟器 #{} (name={}, merchantId={}, userId={})", index, instance.getName(), merchantId, userId);
         Map<String, Object> result = new HashMap<>();
         List<String> actions = new ArrayList<>();
 
         try {
-            // 1. 通过名称精确定位 Mumu 模拟器的 0-based index（作为校验用）
-            int mumuTargetIndex = findMumuIndexByNameOrIndex(instance.getName(), index);
-            boolean physicalExists = mumuTargetIndex >= 0;
-            log.info("模拟器 #{} 物理状态: {}, mumuTargetIndex(0-based)={}", index, physicalExists ? "存在" : "不存在", mumuTargetIndex);
+            // 1. 获取物理模拟器的 0-based index
+            int mumuTargetIndex = index - 1; // 数据库是1-based，物理是0-based
+            boolean physicalExists;
+
+            if (localMode) {
+                // 本地模式：直接查找
+                mumuTargetIndex = findMumuIndexByNameOrIndex(instance.getName(), index);
+                physicalExists = mumuTargetIndex >= 0;
+            } else {
+                // Agent 模式：通过 Agent 检查是否存在
+                physicalExists = webSocketService.emulatorExistsOnAgent(userId, mumuTargetIndex);
+            }
+
+            log.info("模拟器 #{} 物理状态: {}, mumuTargetIndex(0-based)={}, localMode={}", index, physicalExists ? "存在" : "不存在", mumuTargetIndex, localMode);
 
             if (physicalExists) {
-                // 2. 先停止（传 1-based，MumuClientService 内部 toMuMuIndex 会 -1）
+                // 2. 先停止
                 try {
-                    mumuClientService.stopEmulator(index);
+                    if (localMode) {
+                        mumuClientService.stopEmulator(index);
+                    } else {
+                        webSocketService.stopEmulatorOnAgent(userId, mumuTargetIndex);
+                    }
                     log.info("模拟器 #{} 物理实例已停止", index);
                     actions.add("已停止物理实例");
                     Thread.sleep(1500);
@@ -1303,9 +1329,13 @@ public class EmuInstanceService {
                     actions.add("停止失败: " + e.getMessage());
                 }
 
-                // 3. 删除物理模拟器（传 1-based）
+                // 3. 删除物理模拟器
                 try {
-                    mumuClientService.deleteEmulator(index);
+                    if (localMode) {
+                        mumuClientService.deleteEmulator(index);
+                    } else {
+                        webSocketService.deleteEmulatorOnAgent(userId, mumuTargetIndex);
+                    }
                     log.info("物理模拟器 #{} 已删除 (mumuIndex={})", index, mumuTargetIndex);
                     actions.add("已删除物理实例");
                     Thread.sleep(1000);
@@ -1314,9 +1344,14 @@ public class EmuInstanceService {
                     actions.add("物理删除失败: " + e.getMessage());
                 }
 
-                // 4. 验证物理删除（传 1-based）
+                // 4. 验证物理删除
                 try {
-                    boolean stillExists = mumuClientService.emulatorExists(index);
+                    boolean stillExists;
+                    if (localMode) {
+                        stillExists = mumuClientService.emulatorExists(index);
+                    } else {
+                        stillExists = webSocketService.emulatorExistsOnAgent(userId, mumuTargetIndex);
+                    }
                     if (stillExists) {
                         log.warn("物理模拟器 #{} 删除后仍存在", index);
                         actions.add("警告: 物理实例可能未完全删除");
@@ -1344,7 +1379,13 @@ public class EmuInstanceService {
 
             // 6. 重建剩余记录的 instanceIndex（使用独立事务）
             try {
-                self.rebuildIndicesInTransaction(merchantId, userId, mumuClientService.getAllEmulators());
+                List<Map<String, Object>> remainingPhysical;
+                if (localMode) {
+                    remainingPhysical = mumuClientService.getAllEmulators();
+                } else {
+                    remainingPhysical = webSocketService.getEmulatorsFromAgent(userId);
+                }
+                self.rebuildIndicesInTransaction(merchantId, userId, remainingPhysical);
                 actions.add("已重建剩余记录的索引");
             } catch (Exception e) {
                 log.warn("重建索引失败: {}", e.getMessage());
@@ -1355,7 +1396,7 @@ public class EmuInstanceService {
             result.put("message", "删除成功");
             result.put("actions", actions);
         } catch (Exception e) {
-            log.error("删除模拟器 #{} 失败", index, e);
+            log.error("删除模拟器 #{} 失败, merchantId={}, userId={}", index, merchantId, userId, e);
             result.put("success", false);
             result.put("message", "删除失败: " + e.getMessage());
             result.put("actions", actions);

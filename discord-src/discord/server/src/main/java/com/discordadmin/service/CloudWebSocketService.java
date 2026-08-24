@@ -554,4 +554,157 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         }
         return null;
     }
+
+    /**
+     * 通过 Agent 获取物理模拟器列表
+     * @param userId 用户 ID
+     * @return 物理模拟器列表
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> getEmulatorsFromAgent(String userId) {
+        List<AgentRegistration> agents = getOnlineAgentsByUserId(userId);
+        if (agents.isEmpty()) {
+            log.warn("获取模拟器列表失败: 无在线 Agent, userId={}", userId);
+            return null;
+        }
+
+        AgentRegistration agent = agents.get(0);
+        try {
+            Map<String, Object> result = sendCommandAndWait(agent.getDeviceId(), "GET_EMULATORS", null)
+                .get(30, TimeUnit.SECONDS);
+
+            if ("SUCCESS".equals(result.get("status"))) {
+                Map<String, Object> data = (Map<String, Object>) result.get("data");
+                if (data != null) {
+                    Object emulators = data.get("emulators");
+                    if (emulators instanceof List) {
+                        return (List<Map<String, Object>>) emulators;
+                    }
+                }
+                return new ArrayList<>();
+            } else {
+                log.warn("获取模拟器列表失败: {}", result.getOrDefault("message", "未知错误"));
+                return null;
+            }
+        } catch (Exception e) {
+            log.error("通过 Agent 获取模拟器列表失败", e);
+            return null;
+        }
+    }
+
+    /**
+     * 通过 Agent 删除模拟器
+     * @param userId 用户 ID
+     * @param index 模拟器索引 (0-based)
+     * @return 操作结果
+     */
+    public Map<String, Object> deleteEmulatorOnAgent(String userId, int index) {
+        List<AgentRegistration> agents = getOnlineAgentsByUserId(userId);
+        if (agents.isEmpty()) {
+            log.warn("通过 Agent 删除模拟器失败: 无在线 Agent, userId={}", userId);
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "无在线 Agent");
+            return result;
+        }
+
+        AgentRegistration agent = agents.get(0);
+        Map<String, Object> params = new HashMap<>();
+        params.put("index", index);
+
+        try {
+            Map<String, Object> result = sendCommandAndWait(agent.getDeviceId(), "DELETE_EMULATOR", params)
+                .get(30, TimeUnit.SECONDS);
+
+            if ("SUCCESS".equals(result.get("status"))) {
+                Map<String, Object> data = (Map<String, Object>) result.get("data");
+                if (data != null) {
+                    return data;
+                }
+                Map<String, Object> r = new HashMap<>();
+                r.put("success", true);
+                return r;
+            } else {
+                log.warn("通过 Agent 删除模拟器失败: {}", result.getOrDefault("message", "未知错误"));
+                Map<String, Object> r = new HashMap<>();
+                r.put("success", false);
+                r.put("message", result.getOrDefault("message", "删除失败"));
+                return r;
+            }
+        } catch (Exception e) {
+            log.error("通过 Agent 删除模拟器失败", e);
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return result;
+        }
+    }
+
+    /**
+     * 通过 Agent 停止模拟器
+     * @param userId 用户 ID
+     * @param index 模拟器索引 (0-based)
+     * @return 操作结果
+     */
+    public Map<String, Object> stopEmulatorOnAgent(String userId, int index) {
+        List<AgentRegistration> agents = getOnlineAgentsByUserId(userId);
+        if (agents.isEmpty()) {
+            log.warn("通过 Agent 停止模拟器失败: 无在线 Agent, userId={}", userId);
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "无在线 Agent");
+            return result;
+        }
+
+        AgentRegistration agent = agents.get(0);
+        Map<String, Object> params = new HashMap<>();
+        params.put("index", index);
+
+        try {
+            Map<String, Object> result = sendCommandAndWait(agent.getDeviceId(), "STOP_EMULATOR", params)
+                .get(30, TimeUnit.SECONDS);
+
+            if ("SUCCESS".equals(result.get("status"))) {
+                Map<String, Object> data = (Map<String, Object>) result.get("data");
+                if (data != null) {
+                    return data;
+                }
+                Map<String, Object> r = new HashMap<>();
+                r.put("success", true);
+                return r;
+            } else {
+                log.warn("通过 Agent 停止模拟器失败: {}", result.getOrDefault("message", "未知错误"));
+                Map<String, Object> r = new HashMap<>();
+                r.put("success", false);
+                r.put("message", result.getOrDefault("message", "停止失败"));
+                return r;
+            }
+        } catch (Exception e) {
+            log.error("通过 Agent 停止模拟器失败", e);
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return result;
+        }
+    }
+
+    /**
+     * 通过 Agent 检查模拟器是否存在
+     * @param userId 用户 ID
+     * @param index 模拟器索引 (0-based)
+     * @return 是否存在
+     */
+    public boolean emulatorExistsOnAgent(String userId, int index) {
+        List<Map<String, Object>> emulators = getEmulatorsFromAgent(userId);
+        if (emulators == null) return false;
+        
+        for (Map<String, Object> emu : emulators) {
+            Object idx = emu.get("index");
+            if (idx instanceof Number && ((Number) idx).intValue() == index) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 }

@@ -352,6 +352,23 @@ class MuMuController {
         } catch (e) {
             return { success: false, message: e.message };
         }
+
+
+    async deleteEmulator(index) {
+        try {
+            if (this.mumutoolPath) {
+                const result = await this.execMumutool(['delete', String(index)]);
+                if (result.errcode === 0) {
+                    return { success: true, message: '删除成功' };
+                } else {
+                    return { success: false, message: result.message || '删除失败' };
+                }
+            }
+            return { success: false, message: '未找到 mumutool，无法删除模拟器' };
+        } catch (e) {
+            return { success: false, message: e.message };
+        }
+    }
     }
 }
 
@@ -508,6 +525,19 @@ async function handleMessage(msg) {
             {
                 const index = msg.params?.index;
                 const result = await mumu.restartEmulator(index);
+                send({
+                    type: 'TASK_RESULT',
+                    taskId: msg.taskId,
+                    params: { status: result.success ? 'SUCCESS' : 'FAILED' },
+                    data: result
+                });
+            }
+            break;
+            
+        case 'DELETE_EMULATOR':
+            {
+                const index = msg.params?.index;
+                const result = await mumu.deleteEmulator(index);
                 send({
                     type: 'TASK_RESULT',
                     taskId: msg.taskId,
