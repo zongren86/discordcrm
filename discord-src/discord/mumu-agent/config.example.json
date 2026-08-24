@@ -3,6 +3,7 @@
   "merchantId": 2,
   "serverUrl": "wss://your-server.com/ws/agent",
   "heartbeatInterval": 30000,
-  "mumuPath": "/Applications/MuMuPlayer.app",
+  "mumuPath": "C:\\Program Files\\Netease\\MuMuPlayer-12.0",
+  "adbPath": "C:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe",
   "autoStart": true
 }

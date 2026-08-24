@@ -42,8 +42,8 @@ function getOrCreateDeviceId() {
 // ========== MuMu 模拟器控制 ==========
 class MuMuController {
     constructor() {
-        this.adbPath = this.findAdbPath();
         this.mumuPath = config.mumuPath || this.findMuMuPath();
+        this.adbPath = config.adbPath || this.findAdbPath();
         this.mumutoolPath = this.findMumutoolPath();
         console.log('[MuMu] ADB 路径:', this.adbPath);
         console.log('[MuMu] MuMu 路径:', this.mumuPath);
@@ -51,37 +51,72 @@ class MuMuController {
     }
 
     findAdbPath() {
+        const os = process.platform;
+
         // 1. 首先尝试从 PATH 查找
         try {
-            const path = execSync('which adb 2>/dev/null || command -v adb 2>/dev/null', { encoding: 'utf8', shell: true }).trim();
-            if (path && fs.existsSync(path)) return path;
+            let cmd;
+            if (os === 'win32') {
+                // Windows 使用 where 命令
+                cmd = 'where adb 2>nul';
+            } else {
+                // macOS/Linux 使用 which 或 command -v
+                cmd = 'which adb 2>/dev/null || command -v adb 2>/dev/null';
+            }
+            const result = execSync(cmd, { encoding: 'utf8', shell: true, timeout: 5000 }).trim();
+            if (result) {
+                const firstLine = result.split('
+')[0].trim();
+                if (firstLine && fs.existsSync(firstLine)) return firstLine;
+            }
         } catch {}
 
         // 2. 从 ANDROID_HOME 环境变量查找
         const androidHome = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
         if (androidHome) {
-            const p = path.join(androidHome, 'platform-tools', 'adb');
+            const adbName = os === 'win32' ? 'adb.exe' : 'adb';
+            const p = path.join(androidHome, 'platform-tools', adbName);
             if (fs.existsSync(p)) return p;
         }
 
-        // 3. 常见路径搜索
-        const commonPaths = [
-            // macOS
-            '/Users/' + (process.env.USER || '') + '/Library/Android/sdk/platform-tools/adb',
-            '/usr/local/bin/adb',
-            '/opt/homebrew/bin/adb',
-            '/Users/' + (process.env.USER || '') + '/Library/Android/sdk/platform-tools/adb',
-            // Windows
-            process.env.LOCALAPPDATA + '/Android/Sdk/platform-tools/adb.exe',
-            process.env.ANDROID_HOME + '/platform-tools/adb.exe',
-            '/mnt/c/Windows/System32/adb.exe',
-            // Linux
-            '/usr/lib/android-sdk/platform-tools/adb',
-            '/opt/android-sdk/platform-tools/adb'
-        ];
+        // 3. 从 MuMu 安装目录查找 (MuMu 自带 adb)
+        if (this.mumuPath) {
+            const mumuAdbName = os === 'win32' ? 'adb.exe' : 'adb';
+            const mumuAdbPaths = [
+                path.join(this.mumuPath, 'shell', mumuAdbName),
+                path.join(this.mumuPath, mumuAdbName),
+            ];
+            for (const p of mumuAdbPaths) {
+                if (fs.existsSync(p)) return p;
+            }
+        }
+
+        // 4. 常见路径搜索
+        const commonPaths = [];
+        if (os === 'win32') {
+            // Windows 常见路径
+            const winPaths = [
+                process.env.LOCALAPPDATA + '\Android\Sdk\platform-tools\adb.exe',
+                process.env.ANDROID_HOME + '\platform-tools\adb.exe',
+                process.env.USERPROFILE + '\AppData\Local\Android\Sdk\platform-tools\adb.exe',
+                'C:\Android\platform-tools\adb.exe',
+                'C:\Program Files\Android\Android Studio\plugins\\..\..\..\..\Sdk\platform-tools\adb.exe',
+                'C:\Users\' + (process.env.USERNAME || '') + '\AppData\Local\Android\Sdk\platform-tools\adb.exe',
+            ];
+            commonPaths.push(...winPaths);
+        } else {
+            // macOS/Linux 常见路径
+            commonPaths.push(
+                '/Users/' + (process.env.USER || '') + '/Library/Android/sdk/platform-tools/adb',
+                '/usr/local/bin/adb',
+                '/opt/homebrew/bin/adb',
+                '/usr/lib/android-sdk/platform-tools/adb',
+                '/opt/android-sdk/platform-tools/adb'
+            );
+        }
 
         for (const p of commonPaths) {
-            if (p && !p.includes('undefined') && fs.existsSync(p)) return p;
+            if (p && !p.includes('undefined') && !p.includes('null') && fs.existsSync(p)) return p;
         }
 
         console.warn('[MuMu] ADB 未找到，请确保已安装 Android SDK 并配置 ANDROID_HOME 环境变量');
