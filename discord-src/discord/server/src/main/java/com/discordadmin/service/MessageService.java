@@ -1208,7 +1208,33 @@ public class MessageService {
     /**
      * 判断 URL 是否为本地服务器上传的文件（需要下载后重新上传到 Discord CDN）
      */
-    private boolean isLocalUploadUrl(String url) {
+        /**
+     * 从Discord Sticker CDN URL中提取sticker ID。
+     * URL格式: https://cdn.discordapp.com/stickers/{stickerId}?format=json
+     */
+    private String extractStickerId(String url) {
+        if (url == null) return null;
+        try {
+            // Extract path after /stickers/
+            int stickersIdx = url.indexOf("/stickers/");
+            if (stickersIdx < 0) return null;
+            String afterStickers = url.substring(stickersIdx + "/stickers/".length());
+            // Remove query parameters
+            int queryIdx = afterStickers.indexOf('?');
+            if (queryIdx > 0) {
+                afterStickers = afterStickers.substring(0, queryIdx);
+            }
+            // The sticker ID is the path segment
+            String stickerId = afterStickers.split("/")[0];
+            log.info("从URL提取Sticker ID: url={}, id={}", url, stickerId);
+            return stickerId;
+        } catch (Exception e) {
+            log.error("提取Sticker ID失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+private boolean isLocalUploadUrl(String url) {
         if (url == null || url.isBlank() || baseUrl == null) return false;
         try {
             String base = baseUrl.replaceAll("/+$", "");
@@ -1234,22 +1260,25 @@ public class MessageService {
         String discordAttachmentUrl;
         String sentContent;
 
-        // Discord Sticker CDN URL：直接发送，Discord 原生支持渲染为动画
+        // Discord Sticker CDN URL：提取stickerId，通过原生API发送，Discord会渲染为动画
         boolean isDiscordStickerUrl = gifUrl != null && 
             gifUrl.toLowerCase().contains("cdn.discordapp.com/stickers");
 
         boolean isLocalUpload = isLocalUploadUrl(gifUrl);
 
         if (isDiscordStickerUrl) {
-            // Sticker CDN URL：直接发送原始URL，Discord会自动渲染为Sticker动画
-            log.info("发送Discord Sticker URL: {}", gifUrl);
+            // Sticker CDN URL：提取stickerId，使用原生sticker_ids API发送
+            String stickerId = extractStickerId(gifUrl);
+            log.info("发送Discord Sticker, id={}, url={}", stickerId, gifUrl);
             try {
-                discordMessageId = discordUserClient.sendMessage(
-                        account.getToken(), conversation.getChannelId(), gifUrl);
+                JsonNode resp = discordUserClient.sendStickerMessage(
+                        account.getToken(), conversation.getChannelId(), stickerId);
+                discordMessageId = resp.path("id").asText(null);
                 discordAttachmentUrl = gifUrl;
                 sentContent = gifUrl;
+                log.info("Sticker发送成功, messageId={}", discordMessageId);
             } catch (Exception e) {
-                log.error("Sticker URL发送失败: {}", e.getMessage());
+                log.error("Sticker发送失败: {}", e.getMessage());
                 throw new RuntimeException("Sticker发送失败: " + e.getMessage(), e);
             }
         } else if (isLocalUpload) {

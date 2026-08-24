@@ -168,6 +168,18 @@ public class DiscordUserClient {
     }
 
     /**
+     * 发送Discord原生Sticker消息，Discord会自动渲染为动画。
+     * stickerId从URL中提取，如 https://cdn.discordapp.com/stickers/{stickerId}?format=json
+     */
+    public JsonNode sendStickerMessage(String token, String channelId, String stickerId) throws Exception {
+        Map<String, Object> bodyMap = new java.util.LinkedHashMap<>();
+        bodyMap.put("content", "");
+        bodyMap.put("sticker_ids", java.util.List.of(stickerId));
+        String body = mapper.writeValueAsString(bodyMap);
+        return request(token, "POST", "/channels/" + channelId + "/messages", body);
+    }
+
+    /**
      * 发送带文件附件的消息（用于语音消息等）。
      * 使用 multipart/form-data 格式上传文件到 Discord。
      *
