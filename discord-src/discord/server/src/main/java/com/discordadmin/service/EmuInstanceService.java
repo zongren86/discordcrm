@@ -7,9 +7,11 @@ import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.EmuInstanceRepository;
 import com.discordadmin.security.SecurityUtils;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -22,6 +24,10 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 public class EmuInstanceService {
+
+    @Lazy
+    @Autowired
+    private EmuInstanceService self;
 
     private final EmuInstanceRepository instanceRepository;
     private final MumuClientService mumuClientService;
@@ -1212,8 +1218,8 @@ public class EmuInstanceService {
     /**
      * 删除模拟器 — 同步执行：先停物理 → 删物理 → 清DB → 重建剩余索引
      * index 是 1-based（数据库 instanceIndex，V001=1）
+     * 注意：不在此方法上使用 @Transactional，因为物理操作耗时较长会导致连接泄漏
      */
-    @Transactional
     public Map<String, Object> deleteInstance(int index) {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
@@ -1237,7 +1243,7 @@ public class EmuInstanceService {
                     mumuClientService.stopEmulator(index);
                     log.info("模拟器 #{} 物理实例已停止", index);
                     actions.add("已停止物理实例");
-                    Thread.sleep(2000);
+                    Thread.sleep(1500);
                 } catch (Exception e) {
                     log.warn("停止物理模拟器 #{} 失败: {}，继续删除", index, e.getMessage());
                     actions.add("停止失败: " + e.getMessage());
@@ -1248,7 +1254,7 @@ public class EmuInstanceService {
                     mumuClientService.deleteEmulator(index);
                     log.info("物理模拟器 #{} 已删除 (mumuIndex={})", index, mumuTargetIndex);
                     actions.add("已删除物理实例");
-                    Thread.sleep(1500);
+                    Thread.sleep(1000);
                 } catch (Exception e) {
                     log.error("删除物理模拟器 #{} 失败: {}", index, e.getMessage());
                     actions.add("物理删除失败: " + e.getMessage());
@@ -1271,41 +1277,21 @@ public class EmuInstanceService {
                 actions.add("物理实例不存在，跳过物理删除");
             }
 
-            // 5. 清理数据库记录
-            instanceRepository.delete(instance);
-            log.info("已删除模拟器 #{} 的数据库记录", index);
-            actions.add("已清理数据库记录");
-
-            // 6. 重建剩余记录的 instanceIndex，使其与 Mumu 物理索引严格一致
-            //    （Mumu 删除后不会自动重排 REST index，必须以 name 为锚点重新建立对应）
+            // 5. 清理数据库记录（使用独立事务）
             try {
-                List<Map<String, Object>> remainingPhysical = mumuClientService.getAllEmulators();
-                if (remainingPhysical != null) {
-                    List<Map<String, Object>> healthy = remainingPhysical.stream()
-                        .filter(e -> !"DAMAGED".equals(e.get("status")) && !Boolean.TRUE.equals(e.get("damaged")))
-                        .sorted(Comparator.comparingInt(e -> ((Number) e.get("index")).intValue()))
-                        .collect(Collectors.toList());
+                self.deleteInstanceInTransaction(instance);
+                log.info("已删除模拟器 #{} 的数据库记录", index);
+                actions.add("已清理数据库记录");
+            } catch (Exception e) {
+                log.error("删除数据库记录失败: {}", e.getMessage());
+                actions.add("数据库删除失败: " + e.getMessage());
+                throw new RuntimeException("数据库记录删除失败: " + e.getMessage(), e);
+            }
 
-                    List<EmuInstance> remainingDb = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
-                    Map<String, EmuInstance> byName = new HashMap<>();
-                    for (EmuInstance r : remainingDb) {
-                        if (r.getName() != null) byName.put(r.getName(), r);
-                    }
-
-                    for (Map<String, Object> emu : healthy) {
-                        String name = (String) emu.get("name");
-                        EmuInstance dbRec = byName.get(name);
-                        int physMumuIdx = ((Number) emu.get("index")).intValue();
-                        int expectedDbIdx = physMumuIdx + 1; // 1-based
-                        if (dbRec != null && !Objects.equals(dbRec.getInstanceIndex(), expectedDbIdx)) {
-                            dbRec.setInstanceIndex(expectedDbIdx);
-                            instanceRepository.save(dbRec);
-                            log.info("重建索引: name={}, mumuIdx(0-based)={}, dbIndex(1-based)={}",
-                                    name, physMumuIdx, expectedDbIdx);
-                        }
-                    }
-                    actions.add("已重建剩余记录的索引");
-                }
+            // 6. 重建剩余记录的 instanceIndex（使用独立事务）
+            try {
+                self.rebuildIndicesInTransaction(merchantId, userId, mumuClientService.getAllEmulators());
+                actions.add("已重建剩余记录的索引");
             } catch (Exception e) {
                 log.warn("重建索引失败: {}", e.getMessage());
                 actions.add("重建索引失败: " + e.getMessage());
@@ -1322,6 +1308,46 @@ public class EmuInstanceService {
         }
 
         return result;
+    }
+
+    /**
+     * 事务方法：删除模拟器实例（短事务，避免连接泄漏）
+     */
+    @Transactional
+    public void deleteInstanceInTransaction(EmuInstance instance) {
+        instanceRepository.delete(instance);
+    }
+
+    /**
+     * 事务方法：重建剩余模拟器的索引（短事务，避免连接泄漏）
+     */
+    @Transactional
+    public void rebuildIndicesInTransaction(Long merchantId, String userId, List<Map<String, Object>> remainingPhysical) {
+        if (remainingPhysical == null) return;
+
+        List<Map<String, Object>> healthy = remainingPhysical.stream()
+            .filter(e -> !"DAMAGED".equals(e.get("status")) && !Boolean.TRUE.equals(e.get("damaged")))
+            .sorted(Comparator.comparingInt(e -> ((Number) e.get("index")).intValue()))
+            .collect(Collectors.toList());
+
+        List<EmuInstance> remainingDb = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+        Map<String, EmuInstance> byName = new HashMap<>();
+        for (EmuInstance r : remainingDb) {
+            if (r.getName() != null) byName.put(r.getName(), r);
+        }
+
+        for (Map<String, Object> emu : healthy) {
+            String name = (String) emu.get("name");
+            EmuInstance dbRec = byName.get(name);
+            int physMumuIdx = ((Number) emu.get("index")).intValue();
+            int expectedDbIdx = physMumuIdx + 1;
+            if (dbRec != null && !Objects.equals(dbRec.getInstanceIndex(), expectedDbIdx)) {
+                dbRec.setInstanceIndex(expectedDbIdx);
+                instanceRepository.save(dbRec);
+                log.info("重建索引: name={}, mumuIdx(0-based)={}, dbIndex(1-based)={}",
+                        name, physMumuIdx, expectedDbIdx);
+            }
+        }
     }
 
     /**
