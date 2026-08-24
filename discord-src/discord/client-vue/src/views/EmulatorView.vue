@@ -1374,8 +1374,8 @@ function copyToClipboard(text) {
 async function handleDownloadAgentPackage() {
   downloadLoading.value = true
   try {
-    const response = await downloadAgentPackage()
-    const blob = new Blob([response.data], { type: 'application/zip' })
+    const blob = await downloadAgentPackage()
+    // blob is already the response data from axios interceptor
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
