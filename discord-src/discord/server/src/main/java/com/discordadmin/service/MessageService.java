@@ -1224,8 +1224,12 @@ public class MessageService {
             if (queryIdx > 0) {
                 afterStickers = afterStickers.substring(0, queryIdx);
             }
-            // The sticker ID is the path segment
+            // The sticker ID is the path segment, remove any file extension like .json
             String stickerId = afterStickers.split("/")[0];
+            int dotIdx = stickerId.indexOf('.');
+            if (dotIdx > 0) {
+                stickerId = stickerId.substring(0, dotIdx);
+            }
             log.info("从URL提取Sticker ID: url={}, id={}", url, stickerId);
             return stickerId;
         } catch (Exception e) {

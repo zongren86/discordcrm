@@ -18,6 +18,7 @@ import com.discordadmin.repository.FetchProgressRepository;
 import com.discordadmin.repository.FriendRepository;
 import com.discordadmin.repository.GuildMemberRepository;
 import com.discordadmin.repository.GuildServerRepository;
+import com.discordadmin.repository.GifFavoriteRepository;
 import com.discordadmin.repository.MessageRepository;
 import com.discordadmin.security.SecurityUtils;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -67,6 +68,7 @@ public class DiscordAccountService {
     private final FriendRepository friendRepository;
     private final AgentRepository agentRepository;
     private final GuildServerRepository guildServerRepository;
+    private final GifFavoriteRepository gifFavoriteRepository;
     private final GuildMemberRepository guildMemberRepository;
     private final FetchProgressRepository fetchProgressRepository;
     private final DiscordAccountNumberRepository accountNumberRepository;
@@ -85,6 +87,7 @@ public class DiscordAccountService {
                                  FriendRepository friendRepository,
                                  AgentRepository agentRepository,
                                  GuildServerRepository guildServerRepository,
+                                 GifFavoriteRepository gifFavoriteRepository,
                                  GuildMemberRepository guildMemberRepository,
                                  FetchProgressRepository fetchProgressRepository,
                                  DiscordAccountNumberRepository accountNumberRepository,
@@ -99,6 +102,7 @@ public class DiscordAccountService {
         this.friendRepository = friendRepository;
         this.agentRepository = agentRepository;
         this.guildServerRepository = guildServerRepository;
+        this.gifFavoriteRepository = gifFavoriteRepository;
         this.guildMemberRepository = guildMemberRepository;
         this.fetchProgressRepository = fetchProgressRepository;
         this.accountNumberRepository = accountNumberRepository;
@@ -887,7 +891,10 @@ public class DiscordAccountService {
                         // 3d. 删除好友记录
                         friendRepository.deleteByDiscordAccount(acc);
 
-                        // 3e. 删除账号
+                        // 3e. 删除GIF收藏（外键约束）
+                        gifFavoriteRepository.deleteByDiscordAccountId(id);
+                        
+                        // 3f. 删除账号
                         accountRepository.delete(acc);
                     }
                     return null;
