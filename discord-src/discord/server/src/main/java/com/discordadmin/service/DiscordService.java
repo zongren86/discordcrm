@@ -552,11 +552,22 @@ public class DiscordService {
 
     /** 从 uiautomator dump XML 中解析 Discord 当前登录用户名 */
     private String parseUsername(String xml) {
-        // 当前登录用户名显示在底部个人资料栏按钮的 content-desc 上（实测 content-desc="len_zone" 即用户名）
+        // 当前登录用户名显示在底部个人资料栏按钮的 content-desc 上
         // 排除已知系统词，避免误抓频道/服务器名
+        // 支持中英文版本的 Discord
         java.util.Set<String> sysWords = java.util.Set.of(
-                "私信", "添加服务器", "搜索", "综合", "提及", "未读消息", "Student Hub",
-                "游戏中心", "设置", "图库", "文件", "浏览器", "直播间", "添加好友");
+                // 中文版
+                "私信", "添加服务器", "搜索", "综合", "提及", "未读消息", 
+                "游戏中心", "设置", "图库", "文件", "浏览器", "直播间", "添加好友",
+                "频道", "服务器", "好友", "首页", "通知", "活动",
+                // 英文版
+                "direct messages", "add server", "search", "home", "messages", "mentions",
+                "unreads", "student hub", "nitro", "settings", "gallery", "files",
+                "browse", "live", "add friend", "add friends", "friends", "servers", "channels",
+                "notifications", "activity", "you", "homepage",
+                // 通用
+                "discord", "app", "main");
+        
         // 抓取所有 package=com.discord 且带 content-desc 的节点
         java.util.regex.Pattern p = java.util.regex.Pattern.compile(
                 "package=\"com\\.discord\"[^>]*content-desc=\"([^\"]+)\"");
@@ -564,12 +575,14 @@ public class DiscordService {
         java.util.Set<String> candidates = new java.util.LinkedHashSet<>();
         while (m.find()) {
             String desc = m.group(1).trim();
-            // 过滤：不含中文字符、不在系统词里、长度合理（用户名通常不含空白描述长串）
+            String descLower = desc.toLowerCase();
+            // 过滤：不在系统词里、长度合理
             if (desc.isEmpty()) continue;
-            if (sysWords.contains(desc)) continue;
+            if (sysWords.contains(descLower)) continue;
             if (desc.length() > 40) continue;
-            if (desc.contains("，") || desc.contains(",") || desc.contains(" ")) continue;
-            if (desc.matches(".*[\\u4e00-\\u9fa5].*")) continue; // 跳过含中文的（系统/频道描述）
+            // 跳过含标点符号的（通常是描述性文本）
+            if (desc.contains("，") || (desc.contains(",") && desc.length() > 10)) continue;
+            // 不再过滤中文字符，因为用户名可能包含中文
             candidates.add(desc);
         }
         // 第一个候选即底部个人资料栏的用户名（content-desc 直接是用户名）
@@ -634,15 +647,16 @@ public class DiscordService {
 
             // 2) 先确保在「好友」页（底部导航），再点「添加好友」按钮进入添加页
             //    冷启动后 Discord 可能停在其它页，先尝试切到好友页（失败不致命，可能已在）
-            tapByTextWait(index, 4000, "好友");
+            // 支持中英文版本
+            tapByTextWait(index, 4000, "好友", "friends", "messages");
             randDelay();
-            if (!tapByTextWait(index, 10000, "添加好友")) {
+            if (!tapByTextWait(index, 10000, "添加好友", "add friend", "add friends")) {
                 return "ERROR: 未找到「添加好友」按钮 (可能 Discord 版本/语言不同)";
             }
             randDelay(); randDelay();
 
             // 3) 等待并点击「输入用户名」输入框 -> 聚焦输入区（动态定位，等待页面加载）
-            if (!tapByTextWait(index, 10000, "输入用户名", "通过用户名添加")) {
+            if (!tapByTextWait(index, 10000, "输入用户名", "通过用户名添加", "username", "add by username", "enter a username")) {
                 return "ERROR: 未找到「输入用户名」输入框";
             }
             randDelay(); randDelay();
@@ -650,7 +664,7 @@ public class DiscordService {
             randDelay(); randDelay(); // 等待 Discord 校验用户名
 
             // 4) 点击「发送好友请求」按钮（动态定位，等待出现）
-            if (!tapByTextWait(index, 10000, "发送好友请求")) {
+            if (!tapByTextWait(index, 10000, "发送好友请求", "send friend request")) {
                 return "ERROR: 未找到「发送好友请求」按钮";
             }
             randDelay(); randDelay();
