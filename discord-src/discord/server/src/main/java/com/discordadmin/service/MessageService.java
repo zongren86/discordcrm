@@ -18,6 +18,10 @@ import com.discordadmin.translation.LanguageDetectionService;
 import com.discordadmin.translation.TranslationService;
 import com.discordadmin.translation.TranslationServiceFactory;
 import com.fasterxml.jackson.databind.JsonNode;
+import javax.imageio.ImageIO;
+import java.awt.*;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -1219,40 +1223,49 @@ public class MessageService {
         );
 
         if (isStickerJson) {
-            // Sticker JSON：下载后作为附件上传，Discord显示文件附件而非URL文本
-            log.info("发送Sticker JSON附件: {}", gifUrl);
+            // Sticker JSON：下载后生成PNG预览图上传到Discord
+            log.info("发送Sticker PNG预览: {}", gifUrl);
             try {
                 // 下载Sticker JSON
                 byte[] stickerJsonData = downloadGifFile(gifUrl);
                 if (stickerJsonData != null && stickerJsonData.length > 0) {
-                    // 从URL提取文件名
-                    String filename = "sticker.json";
-                    int lastSlash = gifUrl.lastIndexOf('/');
-                    if (lastSlash > 0 && lastSlash < gifUrl.length() - 1) {
-                        String extractedName = gifUrl.substring(lastSlash + 1);
-                        int qIdx = extractedName.indexOf('?');
-                        if (qIdx > 0) {
-                            extractedName = extractedName.substring(0, qIdx);
+                    // 解析JSON获取Sticker名称
+                    String stickerName = "Sticker";
+                    try {
+                        JsonNode root = new com.fasterxml.jackson.databind.ObjectMapper().readTree(new String(stickerJsonData));
+                        if (root.has("nm")) {
+                            stickerName = root.get("nm").asText("Sticker");
                         }
-                        if (extractedName.endsWith(".json")) {
-                            filename = extractedName;
-                        }
+                    } catch (Exception ignored) {}
+                    
+                    // 生成PNG预览图
+                    byte[] pngData = generateStickerPreviewPng(stickerName);
+                    
+                    if (pngData != null && pngData.length > 0) {
+                        // 上传PNG到Discord
+                        String filename = "sticker_preview.png";
+                        JsonNode resp = discordUserClient.sendMessageWithFile(
+                                account.getToken(),
+                                conversation.getChannelId(),
+                                "",
+                                filename,
+                                pngData,
+                                "image/png",
+                                null,
+                                null
+                        );
+                        discordMessageId = resp.path("id").asText(null);
+                        discordAttachmentUrl = gifUrl; // 保留原始URL供前端Lottie渲染
+                        sentContent = gifUrl; // 保留原始URL供前端识别为Sticker
+                        log.info("Sticker PNG预览上传成功: {}", discordAttachmentUrl);
+                    } else {
+                        // 降级：直接发送URL
+                        log.warn("PNG生成失败，降级发送URL");
+                        discordMessageId = discordUserClient.sendMessage(
+                                account.getToken(), conversation.getChannelId(), gifUrl);
+                        discordAttachmentUrl = gifUrl;
+                        sentContent = gifUrl;
                     }
-                    // 上传JSON文件到Discord作为附件，content为空避免显示URL文本
-                    JsonNode resp = discordUserClient.sendMessageWithFile(
-                            account.getToken(),
-                            conversation.getChannelId(),
-                            "",
-                            filename,
-                            stickerJsonData,
-                            "application/json",
-                            null,
-                            null
-                    );
-                    discordMessageId = resp.path("id").asText(null);
-                    discordAttachmentUrl = gifUrl; // 保留原始URL供前端Lottie渲染
-                    sentContent = gifUrl; // 保留原始URL供前端识别为Sticker
-                    log.info("Sticker JSON附件上传成功");
                 } else {
                     // 降级：直接发送URL
                     log.warn("Sticker JSON下载失败，降级发送URL");
@@ -1262,7 +1275,7 @@ public class MessageService {
                     sentContent = gifUrl;
                 }
             } catch (Exception e) {
-                log.error("发送Sticker附件失败，降级直接发送: {}", e.getMessage());
+                log.error("发送Sticker失败，降级直接发送: {}", e.getMessage());
                 try {
                     discordMessageId = discordUserClient.sendMessage(
                             account.getToken(), conversation.getChannelId(), gifUrl);
@@ -1564,6 +1577,66 @@ public class MessageService {
         } catch (Exception e) {
             log.error("序列化失败: {}", e.getMessage());
             return "[]";
+        }
+    }
+
+    /**
+     * 生成Sticker预览PNG图片
+     */
+    private byte[] generateStickerPreviewPng(String stickerName) {
+        try {
+            int size = 256;
+            BufferedImage image = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D g2d = image.createGraphics();
+            
+            // 抗锯齿设置
+            g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            
+            // 绘制圆角矩形背景（Discord风格）
+            g2d.setColor(new Color(255, 113, 128)); // Discord Sticker 橙色
+            g2d.fillRoundRect(8, 8, size - 16, size - 16, 40, 40);
+            
+            // 绘制边框
+            g2d.setColor(new Color(255, 255, 255, 100));
+            g2d.setStroke(new BasicStroke(3));
+            g2d.drawRoundRect(12, 12, size - 24, size - 24, 35, 35);
+            
+            // 绘制Sticker名称
+            g2d.setColor(Color.WHITE);
+            
+            // 自适应字体大小
+            String displayName = stickerName;
+            int fontSize = 28;
+            if (stickerName.length() > 12) {
+                fontSize = 22;
+                displayName = stickerName.substring(0, Math.min(stickerName.length(), 14)) + "...";
+            }
+            if (stickerName.length() > 20) {
+                fontSize = 18;
+                displayName = stickerName.substring(0, Math.min(stickerName.length(), 18)) + "...";
+            }
+            
+            Font font = new Font("SansSerif", Font.BOLD, fontSize);
+            g2d.setFont(font);
+            
+            FontMetrics metrics = g2d.getFontMetrics(font);
+            int textWidth = metrics.stringWidth(displayName);
+            int x = (size - textWidth) / 2;
+            int y = (size - metrics.getHeight()) / 2 + metrics.getAscent();
+            
+            g2d.drawString(displayName, x, y);
+            
+            g2d.dispose();
+            
+            // 转换为PNG
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", baos);
+            return baos.toByteArray();
+            
+        } catch (Exception e) {
+            log.error("生成Sticker PNG失败: {}", e.getMessage());
+            return null;
         }
     }
 
