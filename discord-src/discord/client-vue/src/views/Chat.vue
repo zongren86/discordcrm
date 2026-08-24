@@ -2715,6 +2715,9 @@ async function sendGifFromFavorite(favorite) {
     loadingMsg.close()
     ElMessage.success('已发送')
     gifPickerVisible.value = false
+    // 发送成功后强制滚到底部
+    await nextTick()
+    scrollToBottom({ force: true })
   } catch (e) {
     loadingMsg.close()
     console.error('发送GIF失败:', e)
@@ -2748,6 +2751,9 @@ async function sendStickerFromFavorite(fav) {
     loadingMsg.close()
     ElMessage.success('已发送')
     gifPickerVisible.value = false
+    // 发送成功后强制滚到底部
+    await nextTick()
+    scrollToBottom({ force: true })
   } catch (e) {
     loadingMsg.close()
     console.error('发送Sticker失败:', e)
@@ -3051,7 +3057,7 @@ function isNearBottom(threshold = 120) {
 async function scrollToBottom({ force = false, retries = 0 } = {}) {
   await nextTick()
   if (!msgScrollRef.value) {
-    if (retries < 3) {
+    if (retries < 5) {
       setTimeout(() => scrollToBottom({ force, retries: retries + 1 }), 60)
     }
     return
@@ -3068,13 +3074,13 @@ async function scrollToBottom({ force = false, retries = 0 } = {}) {
   try {
     const wrapEl = getScrollWrapEl()
     if (wrapEl) {
-      wrapEl.scrollTop = wrapEl.scrollHeight
+      wrapEl.scrollTop = wrapEl.scrollHeight + 1000
     }
   } catch (e) {}
   try { msgScrollRef.value.setScrollTop(99999999) } catch (e) {}
-  // force=true：再补 2 次重试（渲染后期图片/音频条可能改变高度，避免第一次只滚到半截）
-  if (force && retries < 2) {
-    setTimeout(() => scrollToBottom({ force: true, retries: retries + 1 }), 120)
+  // force=true：额外多次重试，确保图片/音频加载后高度变化也能滚到底部
+  if (force && retries < 5) {
+    setTimeout(() => scrollToBottom({ force: true, retries: retries + 1 }), 100)
   }
 }
 
