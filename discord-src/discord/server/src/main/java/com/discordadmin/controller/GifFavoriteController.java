@@ -122,13 +122,13 @@ public class GifFavoriteController {
             
             String newFilename = "sticker_" + UUID.randomUUID().toString().replace("-", "") + "." + ext;
             
-            Path uploadDir = Paths.get(uploadPath, "stickers");
+            Path uploadDir = Paths.get(uploadPath, "stickers").toAbsolutePath();
             if (!Files.exists(uploadDir)) {
                 Files.createDirectories(uploadDir);
             }
             
             Path filePath = uploadDir.resolve(newFilename);
-            file.transferTo(filePath.toFile());
+            Files.write(filePath, file.getBytes());
             
             String fileUrl = baseUrl + "/uploads/stickers/" + newFilename;
             

@@ -1234,8 +1234,9 @@ public class MessageService {
         String discordAttachmentUrl;
         String sentContent;
 
-        // Sticker/Lottie JSON：下载后生成PNG图片上传
-        boolean isStickerJson = gifUrl != null && (
+        // Sticker/Lottie JSON：仅识别外部Discord CDN的Sticker JSON，排除本地上传的GIF文件
+        boolean isLocalUpload = isLocalUploadUrl(gifUrl);
+        boolean isStickerJson = !isLocalUpload && gifUrl != null && (
             gifUrl.toLowerCase().endsWith(".json") ||
             gifUrl.toLowerCase().contains("/stickers/")
         );

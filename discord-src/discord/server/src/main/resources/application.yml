@@ -81,5 +81,5 @@ spring.main.allow-bean-definition-overriding: false
 
 app:
   upload:
-    path: ${APP_UPLOAD_PATH:uploads}
+    path: ${APP_UPLOAD_PATH:${user.home}/.discord-admin/uploads}
   base-url: ${APP_BASE_URL:http://localhost:8090}
