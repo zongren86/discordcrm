@@ -2771,6 +2771,8 @@ async function sendGifFromFavorite(favorite) {
     console.error('发送GIF失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，文件可能过大，请选择较小的动图')
+    } else if (e.message?.includes('401') || e.message?.includes('Unauthorized')) {
+      ElMessage.error('账号Token已过期，请到账号管理页面刷新Token后重试')
     } else {
       ElMessage.error('发送失败: ' + (e.message || '未知错误'))
     }
@@ -2798,6 +2800,8 @@ async function sendStickerFromFavorite(fav) {
     console.error('发送Sticker失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，请重试')
+    } else if (e.message?.includes('401') || e.message?.includes('Unauthorized')) {
+      ElMessage.error('账号Token已过期，请到账号管理页面刷新Token后重试')
     } else {
       ElMessage.error('发送失败，请重试')
     }
