@@ -2461,7 +2461,7 @@ function isGifAttachment(att) {
 }
 
 function nonGifAttachments(msg) {
-  return parseAttachments(msg).filter(a => !isGifAttachment(a) && !isStickerAttachment(a))
+  return parseAttachments(msg).filter(a => !isGifAttachment(a) && !isStickerAttachment(a) && !isImage(a.filename || a.name))
 }
 
 function toggleAttachment() {
