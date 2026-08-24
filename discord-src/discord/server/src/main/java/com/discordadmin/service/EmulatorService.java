@@ -1033,15 +1033,26 @@ public class EmulatorService {
         }
     }
 
+    /**
+     * 计算MuMu模拟器的默认ADB端口
+     * MuMu ADB端口公式: 16384 + index * 32
+     * 但实际端口可能因 vm.json 配置而不同，此方法作为兜底计算
+     */
+    private int calculateAdbPort(int index) {
+        return 16384 + index * 32;
+    }
+
     public int getAdbPort(int index) {
         // 优先返回运行时真实动态端口（mumutool info 的 adb_port），
         // 静态 vm.json 推导值可能与实际不符，会导致 ADB connect/state 检测失败。
-        int running = getMumuRunningPort(index);
-        if (running > 0) return running;
+        // 注意：此处不调用 getMumuRunningPort，避免与 tryAdbFallback 形成递归
         EmulatorInfo info = emulators.get(index);
         if (info != null && info.getAdbPort() > 0) return info.getAdbPort();
         EmulatorInfo cfg = readVmConfig(index);
-        return cfg.getAdbPort();
+        int port = cfg.getAdbPort();
+        if (port > 0) return port;
+        // 兜底计算：MuMu ADB端口公式
+        return calculateAdbPort(index);
     }
 
     public String execAdbRaw(String... args) {
@@ -1050,7 +1061,11 @@ public class EmulatorService {
             cmd.add(resolvedAdbPath);
             cmd.addAll(Arrays.asList(args));
             Process p = new ProcessBuilder(cmd).start();
-            return new String(p.getInputStream().readAllBytes()).trim();
+            String out = new String(p.getInputStream().readAllBytes()).trim();
+            String err = new String(p.getErrorStream().readAllBytes()).trim();
+            p.waitFor(10, TimeUnit.SECONDS);
+            String result = !out.isEmpty() ? out : err;
+            return result.trim();
         } catch (Exception e) {
             return "";
         }
@@ -1091,9 +1106,13 @@ public class EmulatorService {
      */
     private int tryAdbFallback(int index) {
         try {
-            int adbPort = getAdbPort(index);
+            // 直接使用端口公式计算，避免与 getAdbPort/getMumuRunningPort 形成递归
+            int adbPort = calculateAdbPort(index);
             if (adbPort <= 0) return -1;
             String device = "127.0.0.1:" + adbPort;
+            // 确保 ADB server 已启动
+            execAdbRaw("start-server");
+            Thread.sleep(200);
             execAdbRaw("connect", device);
             Thread.sleep(500);
             String state = execAdbRaw("-s", device, "get-state").trim();
@@ -1101,8 +1120,16 @@ public class EmulatorService {
                 log.info("模拟器{} ADB 兜底检测: 端口={}, 状态=device", index, adbPort);
                 return adbPort;
             }
+            // 尝试从已连接设备列表中搜索匹配端口
+            String devices = execAdbRaw("devices").trim();
+            if (devices.contains("127.0.0.1:" + adbPort) && devices.contains("device")) {
+                log.info("模拟器{} ADB 兜底检测(设备列表): 端口={}, 状态=device", index, adbPort);
+                return adbPort;
+            }
+            log.debug("模拟器{} ADB 兜底检测: 端口={}, 状态={} (未找到)", index, adbPort, state);
             return -1;
         } catch (Exception e) {
+            log.debug("模拟器{} ADB 兜底检测异常: {}", index, e.getMessage());
             return -1;
         }
     }
