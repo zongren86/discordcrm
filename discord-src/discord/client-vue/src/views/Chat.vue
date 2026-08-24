@@ -4179,8 +4179,8 @@ async function requestTranslationPreview() {
   showTranslationPreview.value = true
   try {
     const result = await translateText(text, targetLang.value)
-    if (result && result.translatedText) {
-      translationPreviewText.value = result.translatedText
+    if (result && result.data && result.data.translatedText) {
+      translationPreviewText.value = result.data.translatedText
     }
   } catch (e) {
     console.error('翻译预览失败:', e)

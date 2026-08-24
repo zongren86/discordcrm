@@ -1,61 +1,50 @@
 package com.discordadmin.controller;
 
-import com.discordadmin.dto.AuthDtos.LoginRequest;
-import com.discordadmin.dto.AuthDtos.LoginResponse;
 import com.discordadmin.entity.Agent;
-import com.discordadmin.entity.Merchant;
 import com.discordadmin.entity.Role;
 import com.discordadmin.entity.SysFeature;
+import com.discordadmin.entity.Merchant;
 import com.discordadmin.repository.AgentRepository;
-import com.discordadmin.repository.MerchantRepository;
 import com.discordadmin.repository.RoleRepository;
 import com.discordadmin.repository.SysFeatureRepository;
+import com.discordadmin.repository.MerchantRepository;
 import com.discordadmin.security.JwtAuthFilter;
 import com.discordadmin.security.JwtUtil;
 import com.discordadmin.security.SecurityUtils;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @RestController
 @RequestMapping("/api/auth")
+@RequiredArgsConstructor
 public class AuthController {
 
     private final AgentRepository agentRepository;
+    private final RoleRepository roleRepository;
+    private final SysFeatureRepository featureRepository;
     private final MerchantRepository merchantRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
-    private final RoleRepository roleRepository;
-    private final SysFeatureRepository featureRepository;
 
-    public AuthController(AgentRepository agentRepository,
-                          MerchantRepository merchantRepository,
-                          PasswordEncoder passwordEncoder,
-                          JwtUtil jwtUtil,
-                          RoleRepository roleRepository,
-                          SysFeatureRepository featureRepository) {
-        this.agentRepository = agentRepository;
-        this.merchantRepository = merchantRepository;
-        this.passwordEncoder = passwordEncoder;
-        this.jwtUtil = jwtUtil;
-        this.roleRepository = roleRepository;
-        this.featureRepository = featureRepository;
-    }
+    public record LoginRequest(String username, String password) {}
+    public record LoginResponse(String token, Long agentId, String username,
+                                String displayName, Integer accountType,
+                                Long merchantId, String merchantName,
+                                List<String> permissions) {}
 
     @PostMapping("/login")
     public LoginResponse login(@RequestBody LoginRequest request) {
         Agent agent = agentRepository.findByUsername(request.username())
                 .orElseThrow(() -> new IllegalArgumentException("用户名或密码错误"));
 
-        if (agent.getEnabled() == null || !agent.getEnabled()) {
-            throw new IllegalArgumentException("账号已被禁用");
+        if (agent.getEnabled() != null && !agent.getEnabled()) {
+            throw new IllegalArgumentException("账号已禁用");
         }
 
         if (!passwordEncoder.matches(request.password(), agent.getPasswordHash())) {
@@ -162,7 +151,11 @@ public class AuthController {
                 
                 // 递归构建子菜单
                 List<Map<String, Object>> children = buildMenuTree(features, f.getId());
-                node.put("children", children);
+                // 过滤掉没有路径的叶子子菜单（这些只是权限标识，不是真正的菜单项）
+                List<Map<String, Object>> validChildren = children.stream()
+                    .filter(child -> child.get("path") != null || !child.containsKey("children") || ((List<?>) child.get("children")).size() > 0)
+                    .collect(Collectors.toList());
+                node.put("children", validChildren);
                 return node;
             })
             .sorted((a, b) -> ((Integer) a.get("sortOrder")).compareTo((Integer) b.get("sortOrder")))
@@ -199,14 +192,10 @@ public class AuthController {
                         return roleInfo;
                     })
                     .collect(Collectors.toList());
-                result.put("assignedRoles", roles);
+                result.put("roles", roles);
+            } else {
+                result.put("roles", Collections.emptyList());
             }
-        }
-
-        if (agent.merchantId() != null) {
-            merchantRepository.findById(agent.merchantId()).ifPresent(m -> {
-                result.put("merchantName", m.getName());
-            });
         }
 
         return result;
@@ -265,7 +254,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "system", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "friend-list", "friend-config", "ai-settings", "users", "roles", "features", "audit"
+            "friend-manage", "ai-settings", "users", "roles", "features", "audit"
         );
     }
 
@@ -273,7 +262,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "friend-list", "friend-config", "ai-settings", "audit"
+            "friend-manage", "ai-settings", "audit"
         );
     }
 
@@ -281,21 +270,21 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "friend-list", "friend-config", "ai-settings", "audit"
+            "friend-manage", "ai-settings", "audit"
         );
     }
 
     private List<String> getSalesPermissions() {
         return List.of(
             "dashboard", "chat", "customer", "service",
-            "accounts", "customers", "guild-members", "friend-manage", "friend-list", "account-numbers"
+            "accounts", "customers", "guild-members", "friend-manage", "account-numbers"
         );
     }
 
     private List<String> getServicePermissions() {
         return List.of(
             "chat", "customer", "service",
-            "accounts", "customers", "friend-manage", "friend-list", "account-numbers"
+            "accounts", "customers", "friend-manage", "account-numbers"
         );
     }
 }
