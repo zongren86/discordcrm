@@ -599,6 +599,11 @@
             </div>
           </div>
 
+          <!-- 查看最新消息按钮 -->
+          <div v-if="showJumpToBottom" class="jump-to-bottom-btn" @click="jumpToBottom">
+            <el-icon><ArrowDown /></el-icon>
+            <span>查看最新消息</span>
+          </div>
           <div ref="scrollAnchor" style="height:1px;"></div>
         </el-scrollbar>
 
@@ -731,15 +736,14 @@
                 </div>
                 <div class="translation-preview-translated">
                   <span class="preview-label">译文：</span>
-                  <span>{{ translationPreviewText }}</span>
+                  <el-input v-model="translationPreviewText" type="textarea" :rows="2" placeholder="译文（可直接编辑）" resize="none" />
                 </div>
                 <div class="translation-preview-hint">
-                  发送时将以译文内容发送，确认发送吗？
+                  可直接编辑译文，确认后以译文内容发送
                 </div>
               </div>
             </div>
             <div class="translation-preview-actions">
-              <el-button size="small" @click="editTranslationPreview" :disabled="translationPreviewLoading">编辑原文</el-button>
               <el-button size="small" type="primary" @click="confirmTranslationPreview" :disabled="translationPreviewLoading">确认发送</el-button>
             </div>
           </div>
@@ -1032,6 +1036,13 @@ const conversations = useConversationsStore()
 
 const msgScrollRef = ref(null)
 const scrollAnchor = ref(null)
+
+/** 滚动事件处理：当用户手动滚动到底部时，隐藏"查看最新消息"按钮 */
+function handleScroll() {
+  if (isNearBottom(50)) {
+    showJumpToBottom.value = false
+  }
+}
 const fileInputRef = ref(null)
 
 const convSearch = ref('')
@@ -1058,6 +1069,14 @@ const sendingGif = ref(false)  // 防止重复提交GIF/Sticker
 const currentAccountId = computed(() => {
   if (!conversations.currentConversation) return null
   return conversations.currentConversation.discordAccountId
+})
+
+// 有效的账号ID：优先使用当前会话的账号，其次是筛选选择的账号，最后用第一个可用账号
+const effectiveAccountId = computed(() => {
+  if (currentAccountId.value) return currentAccountId.value
+  if (selectedAccountId.value) return selectedAccountId.value
+  if (accounts.accounts && accounts.accounts.length > 0) return accounts.accounts[0].id
+  return null
 })
 const datePopoverVisible = ref(false)
 
@@ -2076,10 +2095,12 @@ function isStickerJsonUrl(url) {
 const pickerLottieInstances = new Map()
 
 /** 打开 GIF/Sticker 选择器 */
-function openGifPicker(mode) {
+async function openGifPicker(mode) {
   gifPickerMode.value = mode
   gifPickerTab.value = mode === 'sticker' ? 'stickerFavorites' : 'gifFavorites'
   gifPickerVisible.value = true
+  // 主动加载收藏列表（确保无会话时也能显示收藏）
+  await loadGifFavorites()
 }
 
 /** 销毁所有 Sticker 收藏 Tab 的 Lottie 实例（弹窗关闭时释放） */
@@ -2182,7 +2203,7 @@ async function handleStickerFavorite(sticker) {
     }
     
     // 保存收藏（带或不带 convertedGifUrl）
-    await addGifFavorite(currentAccountId.value, url, sticker.name || 'Sticker', 'sticker', convertedGifUrl)
+    await addGifFavorite(effectiveAccountId.value, url, sticker.name || 'Sticker', 'sticker', convertedGifUrl)
     await loadGifFavorites()
     ElMessage.success(convertedGifUrl ? '已收藏（动图已生成）' : '已收藏')
   } catch (e) {
@@ -2630,11 +2651,12 @@ function onGifError(e) {
 
 /** 加载当前账号的 GIF 收藏列表 */
 async function loadGifFavorites() {
-  if (!currentAccountId.value) return
+  const accountId = effectiveAccountId.value
+  if (!accountId) return
   try {
     const [gifRes, stickerRes] = await Promise.all([
-      listGifFavorites(currentAccountId.value, 'gif'),
-      listGifFavorites(currentAccountId.value, 'sticker')
+      listGifFavorites(accountId, 'gif'),
+      listGifFavorites(accountId, 'sticker')
     ])
     stickerFavorites.value = stickerRes || []
     gifFavorites.value = gifRes || []
@@ -2664,7 +2686,8 @@ function normalizeGifUrlLocal(url) {
 
 /** 收藏 GIF */
 async function handleFavoriteGif(msg) {
-  if (!currentAccountId.value) {
+  const accountId = effectiveAccountId.value
+  if (!accountId) {
     ElMessage.warning('请先选择一个账号')
     return
   }
@@ -2673,7 +2696,7 @@ async function handleFavoriteGif(msg) {
   
   try {
     const normalizedUrl = normalizeGifUrlLocal(url)
-    await addGifFavorite(currentAccountId.value, normalizedUrl, '', 'gif')
+    await addGifFavorite(accountId, normalizedUrl, '', 'gif')
     ElMessage.success('已收藏')
     await loadGifFavorites()
   } catch (e) {
@@ -3100,6 +3123,12 @@ async function scrollToBottom({ force = false, retries = 0 } = {}) {
   }
 }
 
+/** 跳转到最新消息 */
+function jumpToBottom() {
+  showJumpToBottom.value = false
+  scrollToBottom({ force: true })
+}
+
 function onInputKeydown(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
@@ -3170,8 +3199,19 @@ async function send() {
 }
 
 let lastCount = 0
+const showJumpToBottom = ref(false)  // 是否显示"查看最新消息"按钮
+
 watch(() => conversations.currentMessages.length, (cnt) => {
-  if (cnt > lastCount) scrollToBottom()
+  if (cnt > lastCount) {
+    // 如果用户在底部 300px 以内，自动滚动到底部
+    if (isNearBottom(300)) {
+      scrollToBottom({ force: true })
+      showJumpToBottom.value = false
+    } else {
+      // 否则显示"查看最新消息"按钮
+      showJumpToBottom.value = true
+    }
+  }
   lastCount = cnt
   // 更新检测语言
   updateDetectedLang()
@@ -4181,6 +4221,8 @@ async function onAISettingsUpdated(event) {
 }
 
 onMounted(async () => {
+  // 添加滚动监听
+  document.addEventListener('scroll', handleScroll, true);
   try { await accounts.fetchAccounts() } catch (e) {}
 
   try { await conversations.fetchConversations() } catch (e) {}
@@ -4201,6 +4243,8 @@ watch(() => accounts.accounts.length, async (newLen, oldLen) => {
 })
 
 onUnmounted(() => {
+  // 移除滚动监听
+  document.removeEventListener('scroll', handleScroll, true);
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (convPollTimer) { clearInterval(convPollTimer); convPollTimer = null }
   // 移除AI配置更新事件监听
