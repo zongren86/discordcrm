@@ -108,22 +108,67 @@ class MuMuController {
             console.error('[MuMu] 错误: mumuPath 路径不存在:', config.mumuPath);
             throw new Error('mumuPath 路径不存在: ' + config.mumuPath);
         }
+        this.mumuAppPath = config.mumuPath;
+
         try {
             const stat = fs.statSync(config.mumuPath);
             if (stat.isDirectory()) {
-                console.error('[MuMu] 错误: mumuPath 是目录而非文件:', config.mumuPath);
-                console.error('[MuMu] 请设置可执行文件的完整路径, 如: C:\\...\\MuMuNxMain.exe');
-                throw new Error('mumuPath 是目录, 请设置可执行文件完整路径');
+                if (config.mumuPath.endsWith('.app')) {
+                    const appName = path.basename(config.mumuPath, '.app');
+                    const macOsDir = path.join(config.mumuPath, 'Contents', 'MacOS');
+                    if (fs.existsSync(macOsDir) && fs.statSync(macOsDir).isDirectory()) {
+                        const files = fs.readdirSync(macOsDir);
+                        const candidates = [
+                            appName,
+                            'mumutool',
+                            'mumu-cli',
+                        ];
+                        let resolved = null;
+                        for (const candidate of candidates) {
+                            const candidatePath = path.join(macOsDir, candidate);
+                            if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
+                                resolved = candidatePath;
+                                break;
+                            }
+                        }
+                        if (!resolved) {
+                            for (const file of files) {
+                                const filePath = path.join(macOsDir, file);
+                                try {
+                                    if (fs.statSync(filePath).isFile() && (file === appName || file.toLowerCase().includes('mumu'))) {
+                                        resolved = filePath;
+                                        break;
+                                    }
+                                } catch (_) {}
+                            }
+                        }
+                        if (resolved) {
+                            console.log('[MuMu] 检测到 macOS .app bundle, 解析可执行文件:', resolved);
+                            this.mumuPath = resolved;
+                        } else {
+                            console.error('[MuMu] 错误: 在 .app bundle 的 Contents/MacOS/ 中未找到可执行文件');
+                            throw new Error('mumuPath 是 .app bundle, 但未找到可执行文件');
+                        }
+                    } else {
+                        console.error('[MuMu] 错误: .app bundle 中未找到 Contents/MacOS/ 目录');
+                        throw new Error('mumuPath 是 .app bundle, 但结构无效');
+                    }
+                } else {
+                    console.error('[MuMu] 错误: mumuPath 是目录而非文件:', config.mumuPath);
+                    console.error('[MuMu] 请设置可执行文件的完整路径, 如: C:\\...\\MuMuNxMain.exe');
+                    throw new Error('mumuPath 是目录, 请设置可执行文件完整路径');
+                }
+            } else {
+                this.mumuPath = config.mumuPath;
             }
         } catch (e) {
-            if (e.message.includes('目录')) {
+            if (e.message.includes('目录') || e.message.includes('.app')) {
                 throw e;
             }
             console.error('[MuMu] 错误: 无法访问 mumuPath:', e.message);
             throw new Error('mumuPath 无效: ' + e.message);
         }
-        console.log('[MuMu] 使用配置中的 mumuPath:', config.mumuPath);
-        this.mumuPath = config.mumuPath;
+        console.log('[MuMu] 使用配置中的 mumuPath:', this.mumuPath);
         
         if (!config.adbPath) {
             console.error('[MuMu] 错误: config.json 中未配置 adbPath');
@@ -308,9 +353,10 @@ class MuMuController {
         }
         
         if (os === 'darwin') {
-            candidates.push(`${this.mumuPath}/Contents/MacOS/mumutool`);
-            candidates.push(`${this.mumuPath}/Contents/MacOS/mumu-cli`);
-            candidates.push(`${this.mumuPath}/Contents/MacOS/`);
+            const mumuBase = this.mumuAppPath || this.mumuPath;
+            candidates.push(`${mumuBase}/Contents/MacOS/mumutool`);
+            candidates.push(`${mumuBase}/Contents/MacOS/mumu-cli`);
+            candidates.push(`${mumuBase}/Contents/MacOS/`);
         } else if (os === 'win32') {
             // Windows 下尝试多个可能的路径（基于 MuMu 安装根目录）
             if (mumuBasePath) {
@@ -480,12 +526,12 @@ class MuMuController {
         const command = path.basename(this.mumutoolPath);
         console.log(`[MuMu] 执行 ${command} ${args.join(' ')}`);
         try {
-            // 使用 execFileSync 传递数组参数，避免 shell 吃掉 JSON 中的引号
+            // 关键: 不使用 shell 模式，避免路径包含空格时被截断
+            // execFileSync 传递数组参数，能正确处理带空格的路径
             const result = execFileSync(this.mumutoolPath, args, { 
                 timeout: timeout, 
                 encoding: 'utf8', 
-                stdio: ['pipe', 'pipe', 'pipe'],
-                shell: process.platform === 'win32'  // Windows 需要 shell 模式
+                stdio: ['pipe', 'pipe', 'pipe']
             });
             console.log(`[MuMu] ${command} 返回: ${result.trim().substring(0, 200)}`);
             try {
@@ -515,44 +561,125 @@ class MuMuController {
         }
     }
 
+    extractEmulatorList(result) {
+        if (!result || typeof result !== 'object') return null;
+
+        if (result.return && Array.isArray(result.return.results)) {
+            console.log('[MuMu] 匹配格式: result.return.results (array)');
+            return result.return.results;
+        }
+
+        if (Array.isArray(result.return)) {
+            console.log('[MuMu] 匹配格式: result.return (array)');
+            return result.return;
+        }
+
+        if (result.data && Array.isArray(result.data.results)) {
+            console.log('[MuMu] 匹配格式: result.data.results (array)');
+            return result.data.results;
+        }
+
+        if (Array.isArray(result.data)) {
+            console.log('[MuMu] 匹配格式: result.data (array)');
+            return result.data;
+        }
+
+        if (result.data && Array.isArray(result.data.return)) {
+            console.log('[MuMu] 匹配格式: result.data.return (array)');
+            return result.data.return;
+        }
+
+        if (result.return && typeof result.return === 'object' && !Array.isArray(result.return) && result.return.index !== undefined) {
+            console.log('[MuMu] 匹配格式: result.return (single object with index)');
+            return [result.return];
+        }
+
+        if (result.data && typeof result.data === 'object' && !Array.isArray(result.data) && result.data.index !== undefined) {
+            console.log('[MuMu] 匹配格式: result.data (single object with index)');
+            return [result.data];
+        }
+
+        for (const key of Object.keys(result)) {
+            const val = result[key];
+            if (val && typeof val === 'object') {
+                if (Array.isArray(val)) {
+                    if (val.length > 0 && val[0] && (val[0].index !== undefined || val[0].adb_port !== undefined || val[0].state !== undefined)) {
+                        console.log('[MuMu] 匹配格式: 递归搜索 result.' + key + ' (array)');
+                        return val;
+                    }
+                } else {
+                    for (const subKey of Object.keys(val)) {
+                        const subVal = val[subKey];
+                        if (Array.isArray(subVal) && subVal.length > 0 && subVal[0] && (subVal[0].index !== undefined || subVal[0].adb_port !== undefined || subVal[0].state !== undefined)) {
+                            console.log('[MuMu] 匹配格式: 递归搜索 result.' + key + '.' + subKey + ' (array)');
+                            return subVal;
+                        }
+                    }
+                }
+            }
+        }
+
+        console.warn('[MuMu] 未能匹配任何已知格式');
+        return null;
+    }
+
     async getEmulators() {
         const emulators = [];
         try {
             if (this.mumutoolPath) {
                 console.log(`[MuMu] 使用 mumutool 获取模拟器列表`);
                 const result = await this.execMumutool(['info', 'all']);
-                if (result.errcode === 0 && result.return) {
-                    for (const item of result.return.results) {
-                        const index = item.index;
-                        let status = 'STOPPED';
-                        if (item.state === 'running') {
-                            status = 'RUNNING';
-                            if (item.adb_port) {
-                                await this.connectAdb(item.adb_port);
+                console.log(`[MuMu] mumutool info all 返回结构: errcode=${result.errcode}, 包含字段: ${Object.keys(result).join(', ')}`);
+
+                if (result.errcode === 0) {
+                    const emulatorList = this.extractEmulatorList(result);
+
+                    if (emulatorList && emulatorList.length > 0) {
+                        console.log(`[MuMu] 解析到 ${emulatorList.length} 个模拟器条目`);
+                        for (const item of emulatorList) {
+                            const index = item.index;
+                            if (index === undefined || index === null) {
+                                console.warn(`[MuMu] 跳过无 index 的条目:`, JSON.stringify(item).substring(0, 200));
+                                continue;
                             }
-                        }
-                        // 读取 vm.json 获取 CPU/内存配置
-                        let cpuCount = 1;
-                        let memoryMB = 1024;
-                        try {
-                            const vmConfig = this.readVmConfig(index);
-                            if (vmConfig) {
-                                if (vmConfig.vmCpuCount > 0) cpuCount = vmConfig.vmCpuCount;
-                                if (vmConfig.vmMemoryOfMB > 0) memoryMB = vmConfig.vmMemoryOfMB;
+                            let status = 'STOPPED';
+                            if (item.state === 'running') {
+                                status = 'RUNNING';
+                                if (item.adb_port) {
+                                    await this.connectAdb(item.adb_port);
+                                }
                             }
-                        } catch (e) {
-                            // 忽略读取错误，使用默认值
+                            let cpuCount = 1;
+                            let memoryMB = 1024;
+                            let vmConfigOk = false;
+                            try {
+                                const vmConfig = this.readVmConfig(index);
+                                if (vmConfig) {
+                                    if (vmConfig.vmCpuCount > 0) { cpuCount = vmConfig.vmCpuCount; vmConfigOk = true; }
+                                    if (vmConfig.vmMemoryOfMB > 0) { memoryMB = vmConfig.vmMemoryOfMB; vmConfigOk = true; }
+                                }
+                            } catch (e) {
+                                console.warn(`[MuMu] 读取 vm.json 失败 (index=${index}): ${e.message}`);
+                            }
+                            if (!vmConfigOk) {
+                                if (item.vmCpuCount && item.vmCpuCount > 0) cpuCount = item.vmCpuCount;
+                                if (item.vmMemoryOfMB && item.vmMemoryOfMB > 0) memoryMB = item.vmMemoryOfMB;
+                            }
+                            emulators.push({
+                                index,
+                                adbPort: item.adb_port || (16384 + index * 32),
+                                status,
+                                name: item.name || item.vmName || `V${String(index + 1).padStart(3, '0')}`,
+                                cpuCount,
+                                memoryMB
+                            });
                         }
-                        emulators.push({
-                            index,
-                            adbPort: item.adb_port || (16384 + index * 32),
-                            status,
-                            name: item.name || `V${String(index + 1).padStart(3, '0')}`,
-                            cpuCount,
-                            memoryMB
-                        });
+                        return emulators;
+                    } else {
+                        console.warn(`[MuMu] mumutool 返回成功但未解析到模拟器列表, 原始返回:`, JSON.stringify(result).substring(0, 300));
                     }
-                    return emulators;
+                } else {
+                    console.warn(`[MuMu] mumutool 返回错误: errcode=${result.errcode}, message=${result.message || 'N/A'}`);
                 }
             }
 
@@ -651,10 +778,9 @@ class MuMuController {
                                     }
                                 }
                             } catch (e) {
-                                // 忽略单个文件读取错误
                             }
                         }
-                        if (emulators.length > 0) break; // 找到就不再搜索其他目录
+                        if (emulators.length > 0) break;
                     }
                 }
                 console.log(`[MuMu] 通过vm.json扫描找到 ${emulators.length} 个模拟器`);
@@ -1032,7 +1158,7 @@ const HEARTBEAT_INTERVAL = 30000;
 const RECONNECT_DELAY = 5000;
 
 const deviceId = getOrCreateDeviceId();
-const mumu = new MuMuController();
+let mumu = null;
 
 function connect() {
     const serverUrl = config.serverUrl || 'ws://localhost:8090/ws/agent';
@@ -1501,18 +1627,45 @@ async function handleMessage(msg) {
                         }
                     }
                     
-                    // 返回结果
+
+                    // 返回结果 - 包含完整的模拟器列表供后端使用
+                    // 创建后获取最新模拟器列表，确保后端能获取到实际配置
+                    let allEmulators = [];
+                    try {
+                        allEmulators = await mumu.getEmulators();
+                        console.log(`[Agent] 创建后获取到 ${allEmulators.length} 个模拟器`);
+                    } catch (e) {
+                        console.warn(`[Agent] 创建后获取模拟器列表失败: ${e.message}`);
+                    }
+
+                    // 将结果与完整模拟器数据合并
+                    const enrichedResults = results.map(r => {
+                        const fullData = allEmulators.find(e => e.index === r.index);
+                        if (fullData) {
+                            return {
+                                ...r,
+                                cpuCount: fullData.cpuCount,
+                                memoryMB: fullData.memoryMB,
+                                status: fullData.status,
+                                adbPort: fullData.adbPort,
+                                name: fullData.name
+                            };
+                        }
+                        return r;
+                    });
+
                     send({
                         type: 'TASK_RESULT',
                         taskId: msg.taskId,
                         params: { status: failCount === 0 ? 'SUCCESS' : (successCount > 0 ? 'PARTIAL' : 'FAILED') },
-                        data: { 
-                            success: successCount > 0, 
+                        data: {
+                            success: successCount > 0,
                             message: `创建完成: 成功${successCount}个, 失败${failCount}个`,
                             successCount,
                             failCount,
                             total: neededCount,
-                            results
+                            results: enrichedResults,
+                            emulators: allEmulators
                         }
                     });
                 } catch (e) {
@@ -1694,6 +1847,7 @@ function main() {
     console.log(`[Agent] Device ID: ${deviceId}`);
     console.log(`[Agent] 平台: ${process.platform}`);
     
+    mumu = new MuMuController();
     connect();
     
     // 优雅退出

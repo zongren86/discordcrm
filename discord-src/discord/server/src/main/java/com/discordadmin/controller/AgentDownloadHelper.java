@@ -103,16 +103,16 @@ public class AgentDownloadHelper {
                 "- macOS: /Users/xxx/Library/Android/sdk/platform-tools/adb\n\n" +
                 "### 配置示例 (Windows):\n" +
                 "{\n" +
-                '  "version": "v2.1.0",\n' +
-                '  "userId": "merchantadmin2",\n' +
-                '  "merchantId": 5,\n' +
-                '  "serverUrl": "ws://服务器IP:8090/ws/agent",\n' +
-                '  "platforms": {\n' +
-                '    "win32": {\n' +
-                '      "mumuPath": "C:\\\\Program Files\\\\Netease\\\\MuMu\\\\nx_main\\\\MuMuNxMain.exe",\n' +
-                '      "adbPath": "C:\\\\Program Files\\\\Netease\\\\MuMu\\\\nx_main\\\\adb.exe"\n' +
-                '    }\n' +
-                '  }\n' +
+                "  \"version\": \"v2.1.0\",\n" +
+                "  \"userId\": \"merchantadmin2\",\n" +
+                "  \"merchantId\": 5,\n" +
+                "  \"serverUrl\": \"ws://服务器IP:8090/ws/agent\",\n" +
+                "  \"platforms\": {\n" +
+                "    \"win32\": {\n" +
+                "      \"mumuPath\": \"C:\\\\Program Files\\\\Netease\\\\MuMu\\\\nx_main\\\\MuMuNxMain.exe\",\n" +
+                "      \"adbPath\": \"C:\\\\Program Files\\\\Netease\\\\MuMu\\\\nx_main\\\\adb.exe\"\n" +
+                "    }\n" +
+                "  }\n" +
                 "}\n\n" +
                 "## 首次使用\n" +
                 "1. 解压下载的 zip 包\n" +

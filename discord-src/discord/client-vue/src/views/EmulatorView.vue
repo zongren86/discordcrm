@@ -409,16 +409,16 @@
               @click="repairEmulator(row.index)"
             >一键修复</el-button>
             <el-button
-              v-if="!row.autoRunning && row.discordInstalled && !isAutoStarting(row.index)"
+              v-if="row.status === 'RUNNING' && !row.autoRunning && row.discordInstalled && !isAutoStarting(row.index)"
               size="small" link type="primary"
               @click="startAuto(row.index)"
             >自动加好友</el-button>
             <el-button
-              v-else-if="!row.autoRunning && row.discordInstalled && isAutoStarting(row.index)"
+              v-else-if="row.status === 'RUNNING' && !row.autoRunning && row.discordInstalled && isAutoStarting(row.index)"
               size="small" link type="primary" disabled
             >加好友启动中</el-button>
             <el-button
-              v-else-if="row.autoRunning"
+              v-else-if="row.status === 'RUNNING' && row.autoRunning"
               size="small" link type="primary"
               @click="stopAuto(row.index)"
             >停止添加</el-button>
@@ -499,7 +499,7 @@
         </el-table-column>
         <el-table-column label="下次添加时间" width="110">
           <template #default="{ row }">
-            <span v-if="row.nextAddAt && row.autoRunning" style="color: #409eff; font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
+            <span v-if="row.nextAddAt && row.status === 'RUNNING' && row.autoRunning" style="color: #409eff; font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
             <span v-else style="color: #909399; font-size: 12px">-</span>
           </template>
         </el-table-column>
@@ -510,7 +510,7 @@
                 运行中
               </div>
               <div v-else style="color: #909399; font-size: 12px">
-                {{ row.autoRunning ? '已启动(等待)' : '未启动' }}
+                {{ (row.status === 'RUNNING' && row.autoRunning) ? '已启动(等待)' : '未启动' }}
               </div>
               <div class="fs-stats" v-if="(row.assignedCount || 0) > 0 || (row.successCount || 0) > 0 || (row.failedCount || 0) > 0">
                 <span class="fs-tag fs-assigned">已分配: {{ row.assignedCount || 0 }}</span>

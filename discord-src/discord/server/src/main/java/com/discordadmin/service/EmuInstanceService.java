@@ -89,10 +89,15 @@ public class EmuInstanceService {
         if (!localMode) {
             try {
                 List<Map<String, Object>> physicalEmulators = webSocketService.getEmulatorsFromAgent(userId);
-                if (physicalEmulators != null) {
+                if (physicalEmulators != null && !physicalEmulators.isEmpty()) {
                     syncDatabaseWithPhysical(merchantId, userId, instances, physicalEmulators);
                     // 重新查询
                     instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+                    log.info("同步后数据库有 {} 条记录", instances.size());
+                } else if (physicalEmulators != null && physicalEmulators.isEmpty()) {
+                    log.warn("Agent 返回空列表，可能没有物理模拟器");
+                } else {
+                    log.warn("Agent 不在线，跳过自动同步，使用现有数据库记录");
                 }
             } catch (Exception e) {
                 log.warn("自动同步物理模拟器失败: {}", e.getMessage());
@@ -128,6 +133,10 @@ public class EmuInstanceService {
         List<Map<String, Object>> physicalList = null;
         try {
             physicalList = localMode ? mumuClientService.getAllEmulatorsWithError() : webSocketService.getEmulatorsFromAgent(userId);
+            if (physicalList != null && physicalList.isEmpty()) {
+                log.warn("物理模拟器列表为空");
+                physicalList = null; // 视为空列表，不合并
+            }
         } catch (Exception e) {
             log.warn("无法获取物理模拟器列表: {}", e.getMessage());
         }
@@ -452,28 +461,68 @@ public class EmuInstanceService {
                     Map<String, Object> result = future.get(180, TimeUnit.SECONDS);
                     log.info("Agent {} 创建模拟器结果: status={}", agent.getDeviceId(), result.get("status"));
                     
-                    if ("SUCCESS".equals(result.get("status"))) {
+                    if ("SUCCESS".equals(result.get("status")) || "PARTIAL".equals(result.get("status"))) {
                         physicalSuccess = true;
                         createMethod = "agent";
                         // 尝试从结果中获取模拟器列表
-                        Object data = result.get("data");
-                        if (data instanceof List) {
+                        // 注意: handleTaskResult 会将 data 字段展开到 result 顶层（putAll）
+                        // 所以需要同时兼容顶层和嵌套两种格式
+                        
+                        // 方式1: 直接从顶层读取 emulators 列表
+                        Object emulatorsTop = result.get("emulators");
+                        if (emulatorsTop instanceof List) {
                             @SuppressWarnings("unchecked")
-                            List<Map<String, Object>> agentList = (List<Map<String, Object>>) data;
+                            List<Map<String, Object>> agentList = (List<Map<String, Object>>) emulatorsTop;
                             if (agentList != null && !agentList.isEmpty()) {
                                 physicalList = agentList;
-                                log.info("Agent 返回 {} 个模拟器", physicalList.size());
+                                log.info("Agent 返回 {} 个模拟器 (从顶层emulators)", physicalList.size());
                             }
-                        } else if (data instanceof Map) {
-                            // Agent 返回的是 { success, message, results: [...] } 结构
-                            Map<?, ?> dataMap = (Map<?, ?>) data;
-                            Object results = dataMap.get("results");
-                            if (results instanceof List) {
+                        }
+                        
+                        // 方式2: 直接从顶层读取 results 列表
+                        if (physicalList == null) {
+                            Object resultsTop = result.get("results");
+                            if (resultsTop instanceof List) {
                                 @SuppressWarnings("unchecked")
-                                List<Map<String, Object>> agentList = (List<Map<String, Object>>) results;
+                                List<Map<String, Object>> agentList = (List<Map<String, Object>>) resultsTop;
                                 if (agentList != null && !agentList.isEmpty()) {
                                     physicalList = agentList;
-                                    log.info("Agent 返回 {} 个模拟器 (从results)", physicalList.size());
+                                    log.info("Agent 返回 {} 个模拟器 (从顶层results)", physicalList.size());
+                                }
+                            }
+                        }
+                        
+                        // 方式3: 兼容旧格式（data 嵌套在 data 字段下）
+                        if (physicalList == null) {
+                            Object data = result.get("data");
+                            if (data instanceof List) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> agentList = (List<Map<String, Object>>) data;
+                                if (agentList != null && !agentList.isEmpty()) {
+                                    physicalList = agentList;
+                                    log.info("Agent 返回 {} 个模拟器 (从data)", physicalList.size());
+                                }
+                            } else if (data instanceof Map) {
+                                Map<?, ?> dataMap = (Map<?, ?>) data;
+                                Object emulators = dataMap.get("emulators");
+                                if (emulators instanceof List) {
+                                    @SuppressWarnings("unchecked")
+                                    List<Map<String, Object>> agentList = (List<Map<String, Object>>) emulators;
+                                    if (agentList != null && !agentList.isEmpty()) {
+                                        physicalList = agentList;
+                                        log.info("Agent 返回 {} 个模拟器 (从data.emulators)", physicalList.size());
+                                    }
+                                }
+                                if (physicalList == null) {
+                                    Object results = dataMap.get("results");
+                                    if (results instanceof List) {
+                                        @SuppressWarnings("unchecked")
+                                        List<Map<String, Object>> agentList = (List<Map<String, Object>>) results;
+                                        if (agentList != null && !agentList.isEmpty()) {
+                                            physicalList = agentList;
+                                            log.info("Agent 返回 {} 个模拟器 (从data.results)", physicalList.size());
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -697,6 +746,7 @@ public class EmuInstanceService {
             instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", dbIndex));
             instance.setInstanceIndex(dbIndex);
             instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
+            // 创建时严格使用用户传入的 CPU/内存参数
             instance.setCpuCores(cpuCores);
             instance.setMemoryGb(memoryGb);
             instance.setResolution("720x1280");
@@ -783,6 +833,7 @@ public class EmuInstanceService {
             instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", mumuIndex + 1));
             instance.setInstanceIndex(mumuIndex + 1);
             instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
+            // 创建时严格使用用户传入的 CPU/内存参数
             instance.setCpuCores(cpuCores);
             instance.setMemoryGb(memoryGb);
             instance.setResolution("720x1280");
@@ -864,6 +915,7 @@ public class EmuInstanceService {
                     existing.setStatus(physStatus);
                     needUpdate = true;
                 }
+                // 同步模式：从物理实例读取实际配置更新数据库
                 if (physCpu != existing.getCpuCores()) {
                     existing.setCpuCores(physCpu);
                     needUpdate = true;
@@ -891,6 +943,7 @@ public class EmuInstanceService {
                 inst.setName(physName != null ? physName : "V" + String.format("%03d", dbIndex));
                 inst.setInstanceIndex(dbIndex);
                 inst.setStatus(physStatus);
+                // 同步模式：新记录使用物理实例实际配置
                 inst.setCpuCores(physCpu);
                 inst.setMemoryGb(physMem);
                 inst.setResolution("720x1280");
@@ -1038,8 +1091,9 @@ public class EmuInstanceService {
             }
         });
 
-        // 先更新状态为运行中
+        // 先更新状态为运行中，重置自动加好友状态
         instance.setStatus(EmuInstance.EmuStatus.RUNNING);
+        instance.setAutoRunning(false);
         instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());
         instanceRepository.save(instance);
@@ -1142,8 +1196,9 @@ public class EmuInstanceService {
             }
         });
 
-        // 先更新状态为运行中
+        // 先更新状态为运行中，重置自动加好友状态
         instance.setStatus(EmuInstance.EmuStatus.RUNNING);
+        instance.setAutoRunning(false);
         instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());
         instanceRepository.save(instance);
@@ -1202,6 +1257,7 @@ public class EmuInstanceService {
                         if (inst != null) {
                             if (success) {
                                 inst.setStatus(EmuInstance.EmuStatus.RUNNING);
+                                inst.setAutoRunning(false);
                                 inst.setLastError(null);
                                 successCount++;
                                 log.info("模拟器 #{} 启动成功", idx);
