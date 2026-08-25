@@ -168,12 +168,14 @@ public class AgentDownloadHelper {
         if (files == null) return;
         
         for (File file : files) {
-            if (file.getName().equals("node_modules") || file.getName().startsWith(".") ||
-                file.getName().equals("config.json") ||
-                file.getName().equals("README.txt") ||
-                file.getName().equals("start_mac.command") ||
-                file.getName().equals("start.sh") || file.getName().equals("start.bat") ||
-                file.getName().equals("start_win.bat")) {
+            String fileName = file.getName();
+            if (fileName.equals("node_modules") || fileName.startsWith(".") ||
+                fileName.equals("config.json") ||
+                fileName.startsWith("config_") || fileName.startsWith("config.") ||
+                fileName.equals("README.txt") ||
+                fileName.equals("start_mac.command") ||
+                fileName.equals("start.sh") || fileName.equals("start.bat") ||
+                fileName.equals("start_win.bat")) {
                 continue;
             }
             
