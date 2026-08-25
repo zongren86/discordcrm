@@ -45,6 +45,7 @@ public class AgentDownloadHelper {
             
             // 生成统一的 config.json（包含所有平台配置）
             Map<String, Object> configMap = new LinkedHashMap<>();
+            configMap.put("version", "v2.1.0");
             configMap.put("userId", userId);
             configMap.put("merchantId", merchantId != null ? merchantId : 0);
             configMap.put("serverUrl", "ws://" + serverUrl + "/ws/agent");

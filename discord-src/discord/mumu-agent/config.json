@@ -1,4 +1,5 @@
 {
+  "version": "v2.1.0",
   "userId": "merchantadmin",
   "merchantId": 2,
   "serverUrl": "ws://localhost:8090/ws/agent",
