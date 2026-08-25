@@ -198,7 +198,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     private void handleHeartbeat(WebSocketSession session, Map<String, Object> msg) {
         Map<String, Object> data = (Map<String, Object>) msg.get("data");
         if (data != null) {
-            log.info("收到心跳: data={}", data);
+
             String deviceId = (String) data.get("deviceId");
             if (deviceId != null) {
                 AgentRegistration agent = onlineAgents.get(deviceId);
@@ -810,7 +810,6 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         }
         return false;
     }
-
 
     /**
      * 断开指定 Agent 的连接
