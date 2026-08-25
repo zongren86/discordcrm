@@ -81,7 +81,7 @@ public class AgentDownloadHelper {
             
             // 生成 README
             String readmeContent = 
-                "MuMu Agent v2.0.0 使用说明\n" +
+                "MuMu Agent v2.1.0 使用说明\n" +
                 "========================================\n\n" +
                 "## 快速开始\n\n" +
                 "### macOS 用户:\n" +
@@ -91,24 +91,38 @@ public class AgentDownloadHelper {
                 "## 前置条件\n" +
                 "- Node.js 18+ (https://nodejs.org/)\n" +
                 "- MuMu 模拟器已安装\n\n" +
+                "## 配置 config.json (重要!)\n\n" +
+                "config.json 是唯一配置文件，必须正确配置才能使用。\n\n" +
+                "### mumuPath 配置\n" +
+                "必须设置 MuMu 可执行文件的完整路径:\n\n" +
+                "- Windows: C:\\Program Files\\Netease\\MuMu\\nx_main\\MuMuNxMain.exe\n" +
+                "- macOS: /Applications/MuMuPlayer.app\n\n" +
+                "### adbPath 配置\n" +
+                "必须设置 ADB 可执行文件的完整路径:\n" +
+                "- Windows: C:\\Program Files\\Netease\\MuMu\\nx_main\\adb.exe\n" +
+                "- macOS: /Users/xxx/Library/Android/sdk/platform-tools/adb\n\n" +
+                "### 配置示例 (Windows):\n" +
+                "{\n" +
+                '  "version": "v2.1.0",\n' +
+                '  "userId": "merchantadmin2",\n' +
+                '  "merchantId": 5,\n' +
+                '  "serverUrl": "ws://服务器IP:8090/ws/agent",\n' +
+                '  "platforms": {\n' +
+                '    "win32": {\n' +
+                '      "mumuPath": "C:\\\\Program Files\\\\Netease\\\\MuMu\\\\nx_main\\\\MuMuNxMain.exe",\n' +
+                '      "adbPath": "C:\\\\Program Files\\\\Netease\\\\MuMu\\\\nx_main\\\\adb.exe"\n' +
+                '    }\n' +
+                '  }\n' +
+                "}\n\n" +
                 "## 首次使用\n" +
                 "1. 解压下载的 zip 包\n" +
-                "2. 双击启动脚本:\n" +
+                "2. 修改 config.json 配置\n" +
+                "3. 双击启动脚本:\n" +
                 "   - macOS: start_mac.command\n" +
-                "   - Windows: start_win.bat\n" +
-                "3. 脚本会自动:\n" +
-                "   - 检查 Node.js 环境\n" +
-                "   - 安装依赖 (npm install)\n" +
-                "   - 加载配置文件\n" +
-                "   - 启动 Agent\n\n" +
-                "## 配置说明\n" +
-                "- config.json: 唯一配置文件\n" +
-                "  - 通用配置: userId, serverUrl 等\n" +
-                "  - 平台配置: platforms.darwin/win32/linux\n" +
-                "- 启动时自动根据系统选择平台配置\n\n" +
+                "   - Windows: start_win.bat\n\n" +
                 "## 注意事项\n" +
+                "- mumuPath 必须是可执行文件的完整路径，不是目录\n" +
                 "- 一个账号只能在一台服务器上运行\n" +
-                "- 请确保 MuMu 模拟器版本兼容\n" +
                 "- 如遇问题请查看命令行日志\n";
             
             Set<String> addedEntries = new HashSet<>();
