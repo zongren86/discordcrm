@@ -1,7 +1,7 @@
 {
-  "userId": "merchantadmin2",
-  "merchantId": 5,
-  "serverUrl": "ws://192.168.0.110:8090/ws/agent",
+  "userId": "merchantadmin",
+  "merchantId": 2,
+  "serverUrl": "ws://localhost:8090/ws/agent",
   "heartbeatInterval": 30000,
   "autoStart": true,
   "platforms": {

@@ -159,6 +159,29 @@ class MuMuController {
 
     findAdbPath() {
         const os = process.platform;
+        const mumuPath = config.mumuPath || '';
+
+        // 0. 先尝试从 MuMu 安装目录查找 adb
+        if (mumuPath) {
+            try {
+                let mumuBaseDir = mumuPath;
+                if (fs.existsSync(mumuPath) && fs.statSync(mumuPath).isFile()) {
+                    mumuBaseDir = path.dirname(mumuPath);
+                }
+                // 检查 MuMu 目录下是否有 adb.exe
+                const adbInMumu = path.join(mumuBaseDir, os === 'win32' ? 'adb.exe' : 'adb');
+                if (fs.existsSync(adbInMumu)) {
+                    console.log(`[MuMu] 在 MuMu 目录找到 ADB: ${adbInMumu}`);
+                    return adbInMumu;
+                }
+                // 检查 shell 子目录
+                const adbInShell = path.join(mumuBaseDir, 'shell', os === 'win32' ? 'adb.exe' : 'adb');
+                if (fs.existsSync(adbInShell)) {
+                    console.log(`[MuMu] 在 MuMu/shell 目录找到 ADB: ${adbInShell}`);
+                    return adbInShell;
+                }
+            } catch (e) {}
+        }
 
         // 1. 首先尝试从 PATH 查找
         try {
@@ -250,10 +273,12 @@ class MuMuController {
                     ? path.dirname(mumuBasePath) 
                     : mumuBasePath;
                     
-                candidates.push(path.join(mumuBaseDir, 'shell', 'mumutool.exe'));
-                candidates.push(path.join(mumuBaseDir, 'shell', 'mumu-cli.exe'));
-                candidates.push(path.join(mumuBaseDir, 'mumutool.exe'));
+                // MuMu 新版使用 mumu-cli.exe 作为命令行工具
                 candidates.push(path.join(mumuBaseDir, 'mumu-cli.exe'));
+                candidates.push(path.join(mumuBaseDir, 'shell', 'mumu-cli.exe'));
+                // 旧版使用 mumutool.exe
+                candidates.push(path.join(mumuBaseDir, 'mumutool.exe'));
+                candidates.push(path.join(mumuBaseDir, 'shell', 'mumutool.exe'));
                 candidates.push(mumuBaseDir); // 整个目录
                 
                 // 扫描 mumuBaseDir 及子目录查找工具
@@ -264,7 +289,8 @@ class MuMuController {
                         console.log(`[MuMu] MuMu主目录内容: ${files.join(', ')}`);
                         for (const file of files) {
                             const lowerFile = file.toLowerCase();
-                            if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli')) {
+                            // 匹配 mumutool 或 mumu-cli（注意：mumu-cli 不包含 "mumutool"）
+                            if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli') || lowerFile === 'mumu-cli.exe') {
                                 const fullPath = path.join(mumuBaseDir, file);
                                 candidates.push(fullPath);
                                 console.log(`[MuMu] 发现MuMu工具: ${fullPath}`);
@@ -308,7 +334,7 @@ class MuMuController {
                         const files = fs.readdirSync(altPath);
                         for (const file of files) {
                             const lowerFile = file.toLowerCase();
-                            if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli')) {
+                            if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli') || lowerFile === 'mumu-cli.exe') {
                                 candidates.push(path.join(altPath, file));
                             }
                         }
@@ -318,7 +344,7 @@ class MuMuController {
                             const shellFiles = fs.readdirSync(shellDir);
                             for (const file of shellFiles) {
                                 const lowerFile = file.toLowerCase();
-                                if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli')) {
+                                if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli') || lowerFile === 'mumu-cli.exe') {
                                     candidates.push(path.join(shellDir, file));
                                 }
                             }
@@ -404,34 +430,33 @@ class MuMuController {
 
     async execMumutool(args, timeout = 30000) {
         if (!this.mumutoolPath) {
-            throw new Error('mumutool 未找到');
+            throw new Error('mumu-cli 未找到');
         }
+        const command = path.basename(this.mumutoolPath);
+        console.log(`[MuMu] 执行 ${command} ${args.join(' ')}`);
         try {
             // 使用 execFileSync 传递数组参数，避免 shell 吃掉 JSON 中的引号
-            const result = execFileSync(this.mumutoolPath, args, { timeout, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+            const result = execFileSync(this.mumutoolPath, args, { 
+                timeout: timeout, 
+                encoding: 'utf8', 
+                stdio: ['pipe', 'pipe', 'pipe'],
+                shell: process.platform === 'win32'  // Windows 需要 shell 模式
+            });
+            console.log(`[MuMu] ${command} 返回: ${result.trim().substring(0, 200)}`);
             try {
                 return JSON.parse(result);
             } catch {
                 return { errcode: 0, message: result.trim(), return: null };
             }
         } catch (e) {
-            if (e.stderr) {
-                const errText = e.stderr.toString().trim();
-                try {
-                    return JSON.parse(errText);
-                } catch {
-                    return { errcode: -1, message: errText };
+            const errorMsg = e.stderr ? e.stderr.toString().trim() : e.message;
+            console.error(`[MuMu] ${command} 执行错误: ${errorMsg}`);
+            try {
+                if (errorMsg) {
+                    return JSON.parse(errorMsg);
                 }
-            }
-            if (e.stdout) {
-                const outText = e.stdout.toString().trim();
-                try {
-                    return JSON.parse(outText);
-                } catch {
-                    return { errcode: -1, message: outText };
-                }
-            }
-            throw new Error(`mumutool 执行失败: ${e.message}`);
+            } catch {}
+            return { errcode: -1, message: errorMsg };
         }
     }
 
