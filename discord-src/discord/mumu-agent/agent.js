@@ -96,11 +96,13 @@ function getOrCreateDeviceId() {
 class MuMuController {
     constructor() {
         // 如果配置中没有 mumuPath，则查找
+        console.log('[MuMu] 构造函数: config.mumuPath=' + config.mumuPath + ', config.platforms=' + (config.platforms ? JSON.stringify(Object.keys(config.platforms)) : '无'));
         if (config.mumuPath) {
             console.log('[MuMu] 使用配置中的 mumuPath:', config.mumuPath);
             this.mumuPath = config.mumuPath;
         } else {
             console.warn('[MuMu] 配置中未设置 mumuPath, 自动查找...');
+            console.warn('[MuMu] config 对象 keys:', Object.keys(config));
             this.mumuPath = this.findMuMuPath();
         }
         
@@ -1432,7 +1434,7 @@ async function handleMessage(msg) {
                                 let cmd;
                                 if (os === 'win32') {
                                     // Windows: 使用 start 命令启动 MuMu
-                                    let mumuExe = mumu.mumuPath || config.mumuPath || '';
+                                    let mumuExe = config.mumuPath || mumu.mumuPath || '';
                                     console.log(`[Agent] config.mumuPath=${config.mumuPath}, mumu.mumuPath=${mumu.mumuPath}, 最终使用: ${mumuExe}`);
                                     
                                     // 检查路径是否存在
