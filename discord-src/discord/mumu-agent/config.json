@@ -1,17 +1,17 @@
 {
-  "userId": "merchantadmin",
-  "merchantId": 2,
-  "serverUrl": "ws://localhost:8090/ws/agent",
+  "userId": "merchantadmin2",
+  "merchantId": 5,
+  "serverUrl": "ws://192.168.0.110:8090/ws/agent",
   "heartbeatInterval": 30000,
   "autoStart": true,
   "platforms": {
     "darwin": {
       "mumuPath": "/Applications/MuMuPlayer.app",
-      "adbPath": ""
+      "adbPath": "/Users/worktools/platform-tools/adb"
     },
     "win32": {
-      "mumuPath": "C:\\Program Files\\Netease\\MuMuPlayer-12.0",
-      "adbPath": "C:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe"
+      "mumuPath": "C:\\Program Files\\Netease\\MuMu\\nx_main\\MuMuNxMain.exe",
+      "adbPath": "C:\\Program Files\\Netease\\MuMu\\nx_main\\adb.exe"
     },
     "linux": {
       "mumuPath": "/opt/MuMuPlayer",
