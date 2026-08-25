@@ -95,25 +95,23 @@ function getOrCreateDeviceId() {
 // ========== MuMu 模拟器控制 ==========
 class MuMuController {
     constructor() {
-        // 如果配置中没有 mumuPath，则查找
-        console.log('[MuMu] 构造函数: config.mumuPath=' + config.mumuPath + ', config.platforms=' + (config.platforms ? JSON.stringify(Object.keys(config.platforms)) : '无'));
-        if (config.mumuPath) {
-            console.log('[MuMu] 使用配置中的 mumuPath:', config.mumuPath);
-            this.mumuPath = config.mumuPath;
-        } else {
-            console.warn('[MuMu] 配置中未设置 mumuPath, 自动查找...');
-            console.warn('[MuMu] config 对象 keys:', Object.keys(config));
-            this.mumuPath = this.findMuMuPath();
+        // 必须使用用户配置，没有配置就报错
+        if (!config.mumuPath) {
+            console.error('[MuMu] 错误: config.json 中未配置 mumuPath');
+            console.error('[MuMu] 请在 config.json 的 platforms.win32.mumuPath 中设置 MuMu 安装路径');
+            console.error('[MuMu] 当前 config 内容:', JSON.stringify(config, null, 2));
+            throw new Error('config.json 中未配置 mumuPath, 请检查配置文件');
         }
+        console.log('[MuMu] 使用配置中的 mumuPath:', config.mumuPath);
+        this.mumuPath = config.mumuPath;
         
-        // 如果配置中没有 adbPath，则查找
-        if (config.adbPath) {
-            console.log('[MuMu] 使用配置中的 adbPath:', config.adbPath);
-            this.adbPath = config.adbPath;
-        } else {
-            console.warn('[MuMu] 配置中未设置 adbPath, 自动查找...');
-            this.adbPath = this.findAdbPath();
+        if (!config.adbPath) {
+            console.error('[MuMu] 错误: config.json 中未配置 adbPath');
+            console.error('[MuMu] 请在 config.json 的 platforms.win32.adbPath 中设置 ADB 路径');
+            throw new Error('config.json 中未配置 adbPath, 请检查配置文件');
         }
+        console.log('[MuMu] 使用配置中的 adbPath:', config.adbPath);
+        this.adbPath = config.adbPath;
         
         this.mumutoolPath = this.findMumutoolPath();
         console.log('[MuMu] ADB 路径:', this.adbPath);
@@ -1434,67 +1432,44 @@ async function handleMessage(msg) {
                                 let cmd;
                                 if (os === 'win32') {
                                     // Windows: 使用 start 命令启动 MuMu
-                                    let mumuExe = config.mumuPath || mumu.mumuPath || '';
-                                    console.log(`[Agent] config.mumuPath=${config.mumuPath}, mumu.mumuPath=${mumu.mumuPath}, 最终使用: ${mumuExe}`);
+                                    // 严格使用用户配置的路径
+                                    const mumuExe = config.mumuPath;
+                                    console.log(`[Agent] 使用 config.mumuPath: ${mumuExe}`);
                                     
                                     // 检查路径是否存在
                                     if (!mumuExe || !fs.existsSync(mumuExe)) {
-                                        console.warn(`[Agent] mumuPath 不存在: ${mumuExe}, 尝试在常见位置查找...`);
-                                        // 尝试在常见位置查找
-                                        const candidates = [
-                                            'C:\Program Files\Netease\MuMu\nx_main\MuMuNxMain.exe',
-                                            'C:\Program Files\Netease\MuMu\nx_main\MuMuManager.exe',
-                                            'C:\Program Files (x86)\Netease\MuMu\nx_main\MuMuNxMain.exe',
-                                        ];
-                                        for (const c of candidates) {
-                                            if (fs.existsSync(c)) {
-                                                mumuExe = c;
-                                                console.log(`[Agent] 找到 MuMu 可执行文件: ${mumuExe}`);
-                                                break;
-                                            }
-                                        }
-                                    } else {
-                                        // 路径存在，检查是文件还是目录
-                                        try {
-                                            const stat = fs.statSync(mumuExe);
-                                            if (stat.isDirectory()) {
-                                                // 是目录，尝试在目录中查找可执行文件
-                                                console.log(`[Agent] mumuPath 是目录: ${mumuExe}, 查找其中的可执行文件...`);
-                                                const exeCandidates = [
-                                                    path.join(mumuExe, 'MuMuNxMain.exe'),
-                                                    path.join(mumuExe, 'MuMuManager.exe'),
-                                                    path.join(mumuExe, 'MuMuPlayer.exe'),
-                                                ];
-                                                let found = false;
-                                                for (const c of exeCandidates) {
-                                                    if (fs.existsSync(c)) {
-                                                        mumuExe = c;
-                                                        found = true;
-                                                        console.log(`[Agent] 在目录中找到 MuMu 可执行文件: ${mumuExe}`);
-                                                        break;
-                                                    }
-                                                }
-                                                if (!found) {
-                                                    throw new Error(`mumuPath 是目录但未找到可执行文件, 请检查 ${mumuExe} 目录下是否有 MuMuNxMain.exe`);
-                                                }
-                                            } else if (stat.isFile()) {
-                                                // 是文件，直接使用
-                                                console.log(`[Agent] mumuPath 是文件: ${mumuExe}`);
-                                            }
-                                        } catch (e) {
-                                            if (e.message.includes('未找到')) {
-                                                throw e;
-                                            }
-                                            console.error(`[Agent] 检查 mumuPath 失败: ${e.message}`);
-                                        }
+                                        throw new Error(`config.json 中配置的 mumuPath 不存在: ${mumuExe}, 请检查路径是否正确`);
                                     }
                                     
-                                    if (!mumuExe || !fs.existsSync(mumuExe)) {
-                                        throw new Error(`未找到 MuMu 可执行文件, 请检查 config.json 中的 mumuPath 配置`);
+                                    // 检查路径是文件还是目录
+                                    let actualExe = mumuExe;
+                                    try {
+                                        const stat = fs.statSync(mumuExe);
+                                        if (stat.isDirectory()) {
+                                            // 如果是目录，在目录中查找可执行文件
+                                            console.log(`[Agent] mumuPath 是目录: ${mumuExe}, 在其中查找可执行文件...`);
+                                            const exeCandidates = [
+                                                path.join(mumuExe, 'MuMuNxMain.exe'),
+                                                path.join(mumuExe, 'MuMuManager.exe'),
+                                                path.join(mumuExe, 'MuMuPlayer.exe'),
+                                            ];
+                                            for (const c of exeCandidates) {
+                                                if (fs.existsSync(c)) {
+                                                    actualExe = c;
+                                                    console.log(`[Agent] 在目录中找到可执行文件: ${actualExe}`);
+                                                    break;
+                                                }
+                                            }
+                                            if (actualExe === mumuExe) {
+                                                throw new Error(`mumuPath 是目录但未找到可执行文件, 请在 config.json 中将 mumuPath 设置为具体的 .exe 文件路径`);
+                                            }
+                                        }
+                                    } catch (e) {
+                                        throw new Error(`mumuPath 无效: ${e.message}`);
                                     }
                                     
-                                    console.log(`[Agent] 使用 MuMu 可执行文件: ${mumuExe}`);
-                                    cmd = `start "" "${mumuExe}" --args -v ${index}`;
+                                    console.log(`[Agent] 使用 MuMu 可执行文件: ${actualExe}`);
+                                    cmd = `start "" "${actualExe}" --args -v ${index}`;
                                 } else {
                                     // macOS: 使用 open 命令
                                     let mumuAppPath = mumu.mumuPath || config.mumuPath || '/Applications/MuMuPlayer.app';
