@@ -39,6 +39,7 @@ function loadConfig() {
         if (rawConfig.platforms && rawConfig.platforms[platform]) {
             // 新格式：从 platforms 中获取当前平台的配置
             const platformConfig = rawConfig.platforms[platform];
+            console.log(`[Agent] 找到平台配置: ${platform} -> mumuPath=${platformConfig.mumuPath || '未设置'}`);
             config = {
                 userId: rawConfig.userId,
                 merchantId: rawConfig.merchantId,
@@ -51,6 +52,10 @@ function loadConfig() {
             console.log(`[Agent] 加载配置 (新格式, ${platformName}平台):`, JSON.stringify(config, null, 2));
         } else {
             // 旧格式：直接使用顶层配置
+            if (rawConfig.platforms) {
+                console.warn(`[Agent] platforms 存在但未找到当前平台 ${platform} 的配置`);
+                console.log(`[Agent] 可用的平台: ${Object.keys(rawConfig.platforms).join(', ')}`);
+            }
             config = rawConfig;
             console.log(`[Agent] 加载配置 (旧格式):`, JSON.stringify(config, null, 2));
         }
@@ -90,8 +95,24 @@ function getOrCreateDeviceId() {
 // ========== MuMu 模拟器控制 ==========
 class MuMuController {
     constructor() {
-        this.mumuPath = config.mumuPath || this.findMuMuPath();
-        this.adbPath = config.adbPath || this.findAdbPath();
+        // 如果配置中没有 mumuPath，则查找
+        if (config.mumuPath) {
+            console.log('[MuMu] 使用配置中的 mumuPath:', config.mumuPath);
+            this.mumuPath = config.mumuPath;
+        } else {
+            console.warn('[MuMu] 配置中未设置 mumuPath, 自动查找...');
+            this.mumuPath = this.findMuMuPath();
+        }
+        
+        // 如果配置中没有 adbPath，则查找
+        if (config.adbPath) {
+            console.log('[MuMu] 使用配置中的 adbPath:', config.adbPath);
+            this.adbPath = config.adbPath;
+        } else {
+            console.warn('[MuMu] 配置中未设置 adbPath, 自动查找...');
+            this.adbPath = this.findAdbPath();
+        }
+        
         this.mumutoolPath = this.findMumutoolPath();
         console.log('[MuMu] ADB 路径:', this.adbPath);
         console.log('[MuMu] MuMu 路径:', this.mumuPath);
@@ -1367,6 +1388,7 @@ async function handleMessage(msg) {
                         // Fallback: 使用系统命令逐个启动（macOS用open，Windows用start）
                         console.log(`[Agent] mumutool 未找到, 使用系统命令作为后备方案`);
                         const os = process.platform;
+                        console.log(`[Agent] 后备方案: os=${os}, mumuPath=${mumu.mumuPath}, config.mumuPath=${config.mumuPath}`);
                         
                         // 计算目标总数
                         let targetCount;
@@ -1410,11 +1432,39 @@ async function handleMessage(msg) {
                                 let cmd;
                                 if (os === 'win32') {
                                     // Windows: 使用 start 命令启动 MuMu
-                                    const mumuExe = mumu.mumuPath || config.mumuPath || '';
+                                    // 优先使用 MuMuNxMain.exe，然后使用 MuMuManager.exe
+                                    let mumuExe = mumu.mumuPath || config.mumuPath || '';
+                                    
+                                    // 如果 mumuPath 指向的目录中没有可执行文件，尝试查找
+                                    if (!mumuExe || !fs.existsSync(mumuExe)) {
+                                        console.warn(`[Agent] mumuExe 无效: ${mumuExe}, 尝试查找...`);
+                                        // 尝试在常见位置查找
+                                        const candidates = [
+                                            'C:\Program Files\Netease\MuMu\nx_main\MuMuNxMain.exe',
+                                            'C:\Program Files\Netease\MuMu\nx_main\MuMuManager.exe',
+                                            'C:\Program Files (x86)\Netease\MuMu\nx_main\MuMuNxMain.exe',
+                                        ];
+                                        for (const c of candidates) {
+                                            if (fs.existsSync(c)) {
+                                                mumuExe = c;
+                                                console.log(`[Agent] 找到 MuMu 可执行文件: ${mumuExe}`);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    
+                                    if (!mumuExe || !fs.existsSync(mumuExe)) {
+                                        throw new Error(`未找到 MuMu 可执行文件, 请检查安装路径`);
+                                    }
+                                    
+                                    console.log(`[Agent] 使用 MuMu 可执行文件: ${mumuExe}`);
                                     cmd = `start "" "${mumuExe}" --args -v ${index}`;
                                 } else {
                                     // macOS: 使用 open 命令
-                                    const mumuAppPath = config.mumuPath || '/Applications/MuMuPlayer.app';
+                                    let mumuAppPath = mumu.mumuPath || config.mumuPath || '/Applications/MuMuPlayer.app';
+                                    if (!fs.existsSync(mumuAppPath)) {
+                                        mumuAppPath = '/Applications/MuMuPlayer.app';
+                                    }
                                     cmd = `open "${mumuAppPath}" --args -v ${index}`;
                                 }
                                 console.log(`[Agent] 执行: ${cmd}`);
