@@ -54,12 +54,12 @@ public class AgentDownloadHelper {
             // macOS 平台配置
             Map<String, Object> darwinConfig = new LinkedHashMap<>();
             darwinConfig.put("mumuPath", "/Applications/MuMuPlayer.app");
-            darwinConfig.put("adbPath", "");
+            darwinConfig.put("adbPath", "/Users/worktools/platform-tools/adb");
             
             // Windows 平台配置
             Map<String, Object> win32Config = new LinkedHashMap<>();
-            win32Config.put("mumuPath", "C:\\Program Files\\Netease\\MuMuPlayer-12.0");
-            win32Config.put("adbPath", "C:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe");
+            win32Config.put("mumuPath", "C:\\Program Files\\Netease\\MuMu\\nx_main\\MuMuNxMain.exe");
+            win32Config.put("adbPath", "C:\\Program Files\\Netease\\MuMu\\nx_main\\adb.exe");
             
             // Linux 平台配置
             Map<String, Object> linuxConfig = new LinkedHashMap<>();

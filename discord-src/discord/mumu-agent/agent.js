@@ -174,55 +174,93 @@ class MuMuController {
         const os = process.platform;
         const candidates = [];
         
+        // 获取 MuMu 安装根目录（mumuPath 可能是文件路径，需要取目录）
+        let mumuBasePath = this.mumuPath;
+        if (mumuBasePath && fs.existsSync(mumuBasePath) && fs.statSync(mumuBasePath).isFile()) {
+            mumuBasePath = path.dirname(mumuBasePath);
+        }
+        
         if (os === 'darwin') {
             candidates.push(`${this.mumuPath}/Contents/MacOS/mumutool`);
             candidates.push(`${this.mumuPath}/Contents/MacOS/mumu-cli`);
             candidates.push(`${this.mumuPath}/Contents/MacOS/`);
         } else if (os === 'win32') {
-            // Windows 下尝试多个可能的路径
-            candidates.push(path.join(this.mumuPath, 'shell', 'mumutool.exe'));
-            candidates.push(path.join(this.mumuPath, 'mumutool.exe'));
-            candidates.push(path.join(this.mumuPath, 'shell'));
-            
-            // 也尝试从 shell 目录查找所有可能的工具
-            try {
-                const shellDir = path.join(this.mumuPath, 'shell');
-                if (fs.existsSync(shellDir) && fs.statSync(shellDir).isDirectory()) {
-                    const files = fs.readdirSync(shellDir);
-                    console.log(`[MuMu] shell 目录内容: ${files.join(', ')}`);
-                    // 查找 mumutool 或类似名称
-                    for (const file of files) {
-                        if (file.toLowerCase().includes('mumutool') || file.toLowerCase().includes('mumu')) {
-                            const fullPath = path.join(shellDir, file);
-                            candidates.push(fullPath);
-                            console.log(`[MuMu] 发现可能的 MuMu 工具: ${fullPath}`);
+            // Windows 下尝试多个可能的路径（基于 MuMu 安装根目录）
+            if (mumuBasePath) {
+                candidates.push(path.join(mumuBasePath, 'shell', 'mumutool.exe'));
+                candidates.push(path.join(mumuBasePath, 'mumutool.exe'));
+                candidates.push(path.join(mumuBasePath, 'shell'));
+                candidates.push(mumuBasePath); // 整个目录
+                
+                // 也尝试从 shell 目录查找所有可能的工具
+                try {
+                    const shellDir = path.join(mumuBasePath, 'shell');
+                    if (fs.existsSync(shellDir) && fs.statSync(shellDir).isDirectory()) {
+                        const files = fs.readdirSync(shellDir);
+                        console.log(`[MuMu] shell 目录内容: ${files.join(', ')}`);
+                        for (const file of files) {
+                            if (file.toLowerCase().includes('mumutool') || file.toLowerCase().includes('mumu-cli')) {
+                                const fullPath = path.join(shellDir, file);
+                                candidates.push(fullPath);
+                                console.log(`[MuMu] 发现可能的 MuMu 工具: ${fullPath}`);
+                            }
                         }
                     }
+                } catch (e) {
+                    console.warn(`[MuMu] 读取 shell 目录失败: ${e.message}`);
                 }
-            } catch (e) {
-                console.warn(`[MuMu] 读取 shell 目录失败: ${e.message}`);
+            }
+            
+            // 备选路径
+            const altPaths = [
+                'C:\Program Files\Netease\MuMu\nx_main',
+                'C:\Program Files\Netease\MuMuPlayer-12.0',
+                'C:\Program Files\Netease\MuMu',
+            ];
+            for (const altPath of altPaths) {
+                candidates.push(path.join(altPath, 'shell', 'mumutool.exe'));
+                candidates.push(path.join(altPath, 'mumutool.exe'));
+                try {
+                    if (fs.existsSync(altPath) && fs.statSync(altPath).isDirectory()) {
+                        const files = fs.readdirSync(altPath);
+                        const tool = files.find(f => f.toLowerCase().includes('mumutool') || f.toLowerCase().includes('mumu-cli'));
+                        if (tool) {
+                            candidates.push(path.join(altPath, tool));
+                        }
+                        // 检查 shell 子目录
+                        const shellDir = path.join(altPath, 'shell');
+                        if (fs.existsSync(shellDir) && fs.statSync(shellDir).isDirectory()) {
+                            const shellFiles = fs.readdirSync(shellDir);
+                            const shellTool = shellFiles.find(f => f.toLowerCase().includes('mumutool') || f.toLowerCase().includes('mumu-cli'));
+                            if (shellTool) {
+                                candidates.push(path.join(shellDir, shellTool));
+                            }
+                        }
+                    }
+                } catch (e) {}
             }
         }
         
         for (const p of candidates) {
             try {
-                if (fs.existsSync(p)) {
-                    console.log(`[MuMu] 找到 MuMu 工具: ${p}`);
+                if (p && fs.existsSync(p)) {
+                    console.log(`[MuMu] 检查路径: ${p}`);
                     // 如果是目录，尝试在目录中查找 mumutool
                     if (fs.statSync(p).isDirectory()) {
                         const files = fs.readdirSync(p);
-                        const tool = files.find(f => f.toLowerCase().includes('mumutool'));
+                        const tool = files.find(f => f.toLowerCase().includes('mumutool') || f.toLowerCase() === 'mumu-cli');
                         if (tool) {
                             const fullPath = path.join(p, tool);
                             console.log(`[MuMu] 在目录中找到 MuMu 工具: ${fullPath}`);
                             return fullPath;
                         }
                     } else {
+                        console.log(`[MuMu] 找到 MuMu 工具: ${p}`);
                         return p;
                     }
                 }
             } catch (e) {
-                console.warn(`[MuMu] 检查路径失败 ${p}: ${e.message}`);
+                // 忽略错误
             }
         }
         
@@ -407,28 +445,62 @@ class MuMuController {
         const os = process.platform;
 
         try {
-            let cmd;
             if (os === 'win32') {
-                cmd = 'tasklist | findstr /I "MuMuPlayer MuMuPlayer.exe"';
+                const mumuPath = this.mumuPath || '';
+                
+                // 优先通过 mumutool 检测模拟器
+                if (this.mumutoolPath && fs.existsSync(this.mumutoolPath)) {
+                    try {
+                        const checkResult = execSync(`"${this.mumutoolPath}" info all`, { 
+                            encoding: 'utf8', timeout: 5000 
+                        });
+                        const parsed = JSON.parse(checkResult);
+                        if (parsed.errcode === 0 && parsed.return && parsed.return.results && parsed.return.results.length > 0) {
+                            console.log('[MuMu] 通过mumutool检测到模拟器运行中');
+                            return true;
+                        }
+                    } catch (e1) {
+                        console.warn('[MuMu] mumutool检测失败:', e1.message);
+                    }
+                }
+
+                // Windows: 检测多种可能的 MuMu 进程名
+                const processNames = ['MuMuNxMain.exe', 'MuMuPlayer.exe', 'NemuPlayer.exe'];
+                for (const name of processNames) {
+                    const cmd = `tasklist /FI "IMAGENAME eq ${name}" /NH 2>nul`;
+                    try {
+                        const result = execSync(cmd, { encoding: 'utf8', shell: true, timeout: 2000 });
+                        if (result.trim().length > 0 && result.trim() !== 'INFO: No tasks are running which match the specified criteria.') {
+                            console.log('[MuMu] 检测到进程:', name);
+                            return true;
+                        }
+                    } catch (e) {
+                        // 继续尝试下一个
+                    }
+                }
+
+                // 尝试使用 findstr 模糊匹配
+                const cmd = 'tasklist | findstr /I "MuMu"';
+                try {
+                    const result = execSync(cmd, { encoding: 'utf8', shell: true, timeout: 3000 });
+                    if (result.trim().length > 0) {
+                        console.log('[MuMu] 检测到MuMu相关进程:', result.trim().split('\n')[0]);
+                        return true;
+                    }
+                } catch (e) {
+                    // 忽略
+                }
+
+                console.log('[MuMu] 未检测到MuMuPlayer进程');
+                return false;
             } else {
                 // macOS/Linux: 使用 ps aux 过滤 MuMuPlayer 进程
-                cmd = 'ps aux | grep -i "[M]uMuPlayer"';
+                const cmd = 'ps aux | grep -i "[M]uMuPlayer"';
+                const result = execSync(cmd, { encoding: 'utf8', shell: true, timeout: 3000 });
+                return result.trim().length > 0;
             }
-            const result = execSync(cmd, { encoding: 'utf8', shell: true, timeout: 3000 });
-            return result.trim().length > 0;
         } catch (e) {
-            // 如果 ps 命令失败，尝试通过 mumutool 判断
-            if (this.mumutoolPath) {
-                try {
-                    const checkResult = execSync(`"${this.mumutoolPath}" info all`, { 
-                        encoding: 'utf8', timeout: 5000 
-                    });
-                    const parsed = JSON.parse(checkResult);
-                    return parsed.errcode === 0 && parsed.return && parsed.return.results && parsed.return.results.length > 0;
-                } catch (e2) {
-                    return false;
-                }
-            }
+            console.warn('[MuMu] isMuMuPlayerRunning异常:', e.message);
             return false;
         }
     }
@@ -451,7 +523,27 @@ class MuMuController {
                     if (fs.existsSync(vmCandidate)) { vmDir = vmCandidate; break; }
                 }
             } else if (os === 'win32') {
-                vmDir = path.join(this.mumuPath || '', 'vms', String(index));
+                // 获取 MuMu 安装根目录（mumuPath 可能是文件路径）
+                let mumuBasePath = this.mumuPath || '';
+                if (mumuBasePath && fs.existsSync(mumuBasePath) && fs.statSync(mumuBasePath).isFile()) {
+                    mumuBasePath = path.dirname(mumuBasePath);
+                }
+                vmDir = path.join(mumuBasePath, 'vms', String(index));
+                // 如果默认路径不存在，尝试其他常见路径
+                if (!fs.existsSync(vmDir)) {
+                    const altPaths = [
+                        path.join(mumuBasePath, 'vms'),
+                        path.join(mumuBasePath, 'data', 'vms'),
+                        'C:\Program Files\Netease\MuMuPlayer-12.0\vms',
+                    ];
+                    for (const altVms of altPaths) {
+                        const vmCandidate = path.join(altVms, String(index));
+                        if (fs.existsSync(vmCandidate)) {
+                            vmDir = vmCandidate;
+                            break;
+                        }
+                    }
+                }
             }
 
             if (vmDir) {
