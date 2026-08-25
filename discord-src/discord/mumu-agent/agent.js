@@ -410,42 +410,8 @@ class MuMuController {
                 }
             }
             
-            // 备选路径（扫描整个 MuMu 安装目录）
-            const altPaths = [
-                'C:\Program Files\Netease\MuMu\nx_main',
-                'C:\Program Files\Netease\MuMu',
-                'C:\Program Files (x86)\Netease\MuMu\nx_main',
-                'C:\Program Files\Netease\MuMuPlayer-12.0',
-                'C:\Program Files (x86)\Netease\MuMuPlayer-12.0',
-            ];
-            for (const altPath of altPaths) {
-                candidates.push(path.join(altPath, 'shell', 'mumutool.exe'));
-                candidates.push(path.join(altPath, 'shell', 'mumu-cli.exe'));
-                candidates.push(path.join(altPath, 'mumutool.exe'));
-                candidates.push(path.join(altPath, 'mumu-cli.exe'));
-                try {
-                    if (fs.existsSync(altPath) && fs.statSync(altPath).isDirectory()) {
-                        const files = fs.readdirSync(altPath);
-                        for (const file of files) {
-                            const lowerFile = file.toLowerCase();
-                            if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli') || lowerFile === 'mumu-cli.exe') {
-                                candidates.push(path.join(altPath, file));
-                            }
-                        }
-                        // 检查 shell 子目录
-                        const shellDir = path.join(altPath, 'shell');
-                        if (fs.existsSync(shellDir) && fs.statSync(shellDir).isDirectory()) {
-                            const shellFiles = fs.readdirSync(shellDir);
-                            for (const file of shellFiles) {
-                                const lowerFile = file.toLowerCase();
-                                if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli') || lowerFile === 'mumu-cli.exe') {
-                                    candidates.push(path.join(shellDir, file));
-                                }
-                            }
-                        }
-                    }
-                } catch (e) {}
-            }
+            // 不再使用硬编码路径，只使用用户配置的路径
+            // 如果用户配置的路径找不到 mumu-cli，将无法使用 mumutool 模式
         }
         
         for (const p of candidates) {
@@ -574,30 +540,65 @@ class MuMuController {
         }
         const command = path.basename(this.mumutoolPath);
         console.log(`[MuMu] 执行 ${command} ${args.join(' ')}`);
+        
+        const isWindows = process.platform === 'win32';
+        const toolPath = this.mumutoolPath;
+        
+        if (!fs.existsSync(toolPath)) {
+            throw new Error(`mumu-cli 不存在: ${toolPath}`);
+        }
+        
         try {
-            // 关键: 不使用 shell 模式，避免路径包含空格时被截断
-            // execFileSync 传递数组参数，能正确处理带空格的路径
-            const result = execFileSync(this.mumutoolPath, args, { 
-                timeout: timeout, 
-                encoding: 'utf8', 
-                stdio: ['pipe', 'pipe', 'pipe'],
-                shell: false
-            });
-            console.log(`[MuMu] ${command} 返回: ${result.trim().substring(0, 200)}`);
+            let result;
+            if (isWindows) {
+                // Windows: 使用 cmd.exe /c 执行，彻底解决路径空格问题
+                // cmd.exe /c 需要整个命令作为一个带引号的字符串
+                const allArgs = [toolPath, ...args];
+                const cmdStr = allArgs.map((a, idx) => {
+                    // 第一个参数是可执行文件路径，始终加引号
+                    if (idx === 0) return '"' + a + '"';
+                    // 其他参数如果包含空格或特殊字符也加引号
+                    if (a.includes(' ') || a.includes('"') || a.includes('\t')) {
+                        return '"' + a.replace(/"/g, '\\"') + '"';
+                    }
+                    return a;
+                }).join(' ');
+                const cmdLine = 'cmd.exe /c "' + cmdStr + '"';
+                console.log(`[MuMu] CMD: ${cmdLine}`);
+                result = execSync(cmdLine, { 
+                    timeout: timeout, 
+                    encoding: 'utf8', 
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                    cwd: path.dirname(toolPath)
+                });
+            } else {
+                result = execFileSync(toolPath, args, { 
+                    timeout: timeout, 
+                    encoding: 'utf8', 
+                    stdio: ['pipe', 'pipe', 'pipe']
+                });
+            }
+            
+            const output = result.trim();
+            console.log(`[MuMu] ${command} 返回: ${output.substring(0, 200)}`);
+            
             try {
-                return JSON.parse(result);
+                return JSON.parse(output);
             } catch {
-                return { errcode: 0, message: result.trim(), return: null };
+                return { errcode: 0, message: output, return: null };
             }
         } catch (e) {
-            const errorMsg = e.stderr ? e.stderr.toString().trim() : e.message;
-            console.error(`[MuMu] ${command} 执行错误: ${errorMsg}`);
+            const errorOutput = (e.stderr ? e.stderr.toString() : e.stdout ? e.stdout.toString() : e.message).trim();
+            console.error(`[MuMu] ${command} 执行错误: ${errorOutput}`);
+            
             try {
-                if (errorMsg) {
-                    return JSON.parse(errorMsg);
+                const jsonMatch = errorOutput.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    return JSON.parse(jsonMatch[0]);
                 }
             } catch {}
-            return { errcode: -1, message: errorMsg };
+            
+            return { errcode: -1, message: errorOutput || e.message };
         }
     }
 
@@ -793,10 +794,21 @@ class MuMuController {
                     if (mumuBasePath && fs.existsSync(mumuBasePath) && fs.statSync(mumuBasePath).isFile()) {
                         mumuBasePath = path.dirname(mumuBasePath);
                     }
+                    
+                    // Windows 下 MuMu 模拟器数据通常在用户目录下
+                    const userProfile = process.env.USERPROFILE || '';
+                    const homeDir = require('os').homedir();
+                    
                     vmsDirs = [
+                        // 安装目录下的 vms
                         path.join(mumuBasePath, 'vms'),
                         'C:\Program Files\Netease\MuMu\vms',
                         'C:\Program Files\Netease\MuMuPlayer-12.0\vms',
+                        // 用户目录下的 vms（Windows 下常用）
+                        path.join(homeDir, 'Documents', 'MuMuPlayer', 'vms'),
+                        path.join(homeDir, 'Documents', 'Netease', 'MuMuPlayer-12.0', 'vms'),
+                        path.join(userProfile, 'Documents', 'MuMuPlayer', 'vms'),
+                        path.join(userProfile, 'Documents', 'Netease', 'MuMuPlayer-12.0', 'vms'),
                     ];
                 }
                 
@@ -852,11 +864,8 @@ class MuMuController {
                 // 优先通过 mumutool 检测模拟器
                 if (this.mumutoolPath && fs.existsSync(this.mumutoolPath)) {
                     try {
-                        const checkResult = execFileSync(this.mumutoolPath, ['info', 'all'], { 
-                            encoding: 'utf8', timeout: 5000, shell: false
-                        });
-                        const parsed = JSON.parse(checkResult);
-                        if (parsed.errcode === 0 && parsed.return && parsed.return.results && parsed.return.results.length > 0) {
+                        const result = await this.execMumutool(['info', 'all'], 5000);
+                        if (result.errcode === 0 && result.return && result.return.results && result.return.results.length > 0) {
                             console.log('[MuMu] 通过mumutool检测到模拟器运行中');
                             return true;
                         }
@@ -924,25 +933,43 @@ class MuMuController {
                     if (fs.existsSync(vmCandidate)) { vmDir = vmCandidate; break; }
                 }
             } else if (os === 'win32') {
-                // 获取 MuMu 安装根目录（mumuPath 可能是文件路径）
                 let mumuBasePath = this.mumuPath || '';
                 if (mumuBasePath && fs.existsSync(mumuBasePath) && fs.statSync(mumuBasePath).isFile()) {
                     mumuBasePath = path.dirname(mumuBasePath);
                 }
-                vmDir = path.join(mumuBasePath, 'vms', String(index));
-                // 如果默认路径不存在，尝试其他常见路径
-                if (!fs.existsSync(vmDir)) {
-                    const altPaths = [
-                        path.join(mumuBasePath, 'vms'),
-                        path.join(mumuBasePath, 'data', 'vms'),
-                        'C:\Program Files\Netease\MuMuPlayer-12.0\vms',
-                    ];
-                    for (const altVms of altPaths) {
-                        const vmCandidate = path.join(altVms, String(index));
-                        if (fs.existsSync(vmCandidate)) {
-                            vmDir = vmCandidate;
-                            break;
-                        }
+                
+                const userProfile = process.env.USERPROFILE || '';
+                const homeDir = require('os').homedir();
+                
+                // 收集所有可能的 vms 目录
+                const allVmsDirs = [];
+                if (mumuBasePath) {
+                    allVmsDirs.push(path.join(mumuBasePath, 'vms'));
+                    if (mumuBasePath.endsWith('nx_main')) {
+                        allVmsDirs.push(path.join(path.dirname(mumuBasePath), 'vms'));
+                    }
+                }
+                allVmsDirs.push(
+                    'C:\Program Files\Netease\MuMu\vms',
+                    'C:\Program Files\Netease\MuMuPlayer-12.0\vms',
+                    'C:\Program Files\Netease\MuMu\nx_main\vms',
+                    path.join(homeDir, 'Documents', 'MuMuPlayer', 'vms'),
+                    path.join(homeDir, 'Documents', 'Netease', 'MuMuPlayer-12.0', 'vms'),
+                    path.join(homeDir, 'Documents', 'MuMu', 'vms'),
+                );
+                if (userProfile && userProfile !== homeDir) {
+                    allVmsDirs.push(
+                        path.join(userProfile, 'Documents', 'MuMuPlayer', 'vms'),
+                        path.join(userProfile, 'Documents', 'Netease', 'MuMuPlayer-12.0', 'vms'),
+                    );
+                }
+                
+                // 搜索所有目录
+                for (const vmsDir of allVmsDirs) {
+                    const vmCandidate = path.join(vmsDir, String(index));
+                    if (fs.existsSync(vmCandidate)) {
+                        vmDir = vmCandidate;
+                        break;
                     }
                 }
             }
@@ -1514,41 +1541,18 @@ async function handleMessage(msg) {
                     const results = [];
                     
                     if (mumu.mumutoolPath) {
-                        // 使用 mumutool create --count 命令（count 必须 >= 2）
-                        // 如果只需要创建1个，先创建2个，然后删除1个
-                        let createCount = neededCount;
-                        let needCleanup = false;
+                        // 使用 mumutool create --count 命令创建模拟器
+                        const createArgs = ['create', '--count', String(neededCount), '--type', 'phone'];
                         
-                        if (createCount === 1) {
-                            createCount = 2;
-                            needCleanup = true;
-                        }
-                        
-                        // 注意：mumutool create 的 --setting 不支持 JSON，先创建再配置
-                        const createArgs = ['create', '--count', String(createCount), '--type', 'phone'];
-                        
-                        console.log(`[Agent] 使用 mumutool ${createArgs.join(' ')} 创建模拟器`);
+                        console.log(`[Agent] 使用 mumutool ${createArgs.join(' ')} 创建 ${neededCount} 个模拟器`);
                         const result = await mumu.execMumutool(createArgs);
                         console.log(`[Agent] mumutool create 结果: errcode=${result.errcode}, message=${result.message}`);
                         
                         if (result.errcode === 0 && result.return) {
                             const createdResults = result.return.results || [];
                             
-                            // 如果多创建了，删除多余的
-                            if (needCleanup && createdResults.length > 1) {
-                                const lastIndex = createdResults[createdResults.length - 1].index;
-                                console.log(`[Agent] 删除多余的模拟器 index=${lastIndex}`);
-                                try {
-                                    await mumu.execMumutool(['delete', String(lastIndex)]);
-                                    console.log(`[Agent] 已删除多余的模拟器`);
-                                } catch (delErr) {
-                                    console.warn(`[Agent] 删除模拟器失败: ${delErr.message}`);
-                                }
-                                createdResults.pop();
-                            }
-                            
                             // 减少等待时间 - mumutool create 完成后文件系统已就绪
-                            await new Promise(r => setTimeout(r, 300));
+                            await new Promise(r => setTimeout(r, 200));
                             
                             // 使用 --setting 参数一次性配置（与后端 EmulatorService 保持一致）
                             const configTasks = createdResults.map(async (item) => {
@@ -1658,7 +1662,8 @@ async function handleMessage(msg) {
                         }
                         console.log(`[Agent] 需要创建索引: ${neededIndices.join(', ')}`);
                         
-                        for (const index of neededIndices) {
+                        // 优化：并行创建多个模拟器，而不是串行
+                        const createTasks = neededIndices.map(async (index) => {
                             try {
                                 if (os === 'win32') {
                                     const mumuExe = config.mumuPath;
@@ -1669,11 +1674,19 @@ async function handleMessage(msg) {
                                     }
                                     
                                     console.log(`[Agent] 使用 MuMu 可执行文件: ${mumuExe}`);
-                                    try {
-                                        execFileSync(mumuExe, ['--args', '-v', String(index)], { timeout: 15000, shell: true });
-                                    } catch (e) {
-                                        console.warn(`[Agent] execFileSync 失败，回退到 start 命令: ${e.message}`);
-                                        execSync(`start "" "${mumuExe}" --args -v ${index}`, { timeout: 15000, shell: true });
+                                    // Windows 下使用 mumu-cli 创建模拟器（如果 mumutool 路径存在）
+                                    if (this.mumutoolPath) {
+                                        try {
+                                            // 使用 mumutool create 创建单个模拟器
+                                            const createResult = await this.execMumutool(['create', '--count', '1', '--type', 'phone']);
+                                            console.log(`[Agent] mumutool create 结果: ${JSON.stringify(createResult).substring(0, 200)}`);
+                                        } catch (e) {
+                                            console.warn(`[Agent] mumutool create 失败: ${e.message}`);
+                                        }
+                                    } else {
+                                        // 最后回退：直接复制现有模拟器配置
+                                        console.warn(`[Agent] 无 mumutool，无法自动创建模拟器，请手动创建或配置 mumu-cli 路径`);
+                                        throw new Error('无 mumutool，无法创建模拟器。请在 config.json 中配置正确的 mumuPath（需包含 mumu-cli.exe 工具）');
                                     }
                                 } else {
                                     let mumuAppPath = mumu.mumuPath || config.mumuPath || '/Applications/MuMuPlayer.app';
@@ -1684,7 +1697,8 @@ async function handleMessage(msg) {
                                     console.log(`[Agent] 执行: ${cmd}`);
                                     execSync(cmd, { timeout: 15000, shell: true });
                                 }
-                                await new Promise(resolve => setTimeout(resolve, 3000));
+                                // 优化：减少等待时间到 500ms
+                                await new Promise(resolve => setTimeout(resolve, 500));
                                 
                                 // 设置名称和配置（即使没有 mumutool 也尝试通过直接编辑 vm.json 配置）
                                 const vmName = 'V' + String(index + 1).padStart(3, '0');
@@ -1723,7 +1737,9 @@ async function handleMessage(msg) {
                                 results.push({ index, success: false, message: e.message });
                                 console.error(`[Agent] 模拟器 v${index} 创建异常:`, e.message);
                             }
-                        }
+                        });
+                        // 等待所有并行任务完成
+                        await Promise.all(createTasks);
                     }
                     
 

@@ -45,7 +45,7 @@ public class AgentDownloadHelper {
             
             // 生成统一的 config.json（包含所有平台配置）
             Map<String, Object> configMap = new LinkedHashMap<>();
-            configMap.put("version", "v2.1.0");
+            configMap.put("version", "v2.7.0");
             configMap.put("userId", userId);
             configMap.put("merchantId", merchantId != null ? merchantId : 0);
             configMap.put("serverUrl", "ws://" + serverUrl + "/ws/agent");
@@ -81,7 +81,7 @@ public class AgentDownloadHelper {
             
             // 生成 README
             String readmeContent = 
-                "MuMu Agent v2.1.0 使用说明\n" +
+                "MuMu Agent v2.7.0 使用说明\n" +
                 "========================================\n\n" +
                 "## 快速开始\n\n" +
                 "### macOS 用户:\n" +
@@ -103,7 +103,7 @@ public class AgentDownloadHelper {
                 "- macOS: /Users/xxx/Library/Android/sdk/platform-tools/adb\n\n" +
                 "### 配置示例 (Windows):\n" +
                 "{\n" +
-                "  \"version\": \"v2.1.0\",\n" +
+                "  \"version\": \"v2.7.0\",\n" +
                 "  \"userId\": \"merchantadmin2\",\n" +
                 "  \"merchantId\": 5,\n" +
                 "  \"serverUrl\": \"ws://服务器IP:8090/ws/agent\",\n" +

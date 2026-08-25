@@ -366,16 +366,16 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 }
             }
             
-            // 清理数据库中物理已不存在的记录（安全清理）
+            // 只提示物理已不存在的记录，不自动删除
             for (EmuInstance dbInst : existingInstances) {
                 if (!physicalCloudIndices.contains(dbInst.getInstanceIndex())) {
-                    log.info("心跳同步: 清理孤立记录 #{}, name={} (物理已不存在)", dbInst.getInstanceIndex(), dbInst.getName());
-                    instanceRepository.delete(dbInst);
+                    log.warn("【心跳提示】数据库记录 #{} ({}) 在物理中不存在 - 如确认已删除可手动清理", 
+                        dbInst.getInstanceIndex(), dbInst.getName());
                     cleanedCount++;
                 }
             }
             
-            log.info("心跳同步完成: agent={}, 处理了 {} 个模拟器，更新了 {} 个，跳过 {} 个，清理 {} 个", 
+            log.info("心跳同步完成: agent={}, 处理了 {} 个模拟器，更新了 {} 个，跳过 {} 个，{} 个孤立记录(仅提示)", 
                 agent.getDeviceId(), emulators.size(), updatedCount, skippedCount, cleanedCount);
         } catch (Exception e) {
             log.warn("同步模拟器状态失败: {}", e.getMessage());

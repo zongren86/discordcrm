@@ -109,6 +109,43 @@ public class AuthController {
         return result;
     }
 
+    @GetMapping("/test-features")
+    public Map<String, Object> testFeatures() {
+        Map<String, Object> result = new HashMap<>();
+        
+        // 方法1: 使用 findAllByOrderBySortOrderAsc
+        List<SysFeature> allFeatures = featureRepository.findAllByOrderBySortOrderAsc();
+        result.put("totalFeatures", allFeatures.size());
+        
+        List<Map<String, Object>> features = new ArrayList<>();
+        for (SysFeature f : allFeatures) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", f.getId());
+            map.put("code", f.getCode());
+            map.put("parentId", f.getParentId());
+            map.put("type", f.getType());
+            map.put("routePath", f.getRoutePath());
+            map.put("sortOrder", f.getSortOrder());
+            features.add(map);
+        }
+        result.put("allFeatures", features);
+        
+        // 方法2: 直接按 code 查询
+        SysFeature merchantFeature = featureRepository.findByCode("merchants").orElse(null);
+        if (merchantFeature != null) {
+            Map<String, Object> merchantMap = new HashMap<>();
+            merchantMap.put("id", merchantFeature.getId());
+            merchantMap.put("code", merchantFeature.getCode());
+            merchantMap.put("parentId", merchantFeature.getParentId());
+            merchantMap.put("type", merchantFeature.getType());
+            result.put("merchantByCode", merchantMap);
+        } else {
+            result.put("merchantByCode", null);
+        }
+        
+        return result;
+    }
+
     @GetMapping("/menu-tree")
     public List<Map<String, Object>> menuTree() {
         JwtAuthFilter.AuthenticatedAgent agent = SecurityUtils.currentAgent();
@@ -131,8 +168,23 @@ public class AuthController {
             .filter(f -> permissionSet.contains(f.getCode()))
             .collect(Collectors.toList());
         
+        // 调试：检查 accessibleFeatures 中的内容
+        for (SysFeature f : accessibleFeatures) {
+            if ("merchants".equals(f.getCode())) {
+                System.err.println("DEBUG: 找到 merchants - id=" + f.getId() + ", parentId=" + f.getParentId() + ", type=" + f.getType() + ", routePath=" + f.getRoutePath());
+            }
+        }
+        System.err.println("DEBUG: accessibleFeatures size=" + accessibleFeatures.size());
+        
         // 构建菜单树（一级菜单）
-        return buildMenuTree(accessibleFeatures, null);
+        List<Map<String, Object>> tree = buildMenuTree(accessibleFeatures, null);
+        System.err.println("DEBUG: tree size=" + tree.size());
+        for (Map<String, Object> node : tree) {
+            if ("system".equals(node.get("code"))) {
+                System.err.println("DEBUG: system children=" + node.get("children"));
+            }
+        }
+        return tree;
     }
     
     private List<Map<String, Object>> buildMenuTree(List<SysFeature> features, Long parentId) {

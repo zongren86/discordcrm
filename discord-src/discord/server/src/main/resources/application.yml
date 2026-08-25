@@ -44,8 +44,13 @@ spring:
 discord:
   bot-token: ${DISCORD_BOT_TOKEN:}
   proxy:
+    # 代理开关：true=启用代理，false=直连（服务器部署时设为 false）
+    # 留空或 auto=自动检测代理可用性，不可用时自动回退到直连
+    enabled: ${DISCORD_PROXY_ENABLED:auto}
     host: ${DISCORD_PROXY_HOST:127.0.0.1}
     port: ${DISCORD_PROXY_PORT:7890}
+    # 代理健康检查超时（毫秒），用于 auto 模式下检测代理是否可用
+    health-check-timeout: ${DISCORD_PROXY_HEALTH_TIMEOUT:3000}
     # WebSocket 直连模式：true=WebSocket 连接绕过代理直连 Discord Gateway
     # HTTP 请求（API调用）仍会使用代理，仅 WebSocket 直连
     websocket-direct: ${DISCORD_WEBSOCKET_DIRECT:true}

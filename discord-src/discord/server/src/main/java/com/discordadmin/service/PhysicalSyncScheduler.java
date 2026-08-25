@@ -28,18 +28,22 @@ public class PhysicalSyncScheduler {
      * 每 30 秒检查一次物理模拟器与数据库的一致性
      * 启动延迟 10 秒，避免与启动时的心跳冲突
      */
+    /**
+     * 定时检查物理模拟器与数据库的一致性
+     * 注意：此方法只记录日志提示，不自动创建或删除记录
+     * 如需同步，请手动点击"同步"按钮
+     */
     @Scheduled(fixedRate = 30000, initialDelay = 10000)
-    @Transactional
     public void syncAllPhysicalWithDb() {
         List<Map<String, Object>> physicalList;
         try {
             physicalList = mumuClientService.getAllEmulatorsWithError();
         } catch (Exception e) {
-            log.debug("定时同步：MumuManager 不可达，跳过本次同步");
+            log.debug("定时检查：Agent 不可达，跳过本次检查");
             return;
         }
 
-        if (physicalList == null) {
+        if (physicalList == null || physicalList.isEmpty()) {
             return;
         }
 
@@ -55,8 +59,8 @@ public class PhysicalSyncScheduler {
         Map<String, List<EmuInstance>> byMerchantUser = allDbInstances.stream()
             .collect(Collectors.groupingBy(i -> i.getMerchantId() + ":" + (i.getUserId() != null ? i.getUserId() : "")));
 
-        int created = 0;
-        int cleaned = 0;
+        int missingInDb = 0;
+        int missingInPhysical = 0;
 
         for (Map.Entry<String, List<EmuInstance>> entry : byMerchantUser.entrySet()) {
             List<EmuInstance> userInstances = entry.getValue();
@@ -64,42 +68,28 @@ public class PhysicalSyncScheduler {
                 .map(EmuInstance::getInstanceIndex)
                 .collect(Collectors.toSet());
 
-            Long merchantId = userInstances.get(0).getMerchantId();
             String userId = userInstances.get(0).getUserId();
 
-            // 1. 物理有但数据库没有 → 创建记录
+            // 1. 物理有但数据库没有 → 只提示
             for (int physIdx : physicalIndices) {
                 if (!dbIndices.contains(physIdx)) {
-                    EmuInstance instance = new EmuInstance();
-                    instance.setMerchantId(merchantId);
-                    instance.setUserId(userId);
-                    instance.setName("模拟器" + physIdx);
-                    instance.setInstanceIndex(physIdx);
-                    instance.setStatus(EmuInstance.EmuStatus.CREATED);
-                    instance.setCpuCores(1);
-                    instance.setMemoryGb(1);
-                    instance.setResolution("720x1280");
-                    instance.setDiscordInstalled(false);
-                    instance.setDiscordLoggedIn(false);
-                    instance.setAutoRunning(false);
-                    instance.setAddedCount(0);
-                    instance.setCreatedAt(Instant.now());
-                    instanceRepository.save(instance);
-                    created++;
+                    missingInDb++;
+                    log.warn("【定时检查】用户 {} 有物理模拟器 index={} 未在数据库中 - 请手动添加", userId, physIdx);
                 }
             }
 
-            // 2. 数据库有但物理没有 → 清理记录
+            // 2. 数据库有但物理没有 → 只提示
             for (EmuInstance dbInst : userInstances) {
                 if (!physicalIndices.contains(dbInst.getInstanceIndex())) {
-                    instanceRepository.delete(dbInst);
-                    cleaned++;
+                    missingInPhysical++;
+                    log.warn("【定时检查】用户 {} 的数据库记录 {} 在物理中不存在 - 如确认已删除可手动清理", userId, dbInst.getName());
                 }
             }
         }
 
-        if (created > 0 || cleaned > 0) {
-            log.info("定时同步完成: 创建 {} 条记录, 清理 {} 条孤立记录", created, cleaned);
+        // 汇总
+        if (missingInDb > 0 || missingInPhysical > 0) {
+            log.info("定时检查完成: {} 个物理未入库, {} 个数据库孤立记录", missingInDb, missingInPhysical);
         }
     }
 }

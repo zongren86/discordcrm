@@ -34,8 +34,10 @@ public class DiscordUserClient {
     private final ObjectMapper mapper = new ObjectMapper();
 
     public DiscordUserClient(
+            @Value("${discord.proxy.enabled:auto}") String proxyEnabled,
             @Value("${discord.proxy.host:}") String proxyHost,
-            @Value("${discord.proxy.port:0}") int proxyPort) {
+            @Value("${discord.proxy.port:0}") int proxyPort,
+            @Value("${discord.proxy.health-check-timeout:3000}") int healthCheckTimeout) {
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(30));
         HttpClient.Builder pollBuilder = HttpClient.newBuilder()
@@ -57,15 +59,79 @@ public class DiscordUserClient {
                 log.warn("自定义 SSLContext 初始化失败，使用默认: {}", e2.getMessage());
             }
         }
-        if (proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
+
+        // 判断是否使用代理
+        boolean useProxy = shouldUseProxy(proxyEnabled, proxyHost, proxyPort, healthCheckTimeout);
+
+        if (useProxy) {
             builder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));
             pollBuilder.proxy(ProxySelector.of(new InetSocketAddress(proxyHost, proxyPort)));
             log.info("DiscordUserClient 使用代理: {}:{}", proxyHost, proxyPort);
         } else {
-            log.info("DiscordUserClient 直连（未配置代理）");
+            log.info("DiscordUserClient 直连（未使用代理）");
         }
         this.http = builder.build();
         this.pollHttp = pollBuilder.build();
+    }
+
+    /**
+     * 判断是否使用代理
+     * @param proxyEnabled 配置值：auto/true/false
+     * @param proxyHost 代理主机
+     * @param proxyPort 代理端口
+     * @param healthCheckTimeout 健康检查超时（毫秒）
+     * @return 是否使用代理
+     */
+    private boolean shouldUseProxy(String proxyEnabled, String proxyHost, int proxyPort, int healthCheckTimeout) {
+        // 解析配置
+        boolean hasProxyConfig = proxyHost != null && !proxyHost.isBlank() && proxyPort > 0;
+
+        switch (proxyEnabled.toLowerCase()) {
+            case "false":
+                // 明确禁用代理
+                log.info("代理已明确禁用（proxy.enabled=false）");
+                return false;
+            case "true":
+                // 明确启用代理
+                if (!hasProxyConfig) {
+                    log.warn("代理已启用但未配置代理地址，回退到直连");
+                    return false;
+                }
+                log.info("代理已明确启用（proxy.enabled=true）");
+                return true;
+            case "auto":
+            default:
+                // 自动检测模式
+                if (!hasProxyConfig) {
+                    log.info("未配置代理地址，使用直连模式");
+                    return false;
+                }
+                // 检测代理是否可用
+                boolean proxyAvailable = checkProxyAvailability(proxyHost, proxyPort, healthCheckTimeout);
+                if (proxyAvailable) {
+                    log.info("代理检测通过，使用代理 {}:{}", proxyHost, proxyPort);
+                    return true;
+                } else {
+                    log.info("代理不可用，自动回退到直连模式");
+                    return false;
+                }
+        }
+    }
+
+    /**
+     * 检测代理是否可用
+     * 通过尝试连接代理的方式检测
+     */
+    private boolean checkProxyAvailability(String proxyHost, int proxyPort, int timeoutMs) {
+        try {
+            java.net.Socket socket = new java.net.Socket();
+            socket.connect(new java.net.InetSocketAddress(proxyHost, proxyPort), timeoutMs);
+            socket.close();
+            return true;
+        } catch (Exception e) {
+            log.debug("代理健康检查失败: {}:{} - {}", proxyHost, proxyPort, e.getMessage());
+            return false;
+        }
     }
 
     public JsonNode getMe(String token) throws Exception {

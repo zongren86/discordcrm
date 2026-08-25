@@ -75,15 +75,31 @@ public class EmuInstanceService {
         return id != null ? id : "default";
     }
 
+
     /**
      * 获取当前用户的所有模拟器实例
+     * 管理后台以数据库数据为准
      */
     public List<Map<String, Object>> getCurrentUserInstances() {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
         log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
+        
+        // 先按 merchantId + userId 查询
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
-        log.info("查询结果: 找到 {} 个模拟器", instances.size());
+        log.info("按 merchantId+userId 查询: 找到 {} 个模拟器", instances.size());
+        
+        // 回退查询：如果按 merchantId + userId 查询结果较少，回退到只按 merchantId 查询
+        // 这是因为有些旧记录的 userId 可能不匹配
+        List<EmuInstance> allByMerchant = instanceRepository.findByMerchantId(merchantId);
+        log.info("按 merchantId 查询: 找到 {} 个模拟器", allByMerchant.size());
+        
+        // 如果按 userId 查询的结果少于按 merchantId 查询的结果，使用按 merchantId 的结果
+        if (instances.size() < allByMerchant.size()) {
+            log.warn("按 merchantId+userId 查询的结果({})少于按 merchantId 查询的结果({})，使用 merchantId 查询结果", 
+                    instances.size(), allByMerchant.size());
+            instances = allByMerchant;
+        }
         
         // 自动同步：确保数据库与物理模拟器完全一致
         if (!localMode) {
@@ -91,8 +107,12 @@ public class EmuInstanceService {
                 List<Map<String, Object>> physicalEmulators = webSocketService.getEmulatorsFromAgent(userId);
                 if (physicalEmulators != null && !physicalEmulators.isEmpty()) {
                     syncDatabaseWithPhysical(merchantId, userId, instances, physicalEmulators);
-                    // 重新查询
+                    // 重新查询（以数据库为准，合并两个查询的结果）
                     instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+                    allByMerchant = instanceRepository.findByMerchantId(merchantId);
+                    if (instances.size() < allByMerchant.size()) {
+                        instances = allByMerchant;
+                    }
                     log.info("同步后数据库有 {} 条记录", instances.size());
                 } else if (physicalEmulators != null && physicalEmulators.isEmpty()) {
                     log.warn("Agent 返回空列表，可能没有物理模拟器");
@@ -139,6 +159,44 @@ public class EmuInstanceService {
             }
         } catch (Exception e) {
             log.warn("无法获取物理模拟器列表: {}", e.getMessage());
+        }
+        
+        // 如果数据库为空但有物理模拟器，直接使用物理数据（虚拟记录）
+        if (instances.isEmpty() && physicalList != null && !physicalList.isEmpty()) {
+            log.info("数据库无记录但有 {} 个物理模拟器，使用物理数据返回", physicalList.size());
+            List<Map<String, Object>> result = new ArrayList<>();
+            for (Map<String, Object> phys : physicalList) {
+                Map<String, Object> emu = new HashMap<>();
+                int physIdx = 0;
+                Object idx = phys.get("index");
+                if (idx instanceof Number) {
+                    physIdx = ((Number) idx).intValue();
+                }
+                int dbIndex = physIdx + 1; // 数据库是1-based
+                
+                emu.put("id", 0L); // 虚拟ID
+                emu.put("merchantId", merchantId);
+                emu.put("userId", userId);
+                emu.put("index", dbIndex);
+                emu.put("name", phys.get("name") != null ? phys.get("name").toString() : "V" + String.format("%03d", dbIndex));
+                emu.put("status", phys.get("status") != null ? phys.get("status").toString() : "STOPPED");
+                emu.put("cpuCores", phys.get("cpuCount") != null ? ((Number) phys.get("cpuCount")).intValue() : 1);
+                int memMb = phys.get("memoryMB") != null ? ((Number) phys.get("memoryMB")).intValue() : 1024;
+                emu.put("memoryGb", memMb / 1024);
+                emu.put("resolution", phys.get("resolution") != null ? phys.get("resolution").toString() : "720x1280");
+                emu.put("adbPort", phys.get("adbPort"));
+                emu.put("discordInstalled", phys.get("discordInstalled") != null ? phys.get("discordInstalled") : false);
+                emu.put("discordLoggedIn", phys.get("discordLoggedIn") != null ? phys.get("discordLoggedIn") : false);
+                emu.put("discordOnHome", false);
+                emu.put("discordAccount", phys.get("discordAccount"));
+                emu.put("discordAccountName", phys.get("discordAccountName"));
+                emu.put("autoRunning", phys.get("autoRunning") != null ? phys.get("autoRunning") : false);
+                emu.put("addedCount", 0);
+                emu.put("lastError", phys.get("discordLoginError"));
+                emu.put("isVirtual", true); // 标记为虚拟记录
+                result.add(emu);
+            }
+            return result;
         }
         
         List<Map<String, Object>> result = instances.stream()
@@ -788,7 +846,9 @@ public class EmuInstanceService {
                 emuCpuCores = ((Number) mumuEmu.get("cpuCount")).intValue();
             }
             if (mumuEmu.get("memoryMB") instanceof Number) {
-                emuMemoryGb = ((Number) mumuEmu.get("memoryMB")).intValue();
+                int memoryMBVal = ((Number) mumuEmu.get("memoryMB")).intValue();
+                emuMemoryGb = memoryMBVal / 1024; // MB 转 GB
+                if (emuMemoryGb < 1) emuMemoryGb = 1;
             }
             instance.setCpuCores(emuCpuCores);
             instance.setMemoryGb(emuMemoryGb);
@@ -883,7 +943,9 @@ public class EmuInstanceService {
                 emuCpuCores = ((Number) mumuEmu.get("cpuCount")).intValue();
             }
             if (mumuEmu.get("memoryMB") instanceof Number) {
-                emuMemoryGb = ((Number) mumuEmu.get("memoryMB")).intValue();
+                int memoryMBVal = ((Number) mumuEmu.get("memoryMB")).intValue();
+                emuMemoryGb = memoryMBVal / 1024; // MB 转 GB
+                if (emuMemoryGb < 1) emuMemoryGb = 1;
             }
             instance.setCpuCores(emuCpuCores);
             instance.setMemoryGb(emuMemoryGb);
@@ -915,12 +977,17 @@ public class EmuInstanceService {
      * - 物理不存在但数据库存在 -> 删除
      * - 配置不一致 -> 更新
      */
+    /**
+     * 同步数据库与物理模拟器状态
+     * 注意：此方法只更新状态，不自动创建或删除记录
+     * 如果物理与数据库不一致，只记录日志提示
+     */
     private void syncDatabaseWithPhysical(Long merchantId, String userId,
                                            List<EmuInstance> existingInstances,
                                            List<Map<String, Object>> physicalEmulators) {
-        log.info("开始同步数据库: 数据库现有 {} 条, 物理 {} 条", existingInstances.size(), physicalEmulators.size());
+        log.info("开始检查同步: 数据库现有 {} 条, 物理 {} 条", existingInstances.size(), physicalEmulators.size());
         
-        // 构建物理模拟器索引映射 (key=物理index, value=物理数据)
+        // 构建物理模拟器索引映射
         Map<Integer, Map<String, Object>> physicalMap = new HashMap<>();
         for (Map<String, Object> phys : physicalEmulators) {
             Object idx = phys.get("index");
@@ -929,7 +996,7 @@ public class EmuInstanceService {
             }
         }
         
-        // 构建数据库记录索引映射 (key=数据库index, value=数据库记录)
+        // 构建数据库记录索引映射
         Map<Integer, EmuInstance> dbMap = new HashMap<>();
         for (EmuInstance inst : existingInstances) {
             if (inst.getInstanceIndex() != null) {
@@ -937,9 +1004,11 @@ public class EmuInstanceService {
             }
         }
         
-        int created = 0, deleted = 0, updated = 0;
+        int statusUpdated = 0;
+        List<String> missingInDb = new ArrayList<>();
+        List<String> missingInPhysical = new ArrayList<>();
         
-        // 1. 处理物理模拟器：创建或更新
+        // 1. 更新已有记录的状态（只更新状态，不创建新记录）
         for (Map<String, Object> phys : physicalEmulators) {
             Object idxObj = phys.get("index");
             if (!(idxObj instanceof Number)) continue;
@@ -949,81 +1018,44 @@ public class EmuInstanceService {
             String physName = (String) phys.get("name");
             String physStatusStr = phys.get("status") != null ? phys.get("status").toString() : "STOPPED";
             EmuInstance.EmuStatus physStatus = mapMumuStatus(physStatusStr);
-            int physCpu = phys.get("cpuCount") != null ? ((Number) phys.get("cpuCount")).intValue() : 1;
-            int physMem = phys.get("memoryMB") != null ? ((Number) phys.get("memoryMB")).intValue() / 1024 : 1;
-            Integer physAdbPort = phys.get("adbPort") != null ? ((Number) phys.get("adbPort")).intValue() : null;
             
             if (dbMap.containsKey(dbIndex)) {
-                // 更新已有记录
+                // 只更新状态
                 EmuInstance existing = dbMap.get(dbIndex);
-                boolean needUpdate = false;
-                
-                if (physName != null && !physName.equals(existing.getName())) {
-                    existing.setName(physName);
-                    needUpdate = true;
-                }
                 if (existing.getStatus() != physStatus) {
                     existing.setStatus(physStatus);
-                    needUpdate = true;
-                }
-                // 同步模式：从物理实例读取实际配置更新数据库
-                if (physCpu != existing.getCpuCores()) {
-                    existing.setCpuCores(physCpu);
-                    needUpdate = true;
-                }
-                if (physMem != existing.getMemoryGb()) {
-                    existing.setMemoryGb(physMem);
-                    needUpdate = true;
-                }
-                if (physAdbPort != null && !physAdbPort.equals(existing.getAdbPort())) {
-                    existing.setAdbPort(physAdbPort);
-                    needUpdate = true;
-                }
-                
-                if (needUpdate) {
                     existing.setUpdatedAt(Instant.now());
                     instanceRepository.save(existing);
-                    updated++;
-                    log.info("同步更新: {} (index={})", existing.getName(), dbIndex);
+                    statusUpdated++;
+                    log.info("同步状态更新: {} -> {}", existing.getName(), physStatus);
                 }
             } else {
-                // 创建新记录
-                EmuInstance inst = new EmuInstance();
-                inst.setMerchantId(merchantId);
-                inst.setUserId(userId);
-                inst.setName(physName != null ? physName : "V" + String.format("%03d", dbIndex));
-                inst.setInstanceIndex(dbIndex);
-                inst.setStatus(physStatus);
-                // 同步模式：新记录使用物理实例实际配置
-                inst.setCpuCores(physCpu);
-                inst.setMemoryGb(physMem);
-                inst.setResolution("720x1280");
-                inst.setAdbPort(physAdbPort);
-                inst.setDiscordInstalled(false);
-                inst.setDiscordLoggedIn(false);
-                inst.setAutoRunning(false);
-                inst.setAddedCount(0);
-                inst.setCreatedAt(Instant.now());
-                inst.setUpdatedAt(Instant.now());
-                instanceRepository.save(inst);
-                created++;
-                log.info("同步创建: {} (index={})", inst.getName(), dbIndex);
+                // 物理存在但数据库不存在 - 只提示，不自动创建
+                missingInDb.add(physName != null ? physName : "V" + String.format("%03d", dbIndex));
+                log.warn("物理模拟器存在但数据库不存在: index={}, name={} - 请手动在管理后台添加", dbIndex, physName);
             }
         }
         
-        // 2. 处理多余的数据库记录（物理不存在）
+        // 2. 检查数据库记录是否在物理中存在
         for (Map.Entry<Integer, EmuInstance> entry : dbMap.entrySet()) {
             int dbIndex = entry.getKey();
             int physIndex = dbIndex - 1;
             if (!physicalMap.containsKey(physIndex)) {
-                EmuInstance toDelete = entry.getValue();
-                instanceRepository.delete(toDelete);
-                deleted++;
-                log.info("同步删除: {} (dbIndex={}, 物理index={} 不存在)", toDelete.getName(), dbIndex, physIndex);
+                EmuInstance inst = entry.getValue();
+                missingInPhysical.add(inst.getName());
+                log.warn("数据库记录存在但物理模拟器不存在: {} (index={}) - 如确认已删除，可忽略此提示", inst.getName(), dbIndex);
             }
         }
         
-        log.info("同步完成: 创建 {} 条, 更新 {} 条, 删除 {} 条", created, updated, deleted);
+        // 汇总日志
+        if (!missingInDb.isEmpty()) {
+            log.warn("【提示】有 {} 个物理模拟器未在数据库中: {}", missingInDb.size(), String.join(", ", missingInDb));
+        }
+        if (!missingInPhysical.isEmpty()) {
+            log.warn("【提示】有 {} 个数据库记录在物理中不存在: {}", missingInPhysical.size(), String.join(", ", missingInPhysical));
+        }
+        log.info("同步检查完成: 状态更新 {} 条, 物理缺失 {} 条, 数据库缺失 {} 条", 
+                statusUpdated, missingInPhysical.size(), missingInDb.size());
     }
 
     private EmuInstance.EmuStatus mapMumuStatus(String mumuStatus) {

@@ -16,6 +16,22 @@ import permission from './directives/permission'
 const pinia = createPinia()
 const app = createApp(App)
 
+// 全局错误处理
+app.config.errorHandler = (err, vm, info) => {
+  console.error('Vue Error:', err, info)
+  alert('Vue Error: ' + err.message)
+}
+
+window.onerror = (msg, source, lineno, colno, error) => {
+  console.error('Window Error:', msg)
+  alert('Error: ' + msg)
+}
+
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('Promise Error:', event.reason)
+  alert('Promise Error: ' + event.reason)
+})
+
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
@@ -33,3 +49,5 @@ auth.init()
 if (auth.isLoggedIn) {
   startWebSocket(auth.token)
 }
+
+console.log('Vue app mounted successfully')

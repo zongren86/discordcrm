@@ -37,14 +37,19 @@ const router = createRouter({
   routes
 })
 
-// 获取用户有权限访问的第一个路径（优先消息中心）
+// 获取用户有权限访问的第一个路径
 function getFirstAllowedPath(auth) {
+  // 如果没有任何菜单权限，返回 null
+  if (!auth.menuPaths || auth.menuPaths.length === 0) {
+    return null
+  }
+  
   // 优先检查消息中心
   if (auth.hasMenuPath('/chat')) {
     return '/chat'
   }
   
-  // 如果没有消息中心权限，按顺序查找第一个有权限的菜单
+  // 按顺序查找第一个有权限的菜单
   const pathList = [
     '/stats', '/account-numbers', '/accounts', '/customers',
     '/guilds', '/guild-members', '/emulator', '/ai-settings',
@@ -57,8 +62,8 @@ function getFirstAllowedPath(auth) {
     }
   }
   
-  // 兜底：如果没有任何权限，返回默认路径
-  return '/chat'
+  // 没有任何有权限的路径
+  return null
 }
 
 router.beforeEach((to, from, next) => {
@@ -71,25 +76,58 @@ router.beforeEach((to, from, next) => {
     return
   }
   
-  // 已登录用户访问登录页或根路径，跳转到第一个有权限的页面
-  if ((to.path === '/login' || to.path === '/') && auth.isLoggedIn) {
+  // 已登录用户访问登录页
+  if (to.path === '/login' && auth.isLoggedIn) {
     const targetPath = getFirstAllowedPath(auth)
-    console.log('路由守卫: 已登录，跳转到:', targetPath)
-    next(targetPath)
+    if (targetPath) {
+      console.log('路由守卫: 已登录，跳转到:', targetPath)
+      next(targetPath)
+    } else {
+      // 没有任何权限，清除状态并跳转到登录页
+      auth.logout()
+      next('/login')
+    }
     return
   }
   
-  // 已登录用户，使用缓存权限检查（登录时已获取，不调API）
+  // 已登录用户访问根路径
+  if (to.path === '/' && auth.isLoggedIn) {
+    const targetPath = getFirstAllowedPath(auth)
+    if (targetPath) {
+      console.log('路由守卫: 已登录，跳转到:', targetPath)
+      next(targetPath)
+    } else {
+      // 没有任何权限，清除状态并跳转到登录页
+      auth.logout()
+      next('/login')
+    }
+    return
+  }
+  
+  // 已登录用户，检查权限
   if (auth.isLoggedIn && to.meta.requiresAuth !== false) {
+    // 如果没有任何菜单权限，直接跳到登录页
+    if (!auth.menuPaths || auth.menuPaths.length === 0) {
+      console.log('路由守卫: 无权限数据，跳转到登录页')
+      auth.logout()
+      next('/login')
+      return
+    }
+    
     const path = to.path
     const hasPermission = auth.hasMenuPath(path)
-    console.log(`路由守卫: 检查路径 ${path}, 权限: ${hasPermission}, menuPaths:`, auth.menuPaths)
+    console.log(`路由守卫: 检查路径 ${path}, 权限: ${hasPermission}`)
     
     if (!hasPermission) {
       // 没有权限，跳转到第一个有权限的页面
       const targetPath = getFirstAllowedPath(auth)
-      console.log('路由守卫: 无权限，跳转到:', targetPath)
-      next(targetPath)
+      if (targetPath && targetPath !== path) {
+        console.log('路由守卫: 无权限，跳转到:', targetPath)
+        next(targetPath)
+      } else {
+        // 真的没有任何权限或已在目标路径，放行
+        next()
+      }
       return
     }
   }

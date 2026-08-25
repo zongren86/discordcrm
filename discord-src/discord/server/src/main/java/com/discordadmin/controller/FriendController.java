@@ -250,6 +250,15 @@ public class FriendController {
             return; // 平台管理员可以访问所有账号
         }
 
+        // 商户管理员可以访问同商户下的所有账号
+        if (SecurityUtils.isMerchantAdmin()) {
+            Long currentMerchantId = SecurityUtils.currentMerchantId();
+            DiscordAccount acc = accountRepository.findById(accountId).orElse(null);
+            if (acc != null && currentMerchantId != null && currentMerchantId.equals(acc.getMerchantId())) {
+                return; // 同商户，允许访问
+            }
+        }
+
         Long currentAgentId = SecurityUtils.currentAgentId();
         if (currentAgentId == null) {
             throw new AccessDeniedException("无权访问该账号");
