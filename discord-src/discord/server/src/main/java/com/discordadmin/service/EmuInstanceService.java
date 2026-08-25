@@ -1913,8 +1913,9 @@ public class EmuInstanceService {
             status.put("runningEmulatorCount", totalRunningCount);
             
             if (!anyMuMuPlayerRunning) {
-                status.put("message", "Agent已连接 (" + myAgents.size() + " 台)，但 MuMuPlayer 未启动");
-                status.put("available", false);
+                status.put("message", "Agent已连接 (" + myAgents.size() + " 台)，MuMuPlayer检测中...");
+                // Agent 在线时允许操作，不因 MuMuPlayer 检测失败而阻止
+                status.put("available", true);
             } else if (totalEmulatorCount == 0) {
                 status.put("message", "Agent已连接，MuMuPlayer已启动，但暂无模拟器");
             } else {

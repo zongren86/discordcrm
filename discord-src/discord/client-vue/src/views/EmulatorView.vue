@@ -2176,8 +2176,8 @@ async function confirmAddEmulators() {
     ElMessage.warning('请输入有效的新增数量')
     return
   }
-  if (!physicalStatus.value.available) {
-    ElMessage.warning('未检测到本地模拟器，无法新增')
+  if (!physicalStatus.value.agentOnline) {
+    ElMessage.warning('未检测到在线 Agent，无法新增模拟器')
     return
   }
   showAddDialog.value = false
