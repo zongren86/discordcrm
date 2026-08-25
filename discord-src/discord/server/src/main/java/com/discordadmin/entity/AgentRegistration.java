@@ -11,7 +11,8 @@ import java.time.Instant;
     @Index(name = "idx_agent_user_id", columnList = "user_id"),
     @Index(name = "idx_agent_device_id", columnList = "device_id"),
     @Index(name = "idx_agent_status", columnList = "status"),
-    @Index(name = "idx_agent_merchant_id", columnList = "merchant_id")
+    @Index(name = "idx_agent_merchant_id", columnList = "merchant_id"),
+    @Index(name = "idx_agent_user_device", columnList = "user_id, device_id")
 })
 @Getter
 @Setter

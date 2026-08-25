@@ -10,9 +10,9 @@ spring:
       max-file-size: 500MB
       max-request-size: 500MB
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/discordadmin?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8&useUnicode=true&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048&useServerPrepStmts=true&rewriteBatchedStatements=true&useCompression=true
+    url: jdbc:mysql://101.47.41.155:3306/discordadmin?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8&useUnicode=true&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048&useServerPrepStmts=true&rewriteBatchedStatements=true&useCompression=true
     username: root
-    password: Len2026!
+    password: Dsdb2026!
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 100
@@ -82,4 +82,4 @@ spring.main.allow-bean-definition-overriding: false
 app:
   upload:
     path: ${APP_UPLOAD_PATH:${user.home}/.discord-admin/uploads}
-  base-url: ${APP_BASE_URL:http://localhost:8090}
+  base-url: ${APP_BASE_URL:http://101.47.41.149:8090}

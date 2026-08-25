@@ -59,9 +59,9 @@
                   <el-tag type="primary" size="small">{{ row.userId || '-' }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column prop="deviceId" label="设备 ID" min-width="200">
+              <el-table-column prop="deviceId" label="设备 ID" min-width="320" show-overflow-tooltip>
                 <template #default="{ row }">
-                  <span style="font-family: monospace; font-size: 12px">{{ row.deviceId }}</span>
+                  <span style="font-family: monospace; font-size: 12px; word-break: break-all">{{ row.deviceId }}</span>
                 </template>
               </el-table-column>
               <el-table-column prop="os" label="操作系统" width="100">

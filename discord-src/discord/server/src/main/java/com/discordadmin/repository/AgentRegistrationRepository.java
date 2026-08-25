@@ -7,6 +7,8 @@ import org.springframework.stereotype.Repository;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 @Repository
 public interface AgentRegistrationRepository extends JpaRepository<AgentRegistration, Long> {
@@ -24,4 +26,11 @@ public interface AgentRegistrationRepository extends JpaRepository<AgentRegistra
     void deleteByUserIdAndDeviceId(String userId, String deviceId);
     
     List<AgentRegistration> findByLastHeartbeatAtBefore(Instant threshold);
+    
+    // 查找同一 userId+deviceId 的多条记录（用于清理重复数据）
+    @Query("SELECT ar FROM AgentRegistration ar WHERE ar.userId = :userId AND ar.deviceId = :deviceId ORDER BY ar.id")
+    List<AgentRegistration> findAllByUserIdAndDeviceIdOrdered(@Param("userId") String userId, @Param("deviceId") String deviceId);
+    
+    // 统计同一 userId+deviceId 的记录数
+    long countByUserIdAndDeviceId(String userId, String deviceId);
 }

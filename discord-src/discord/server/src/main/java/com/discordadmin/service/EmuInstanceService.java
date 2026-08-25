@@ -439,7 +439,16 @@ public class EmuInstanceService {
                     .collect(Collectors.toList());
                 log.info("指定 Agent: {}, 匹配 {} 个", deviceId, targetAgents.size());
             } else {
-                targetAgents = onlineAgents;
+                // 根据当前用户的 userId 过滤 Agent，只发送给当前用户的 Agent
+                targetAgents = onlineAgents.stream()
+                    .filter(a -> userId.equals(a.getUserId()))
+                    .collect(Collectors.toList());
+                log.info("未指定 deviceId, 按用户 {} 过滤 Agent, 匹配 {} 个", userId, targetAgents.size());
+                // 如果没有匹配的 Agent，回退到第一个在线 Agent（兼容单 Agent 场景）
+                if (targetAgents.isEmpty() && !onlineAgents.isEmpty()) {
+                    targetAgents = Collections.singletonList(onlineAgents.get(0));
+                    log.info("未找到用户专属 Agent, 回退到第一个在线 Agent: {}", targetAgents.get(0).getDeviceId());
+                }
             }
             for (AgentRegistration agent : targetAgents) {
                 try {
@@ -548,7 +557,7 @@ public class EmuInstanceService {
             if ("agent".equals(createMethod)) {
                 // Agent 模式：通过 Agent 获取模拟器列表
                 log.info("使用 Agent 模式验证物理实体");
-                List<AgentRegistration> onlineAgents = webSocketService.getAllOnlineAgents();
+                List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
                 finalList = new ArrayList<>();
                 List<AgentRegistration> verifyAgents;
                 if (deviceId != null && !deviceId.isEmpty()) {
@@ -735,7 +744,10 @@ public class EmuInstanceService {
             int mumuIndex = ((Number) mumuEmu.get("index")).intValue();
             int dbIndex = mumuIndex + 1;
 
-            if (existingIndexSet.contains(dbIndex)) {
+            // 检查是否已存在记录（防止重复）
+            Optional<EmuInstance> existingOpt = instanceRepository
+                    .findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, dbIndex);
+            if (existingOpt.isPresent()) {
                 continue; // 已有记录，保留，跳过
             }
 

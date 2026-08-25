@@ -18,7 +18,6 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.*;
-import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -149,21 +148,6 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         }
         
         try {
-            // 关闭同一 deviceId 的旧连接，防止重复连接
-            String oldSessionId = deviceSessionMap.get(finalDeviceId);
-            if (oldSessionId != null && !oldSessionId.equals(session.getId())) {
-                WebSocketSession oldSession = sessions.get(oldSessionId);
-                if (oldSession != null && oldSession.isOpen()) {
-                    try {
-                        oldSession.close(CloseStatus.NORMAL);
-                        log.info("关闭旧 Agent 连接: deviceId={}, oldSessionId={}", finalDeviceId, oldSessionId);
-                    } catch (IOException e) {
-                        log.warn("关闭旧 Agent 连接失败: deviceId={}", finalDeviceId, e);
-                    }
-                }
-                sessions.remove(oldSessionId);
-            }
-            
             sessions.put(session.getId(), session);
             deviceSessionMap.put(finalDeviceId, session.getId());
             
@@ -216,30 +200,16 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         if (data != null) {
 
             String deviceId = (String) data.get("deviceId");
-            String userId = (String) data.get("userId");
             if (deviceId != null) {
                 AgentRegistration agent = onlineAgents.get(deviceId);
                 if (agent == null) {
-                    // 从数据库查找或创建（带去重逻辑）
+                    // 从数据库查找或创建
                     final String finalDeviceId = deviceId;
-                    final String finalUserId = userId;
-                    
-                    // 先检查是否有重复记录，进行清理
-                    List<AgentRegistration> duplicates = agentRepository.findAllByUserIdAndDeviceIdOrdered(userId, deviceId);
-                    if (duplicates.size() > 1) {
-                        log.warn("发现重复 Agent 记录: userId={}, deviceId={}, count={}", userId, deviceId, duplicates.size());
-                        // 保留最早的记录，删除其他重复记录
-                        for (int i = 1; i < duplicates.size(); i++) {
-                            agentRepository.delete(duplicates.get(i));
-                            log.info("删除重复 Agent 记录: id={}", duplicates.get(i).getId());
-                        }
-                    }
-                    
-                    // 使用 findByUserIdAndDeviceId 查找（现在应该只有一条记录）
-                    agent = agentRepository.findByUserIdAndDeviceId(userId, deviceId)
+                    agent = agentRepository.findByUserIdAndDeviceId(
+                        (String) data.get("userId"), deviceId)
                         .orElseGet(() -> {
                             AgentRegistration newAgent = new AgentRegistration();
-                            newAgent.setUserId(finalUserId);
+                            newAgent.setUserId((String) data.get("userId"));
                             newAgent.setDeviceId(finalDeviceId);
                             return newAgent;
                         });
