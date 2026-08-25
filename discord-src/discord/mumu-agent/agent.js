@@ -510,9 +510,8 @@ class MuMuController {
         if (!this.adbPath) {
             throw new Error('ADB 未找到');
         }
-        const cmd = `"${this.adbPath}" ${args.join(' ')}`;
         try {
-            const result = execSync(cmd, { timeout, encoding: 'utf8' });
+            const result = execFileSync(this.adbPath, args, { timeout, encoding: 'utf8' });
             return result.trim();
         } catch (e) {
             throw new Error(`ADB 执行失败: ${e.message}`);
@@ -554,7 +553,7 @@ class MuMuController {
     async connectAdb(port) {
         if (!this.adbPath) return false;
         try {
-            execSync(`"${this.adbPath}" connect 127.0.0.1:${port}`, { timeout: 5000 });
+            execFileSync(this.adbPath, ['connect', `127.0.0.1:${port}`], { timeout: 5000 });
             return true;
         } catch {
             return false;
@@ -802,7 +801,7 @@ class MuMuController {
                 // 优先通过 mumutool 检测模拟器
                 if (this.mumutoolPath && fs.existsSync(this.mumutoolPath)) {
                     try {
-                        const checkResult = execSync(`"${this.mumutoolPath}" info all`, { 
+                        const checkResult = execFileSync(this.mumutoolPath, ['info', 'all'], { 
                             encoding: 'utf8', timeout: 5000 
                         });
                         const parsed = JSON.parse(checkResult);
@@ -944,7 +943,7 @@ class MuMuController {
                 // Windows: 查找 MuMuPlayer.exe 并启动
                 const exePath = path.join(this.mumuPath, 'MuMuPlayer.exe');
                 if (fs.existsSync(exePath)) {
-                    execSync(`start "" "${exePath}" -v ${index}`, { timeout: 5000, shell: true });
+                    try { execFileSync(exePath, ['-v', String(index)], { timeout: 5000, shell: true }); } catch(e) { execSync(`start "" "${exePath}" -v ${index}`, { timeout: 5000, shell: true }); }
                     await new Promise(resolve => setTimeout(resolve, 3000));
                     const port = 16384 + index * 32;
                     await this.connectAdb(port);
@@ -1505,44 +1504,26 @@ async function handleMessage(msg) {
                                 const vmName = 'V' + String(item.index + 1).padStart(3, '0');
                                 console.log(`[Agent] 为模拟器 index=${item.index} 配置: 名称=${vmName}, CPU=${cpuCores}核, 内存=${memoryGb}GB`);
                                 
-                                // 策略1: 使用 config --setting JSON 格式
-                                if (cpuCores > 0 || memoryGb > 0) {
-                                    const settingObj = { vmName: vmName };
-                                    if (cpuCores > 0) settingObj.vmCpuCount = cpuCores;
-                                    if (memoryGb > 0) settingObj.vmMemoryOfMB = memoryGb * 1024;
-                                    const settingStr = JSON.stringify(settingObj);
-                                    
+                                // 尝试配置参数（即使失败也不影响创建结果）
+                                const configParams = [];
+                                if (cpuCores > 0) configParams.push({ key: 'vmCpuCount', val: String(cpuCores) });
+                                if (memoryGb > 0) configParams.push({ key: 'vmMemoryOfMB', val: String(memoryGb * 1024) });
+                                configParams.push({ key: 'vmName', val: vmName });
+                                
+                                for (const param of configParams) {
                                     try {
-                                        console.log(`[Agent] 尝试 config --setting: ${settingStr}`);
-                                        const cfgResult = await mumu.execMumutool(['config', String(item.index), '--setting', settingStr]);
-                                        console.log(`[Agent] config --setting 结果: errcode=${cfgResult.errcode}, message=${cfgResult.message}`);
-                                        
-                                        if (cfgResult.errcode !== 0) {
-                                            // 策略2: 尝试使用独立参数
-                                            console.log(`[Agent] 尝试独立参数配置`);
-                                            if (cpuCores > 0) {
-                                                await mumu.execMumutool(['config', String(item.index), 'vmCpuCount', String(cpuCores)]);
-                                            }
-                                            if (memoryGb > 0) {
-                                                await mumu.execMumutool(['config', String(item.index), 'vmMemoryOfMB', String(memoryGb * 1024)]);
-                                            }
-                                            // 策略3: 使用综合配置
-                                            if (cpuCores > 0 || memoryGb > 0) {
-                                                const configArgs = ['config', String(item.index), '--vmCpuCount', String(cpuCores), '--vmMemoryOfMB', String(memoryGb * 1024)];
-                                                console.log(`[Agent] 尝试综合配置: ${configArgs.join(' ')}`);
-                                                await mumu.execMumutool(configArgs);
-                                            }
+                                        const cfgResult = await mumu.execMumutool(['config', String(item.index), param.key, param.val]);
+                                        if (cfgResult.errcode === 0) {
+                                            console.log(`[Agent] 配置 ${param.key}=${param.val} 成功`);
+                                        } else {
+                                            console.warn(`[Agent] 配置 ${param.key} 失败: ${cfgResult.message}`);
                                         }
-                                        
-                                        // 配置名称
-                                        const nameResult = await mumu.execMumutool(['config', String(item.index), 'vmName', vmName]);
-                                        console.log(`[Agent] 名称配置结果: errcode=${nameResult.errcode}`);
                                     } catch (e) {
-                                        console.warn(`[Agent] 模拟器 index=${item.index} 配置异常: ${e.message}`);
+                                        console.warn(`[Agent] 配置 ${param.key} 异常: ${e.message}`);
                                     }
                                 }
                                 
-                                // 验证配置
+                                // 验证配置（仅日志，不影响结果）
                                 try {
                                     const verifyResult = await mumu.execMumutool(['info', String(item.index)]);
                                     console.log(`[Agent] 验证模拟器 index=${item.index}: ${JSON.stringify(verifyResult).substring(0, 200)}`);
@@ -1550,7 +1531,7 @@ async function handleMessage(msg) {
                                     console.warn(`[Agent] 验证模拟器失败: ${e.message}`);
                                 }
                                 
-                                return { index: item.index, success: true, name: vmName };
+                                return { index: item.index, success: true, name: vmName, cpuCores, memoryGb };
                             });
                             
                             // 并行执行所有配置任务
@@ -1618,10 +1599,7 @@ async function handleMessage(msg) {
                         
                         for (const index of neededIndices) {
                             try {
-                                let cmd;
                                 if (os === 'win32') {
-                                    // Windows: 使用 start 命令启动 MuMu
-                                    // 直接使用 config.mumuPath 作为可执行文件路径
                                     const mumuExe = config.mumuPath;
                                     console.log(`[Agent] 使用 config.mumuPath: ${mumuExe}`);
                                     
@@ -1630,17 +1608,21 @@ async function handleMessage(msg) {
                                     }
                                     
                                     console.log(`[Agent] 使用 MuMu 可执行文件: ${mumuExe}`);
-                                    cmd = `start "" "${mumuExe}" --args -v ${index}`;
+                                    try {
+                                        execFileSync(mumuExe, ['--args', '-v', String(index)], { timeout: 15000, shell: true });
+                                    } catch (e) {
+                                        console.warn(`[Agent] execFileSync 失败，回退到 start 命令: ${e.message}`);
+                                        execSync(`start "" "${mumuExe}" --args -v ${index}`, { timeout: 15000, shell: true });
+                                    }
                                 } else {
-                                    // macOS: 使用 open 命令
                                     let mumuAppPath = mumu.mumuPath || config.mumuPath || '/Applications/MuMuPlayer.app';
                                     if (!fs.existsSync(mumuAppPath)) {
                                         mumuAppPath = '/Applications/MuMuPlayer.app';
                                     }
-                                    cmd = `open "${mumuAppPath}" --args -v ${index}`;
+                                    const cmd = `open "${mumuAppPath}" --args -v ${index}`;
+                                    console.log(`[Agent] 执行: ${cmd}`);
+                                    execSync(cmd, { timeout: 15000, shell: true });
                                 }
-                                console.log(`[Agent] 执行: ${cmd}`);
-                                execSync(cmd, { timeout: 15000, shell: true });
                                 await new Promise(resolve => setTimeout(resolve, 3000));
                                 
                                 // 设置名称和配置
@@ -1677,6 +1659,24 @@ async function handleMessage(msg) {
                         console.warn(`[Agent] 创建后获取模拟器列表失败: ${e.message}`);
                     }
 
+                    // 如果 getEmulators 返回空，但 results 中有成功的记录，则从 results 构造模拟器列表
+                    if (allEmulators.length === 0 && successCount > 0) {
+                        console.log(`[Agent] getEmulators 返回空，从创建结果构造模拟器列表`);
+                        for (const r of results) {
+                            if (r.success) {
+                                allEmulators.push({
+                                    index: r.index,
+                                    adbPort: 16384 + r.index * 32,
+                                    status: 'STOPPED',
+                                    name: r.name || `V${String(r.index + 1).padStart(3, '0')}`,
+                                    cpuCount: cpuCores || 1,
+                                    memoryMB: (memoryGb || 1) * 1024
+                                });
+                            }
+                        }
+                        console.log(`[Agent] 从创建结果构造出 ${allEmulators.length} 个模拟器`);
+                    }
+
                     // 将结果与完整模拟器数据合并
                     const enrichedResults = results.map(r => {
                         const fullData = allEmulators.find(e => e.index === r.index);
@@ -1693,10 +1693,11 @@ async function handleMessage(msg) {
                         return r;
                     });
 
+                    const finalStatus = failCount === 0 ? 'SUCCESS' : (successCount > 0 ? 'PARTIAL' : 'FAILED');
                     send({
                         type: 'TASK_RESULT',
                         taskId: msg.taskId,
-                        params: { status: failCount === 0 ? 'SUCCESS' : (successCount > 0 ? 'PARTIAL' : 'FAILED') },
+                        params: { status: finalStatus },
                         data: {
                             success: successCount > 0,
                             message: `创建完成: 成功${successCount}个, 失败${failCount}个`,

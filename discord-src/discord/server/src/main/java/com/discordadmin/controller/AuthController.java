@@ -203,42 +203,35 @@ public class AuthController {
 
     /**
      * 获取用户权限列表
-     * 优先使用自定义角色权限，无自定义角色或自定义角色无权限时根据内置角色类型返回默认权限
+     * 使用自定义角色权限，同时补充默认权限确保完整性
      */
     private List<String> getAgentPermissions(Agent agent) {
         java.util.Set<String> permissions = new java.util.HashSet<>();
         
         boolean hasCustomRoles = agent.getRoleIds() != null && !agent.getRoleIds().isEmpty();
-        boolean hasPermissions = false;
         
         if (hasCustomRoles) {
-            // 有自定义角色：使用自定义角色的权限
             List<Role> customRoles = roleRepository.findByIdInWithFeatures(agent.getRoleIds());
             for (Role customRole : customRoles) {
                 for (SysFeature feature : customRole.getFeatures()) {
                     permissions.add(feature.getCode());
-                    hasPermissions = true;
                 }
             }
         }
         
-        // 如果没有自定义角色或自定义角色没有分配权限，则根据账号类型返回默认权限
-        if (!hasPermissions) {
-            Integer accountType = agent.getAccountType();
-            if (accountType == null) {
-                accountType = 1;
-            }
-            if (accountType == 0) {
-                // 管理员：区分平台管理员和商户管理员
-                if (agent.getMerchantId() == null) {
-                    permissions.addAll(getPlatformAdminPermissions());
-                } else {
-                    permissions.addAll(getMerchantAdminPermissions());
-                }
+        // 补充默认权限确保完整性
+        Integer accountType = agent.getAccountType();
+        if (accountType == null) {
+            accountType = 1;
+        }
+        if (accountType == 0) {
+            if (agent.getMerchantId() == null) {
+                permissions.addAll(getPlatformAdminPermissions());
             } else {
-                // 普通账号：基础权限
-                permissions.addAll(getSalesPermissions());
+                permissions.addAll(getMerchantAdminPermissions());
             }
+        } else {
+            permissions.addAll(getSalesPermissions());
         }
         
         return List.copyOf(permissions);
@@ -254,7 +247,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "system", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "users", "roles", "features", "audit"
+            "friend-manage", "ai-settings", "merchants", "users", "roles", "features", "audit"
         );
     }
 

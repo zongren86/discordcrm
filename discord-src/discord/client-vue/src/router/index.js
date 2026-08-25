@@ -23,6 +23,7 @@ const routes = [
       { path: 'guild-members', name: 'GuildMembers', component: () => import('@/views/GuildMembers.vue'), meta: { title: '服务器成员', icon: 'User', permissions: ['guild-members'] } },
       { path: 'emulator', name: 'Emulator', component: () => import('@/views/EmulatorView.vue'), meta: { title: '好友管理', icon: 'Monitor', permissions: ['emulator'] } },
       { path: 'ai-settings', name: 'AISettings', component: () => import('@/views/AISettings.vue'), meta: { title: 'AI配置', icon: 'Cpu', permissions: ['ai-settings'] } },
+      { path: 'merchants', name: 'Merchants', component: () => import('@/views/Merchants.vue'), meta: { title: '商户管理', icon: 'OfficeBuilding', permissions: ['merchants'] } },
       { path: 'users', name: 'Users', component: () => import('@/views/Users.vue'), meta: { title: '用户管理', icon: 'User', permissions: ['users'] } },
       { path: 'roles', name: 'Roles', component: () => import('@/views/Roles.vue'), meta: { title: '角色管理', icon: 'Lock', permissions: ['roles'] } },
       { path: 'features', name: 'Features', component: () => import('@/views/Features.vue'), meta: { title: '功能管理', icon: 'Grid', permissions: ['features'] } },
@@ -47,7 +48,7 @@ function getFirstAllowedPath(auth) {
   const pathList = [
     '/stats', '/account-numbers', '/accounts', '/customers',
     '/guilds', '/guild-members', '/emulator', '/ai-settings',
-    '/users', '/roles', '/features', '/audit'
+    '/merchants', '/users', '/roles', '/features', '/audit'
   ]
   
   for (const path of pathList) {

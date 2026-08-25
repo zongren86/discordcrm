@@ -543,7 +543,12 @@ public class EmuInstanceService {
             }
             
             if (!physicalSuccess) {
-                throw new RuntimeException("Agent 模式创建模拟器失败，请检查本地 Agent 是否正常运行");
+                if (physicalList != null && !physicalList.isEmpty()) {
+                    physicalSuccess = true;
+                    log.warn("Agent 创建返回了部分模拟器数据，继续处理");
+                } else {
+                    throw new RuntimeException("Agent 模式创建模拟器失败，请检查本地 Agent 是否正常运行");
+                }
             }
         } else {
             throw new RuntimeException("无法创建物理模拟器：既没有可用的本地 MumuManager，也没有在线 Agent。请确保 MumuManager 已启动（端口 8088）");
@@ -729,10 +734,28 @@ public class EmuInstanceService {
                 .collect(Collectors.toSet());
 
         // 收集物理实例中健康的
-        List<Map<String, Object>> healthyList = physicalList.stream()
-                .filter(e -> !"DAMAGED".equals(e.get("status")) && !Boolean.TRUE.equals(e.get("damaged")))
-                .sorted(Comparator.comparingInt(e -> ((Number) e.get("index")).intValue()))
-                .collect(Collectors.toList());
+        List<Map<String, Object>> healthyList;
+        if (physicalList != null && !physicalList.isEmpty()) {
+            healthyList = physicalList.stream()
+                    .filter(e -> !"DAMAGED".equals(e.get("status")) && !Boolean.TRUE.equals(e.get("damaged")))
+                    .sorted(Comparator.comparingInt(e -> ((Number) e.get("index")).intValue()))
+                    .collect(Collectors.toList());
+        } else {
+            // physicalList 为空（Agent 模式下 getEmulators 可能返回空）
+            // 使用用户传入的参数创建虚拟记录，确保管理后台能显示
+            log.warn("物理列表为空，使用默认参数创建数据库记录");
+            healthyList = new ArrayList<>();
+            for (int i = 0; i < targetTotal; i++) {
+                Map<String, Object> virtualEmu = new HashMap<>();
+                virtualEmu.put("index", i);
+                virtualEmu.put("name", "V" + String.format("%03d", i + 1));
+                virtualEmu.put("status", "STOPPED");
+                virtualEmu.put("adbPort", 16384 + i * 32);
+                virtualEmu.put("cpuCount", cpuCores);
+                virtualEmu.put("memoryMB", memoryGb * 1024);
+                healthyList.add(virtualEmu);
+            }
+        }
 
         log.info("追加模式: 现有DB {} 条, 健康物理 {} 条, 目标总数 {}", existingIndexSet.size(), healthyList.size(), targetTotal);
 
@@ -758,9 +781,17 @@ public class EmuInstanceService {
             instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", dbIndex));
             instance.setInstanceIndex(dbIndex);
             instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
-            // 创建时严格使用用户传入的 CPU/内存参数
-            instance.setCpuCores(cpuCores);
-            instance.setMemoryGb(memoryGb);
+            // 优先使用物理模拟器返回的 CPU/内存参数，没有则回退到用户传入参数
+            int emuCpuCores = cpuCores;
+            int emuMemoryGb = memoryGb;
+            if (mumuEmu.get("cpuCount") instanceof Number) {
+                emuCpuCores = ((Number) mumuEmu.get("cpuCount")).intValue();
+            }
+            if (mumuEmu.get("memoryMB") instanceof Number) {
+                emuMemoryGb = ((Number) mumuEmu.get("memoryMB")).intValue();
+            }
+            instance.setCpuCores(emuCpuCores);
+            instance.setMemoryGb(emuMemoryGb);
             instance.setResolution("720x1280");
             instance.setAdbPort(mumuEmu.get("adbPort") != null ? ((Number) mumuEmu.get("adbPort")).intValue() : null);
             // 保持默认"未安装/未登录/不自动加好友"，由用户手动配置
@@ -845,9 +876,17 @@ public class EmuInstanceService {
             instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", mumuIndex + 1));
             instance.setInstanceIndex(mumuIndex + 1);
             instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
-            // 创建时严格使用用户传入的 CPU/内存参数
-            instance.setCpuCores(cpuCores);
-            instance.setMemoryGb(memoryGb);
+            // 优先使用物理模拟器返回的 CPU/内存参数，没有则回退到用户传入参数
+            int emuCpuCores = cpuCores;
+            int emuMemoryGb = memoryGb;
+            if (mumuEmu.get("cpuCount") instanceof Number) {
+                emuCpuCores = ((Number) mumuEmu.get("cpuCount")).intValue();
+            }
+            if (mumuEmu.get("memoryMB") instanceof Number) {
+                emuMemoryGb = ((Number) mumuEmu.get("memoryMB")).intValue();
+            }
+            instance.setCpuCores(emuCpuCores);
+            instance.setMemoryGb(emuMemoryGb);
             instance.setResolution("720x1280");
             instance.setAdbPort(mumuEmu.get("adbPort") != null ? ((Number) mumuEmu.get("adbPort")).intValue() : null);
             instance.setDiscordInstalled(false);

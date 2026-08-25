@@ -28,7 +28,7 @@ public class DataSeeder implements ApplicationRunner {
     private static final List<String> REQUIRED_FEATURE_CODES = Arrays.asList(
         "dashboard", "chat", "customer", "service", "config", "system", "log",
         "account-numbers", "accounts", "customers", "guilds", "guild-members",
-        "friend-manage", "friend-list", "friend-config", "ai-settings", "users", "roles", "features", "audit"
+        "friend-manage", "friend-list", "friend-config", "ai-settings", "merchants", "users", "roles", "features", "audit"
     );
 
     @Override
@@ -131,6 +131,7 @@ public class DataSeeder implements ApplicationRunner {
 
         // 系统二级菜单
         if (systemParentId != null) {
+            created += createFeatureIfMissing(existingMap, "merchants", "商户管理", systemParentId, "MENU_2", "/merchants", "OfficeBuilding", 0);
             created += createFeatureIfMissing(existingMap, "users", "用户管理", systemParentId, "MENU_2", "/users", "User", 1);
             created += createFeatureIfMissing(existingMap, "roles", "角色管理", systemParentId, "MENU_2", "/roles", "Lock", 2);
             created += createFeatureIfMissing(existingMap, "features", "功能管理", systemParentId, "MENU_2", "/features", "Grid", 3);
@@ -186,14 +187,14 @@ public class DataSeeder implements ApplicationRunner {
                 Role.RoleType.PLATFORM, true,
                 Arrays.asList("dashboard", "chat", "customer", "service", "config", "system", "log",
                         "account-numbers", "accounts", "customers", "guilds", "guild-members",
-                        "friend-manage", "friend-list", "friend-config", "ai-settings", "users", "roles", "features", "audit"));
+                        "friend-manage", "friend-list", "friend-config", "ai-settings", "merchants", "users", "roles", "features", "audit"));
 
         // admin: 除系统管理外的大部分功能
         newRoles += ensureRoleIncremental(featureMap, "admin", "管理员", "系统管理员角色",
                 Role.RoleType.PLATFORM, true,
                 Arrays.asList("dashboard", "chat", "customer", "service", "config", "log",
                         "account-numbers", "accounts", "customers", "guilds", "guild-members",
-                        "friend-manage", "friend-list", "friend-config", "ai-settings", "audit"));
+                        "friend-manage", "friend-list", "friend-config", "ai-settings", "merchants", "audit"));
 
         // merchant_admin: 商户管理员
         newRoles += ensureRoleIncremental(featureMap, "merchant_admin", "商户管理员",
