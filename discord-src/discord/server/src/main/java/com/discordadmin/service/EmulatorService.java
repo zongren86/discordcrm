@@ -396,7 +396,7 @@ public class EmulatorService {
         log.warn("MuMu 守护进程启动超时（端口探测失败），后续操作可能报错");
     }
 
-    private boolean isDaemonReady() {
+    public boolean isDaemonReady() {
         if (resolvedMumutoolPath == null || resolvedMumutoolPath.isBlank()) return false;
         try {
             Process p = new ProcessBuilder(resolvedMumutoolPath, "port").start();

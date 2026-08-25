@@ -36,7 +36,9 @@ public class EmuInstanceService {
     private final DiscordAccountRepository discordAccountRepository;
     private final DiscordService discordService;
     private final com.discordadmin.repository.GuildMemberRepository guildMemberRepository;
+    private final com.discordadmin.repository.GifFavoriteRepository gifFavoriteRepository;
     private final jakarta.persistence.EntityManager entityManager;
+    private final EmulatorService emulatorService;
 
     @Value("${emulator.local-mode:false}")
     private boolean localMode;
@@ -48,7 +50,9 @@ public class EmuInstanceService {
                                DiscordAccountRepository discordAccountRepository,
                                DiscordService discordService,
                                com.discordadmin.repository.GuildMemberRepository guildMemberRepository,
-                               jakarta.persistence.EntityManager entityManager) {
+                               com.discordadmin.repository.GifFavoriteRepository gifFavoriteRepository,
+                               jakarta.persistence.EntityManager entityManager,
+                               EmulatorService emulatorService) {
         this.instanceRepository = instanceRepository;
         this.mumuClientService = mumuClientService;
         this.webSocketService = webSocketService;
@@ -56,7 +60,9 @@ public class EmuInstanceService {
         this.discordAccountRepository = discordAccountRepository;
         this.discordService = discordService;
         this.guildMemberRepository = guildMemberRepository;
+        this.gifFavoriteRepository = gifFavoriteRepository;
         this.entityManager = entityManager;
+        this.emulatorService = emulatorService;
     }
 
     private Long resolveMerchantId() {
@@ -78,6 +84,20 @@ public class EmuInstanceService {
         log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         log.info("查询结果: 找到 {} 个模拟器", instances.size());
+        
+        // 自动同步：确保数据库与物理模拟器完全一致
+        if (!localMode) {
+            try {
+                List<Map<String, Object>> physicalEmulators = webSocketService.getEmulatorsFromAgent(userId);
+                if (physicalEmulators != null) {
+                    syncDatabaseWithPhysical(merchantId, userId, instances, physicalEmulators);
+                    // 重新查询
+                    instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+                }
+            } catch (Exception e) {
+                log.warn("自动同步物理模拟器失败: {}", e.getMessage());
+            }
+        }
         
         // 使用原生查询获取 auto_running 字段值，解决 JPA 映射问题
         Map<Long, Boolean> autoRunningMap = new HashMap<>();
@@ -269,6 +289,25 @@ public class EmuInstanceService {
             log.info("已使用 autoRunningMap 覆盖 {} 个模拟器的 autoRunning 状态", autoRunningMap.size());
         }
         
+        // 为每个模拟器添加 Agent 信息
+        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
+        if (!onlineAgents.isEmpty()) {
+            // 如果只有一个 Agent，直接关联
+            AgentRegistration defaultAgent = onlineAgents.get(0);
+            String agentLabel = defaultAgent.getOs() != null ? 
+                (defaultAgent.getOs().equals("darwin") ? "macOS" : 
+                 defaultAgent.getOs().equals("win32") ? "Windows" : 
+                 defaultAgent.getOs().equals("linux") ? "Linux" : defaultAgent.getOs()) : "Agent";
+            
+            for (Map<String, Object> emu : result) {
+                emu.put("agentDeviceId", defaultAgent.getDeviceId());
+                emu.put("agentUserId", defaultAgent.getUserId());
+                emu.put("agentLabel", agentLabel);
+                emu.put("agentOs", defaultAgent.getOs());
+            }
+            log.info("已为 {} 个模拟器关联 Agent 信息 (deviceId={})", result.size(), defaultAgent.getDeviceId());
+        }
+        
         return result;
     }
 
@@ -305,7 +344,7 @@ public class EmuInstanceService {
      * @param mode 'set'(默认，设置总数量，会删除超出的旧记录) 或 'add'(追加模式，在现有基础上新增 count 台)
      */
     @Transactional
-    public List<Map<String, Object>> setInstanceCount(int count, int cpuCores, int memoryGb, String mode) {
+    public List<Map<String, Object>> setInstanceCount(int count, int cpuCores, int memoryGb, String mode, String deviceId) {
         Long merchantId = resolveMerchantId();
         String userId = resolveUserId();
 
@@ -384,10 +423,27 @@ public class EmuInstanceService {
         } else if (agentOnline) {
             log.info("使用 Agent 模式创建模拟器");
             List<AgentRegistration> onlineAgents = webSocketService.getAllOnlineAgents();
-            for (AgentRegistration agent : onlineAgents) {
+            List<AgentRegistration> targetAgents;
+            if (deviceId != null && !deviceId.isEmpty()) {
+                targetAgents = onlineAgents.stream()
+                    .filter(a -> deviceId.equals(a.getDeviceId()))
+                    .collect(Collectors.toList());
+                log.info("指定 Agent: {}, 匹配 {} 个", deviceId, targetAgents.size());
+            } else {
+                targetAgents = onlineAgents;
+            }
+            for (AgentRegistration agent : targetAgents) {
                 try {
                     Map<String, Object> params = new HashMap<>();
-                    params.put("count", targetTotal);
+                    if (addMode) {
+                        // 追加模式：传递新增数量，告诉 Agent 直接创建这么多
+                        params.put("count", count);
+                        params.put("addMode", true);
+                    } else {
+                        // 设置模式：传递目标总数
+                        params.put("count", targetTotal);
+                        params.put("addMode", false);
+                    }
                     params.put("cpuCores", cpuCores);
                     params.put("memoryGb", memoryGb);
 
@@ -408,6 +464,18 @@ public class EmuInstanceService {
                                 physicalList = agentList;
                                 log.info("Agent 返回 {} 个模拟器", physicalList.size());
                             }
+                        } else if (data instanceof Map) {
+                            // Agent 返回的是 { success, message, results: [...] } 结构
+                            Map<?, ?> dataMap = (Map<?, ?>) data;
+                            Object results = dataMap.get("results");
+                            if (results instanceof List) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> agentList = (List<Map<String, Object>>) results;
+                                if (agentList != null && !agentList.isEmpty()) {
+                                    physicalList = agentList;
+                                    log.info("Agent 返回 {} 个模拟器 (从results)", physicalList.size());
+                                }
+                            }
                         }
                         break;
                     }
@@ -423,24 +491,96 @@ public class EmuInstanceService {
             throw new RuntimeException("无法创建物理模拟器：既没有可用的本地 MumuManager，也没有在线 Agent。请确保 MumuManager 已启动（端口 8088）");
         }
 
-        // 5. 验证物理实体（使用 MumuManager API 获取最新列表，确保物理实例真正存在）
+        // 5. 验证物理实体
         int healthyAfterCreate = 0;
         try {
-            List<Map<String, Object>> finalList = mumuClientService.getAllEmulatorsWithError();
-            if (finalList == null || finalList.isEmpty()) {
-                throw new RuntimeException("物理模拟器创建失败：MumuManager 返回空列表，物理实例可能未真正创建");
+            List<Map<String, Object>> finalList;
+            
+            if ("agent".equals(createMethod)) {
+                // Agent 模式：通过 Agent 获取模拟器列表
+                log.info("使用 Agent 模式验证物理实体");
+                List<AgentRegistration> onlineAgents = webSocketService.getAllOnlineAgents();
+                finalList = new ArrayList<>();
+                List<AgentRegistration> verifyAgents;
+                if (deviceId != null && !deviceId.isEmpty()) {
+                    verifyAgents = onlineAgents.stream()
+                        .filter(a -> deviceId.equals(a.getDeviceId()))
+                        .collect(Collectors.toList());
+                } else {
+                    verifyAgents = onlineAgents;
+                }
+                for (AgentRegistration agent : verifyAgents) {
+                    try {
+                        CompletableFuture<Map<String, Object>> future =
+                            webSocketService.sendCommandAndWait(agent.getDeviceId(), "GET_EMULATORS", new HashMap<>());
+                        Map<String, Object> result = future.get(30, TimeUnit.SECONDS);
+                        log.info("Agent {} GET_EMULATORS 结果: status={}", agent.getDeviceId(), result.get("status"));
+                        
+                        if ("SUCCESS".equals(result.get("status"))) {
+                            // handleTaskResult 会把 data 展开到 result 顶层（putAll）
+                            // 所以需要同时兼容两种格式
+                            List<Map<String, Object>> agentEmulators = null;
+                            
+                            // 方式1: emulators 已在顶层
+                            Object emulatorsTop = result.get("emulators");
+                            if (emulatorsTop instanceof List) {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> list = (List<Map<String, Object>>) emulatorsTop;
+                                agentEmulators = list;
+                            }
+                            
+                            // 方式2: emulators 在 data 子对象中
+                            if (agentEmulators == null) {
+                                Object data = result.get("data");
+                                if (data instanceof Map) {
+                                    Object emulatorsNested = ((Map<?, ?>) data).get("emulators");
+                                    if (emulatorsNested instanceof List) {
+                                        @SuppressWarnings("unchecked")
+                                        List<Map<String, Object>> list = (List<Map<String, Object>>) emulatorsNested;
+                                        agentEmulators = list;
+                                    }
+                                }
+                            }
+                            
+                            if (agentEmulators != null) {
+                                finalList.addAll(agentEmulators);
+                                log.info("Agent 返回 {} 个模拟器", agentEmulators.size());
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.warn("Agent {} 获取模拟器列表失败: {}", agent.getDeviceId(), e.getMessage());
+                    }
+                }
+                
+                if (finalList.isEmpty()) {
+                    log.warn("Agent 模式获取模拟器列表为空，但创建命令已发送成功，跳过验证");
+                    // Agent 模式下，如果创建命令成功发送，即使获取列表为空也不报错
+                    // 因为模拟器可能需要一些时间来启动
+                    healthyAfterCreate = targetTotal; // 假设全部创建成功
+                }
+            } else {
+                // 本地模式：使用 MumuManager API
+                finalList = mumuClientService.getAllEmulatorsWithError();
+                if (finalList == null || finalList.isEmpty()) {
+                    throw new RuntimeException("物理模拟器创建失败：MumuManager 返回空列表，物理实例可能未真正创建");
+                }
             }
             
-            healthyAfterCreate = countHealthy(finalList);
-            log.info("物理模拟器验证: 创建方式={}, 总数={}, 健康={}, 需要目标总数={}", 
-                    createMethod, finalList.size(), healthyAfterCreate, targetTotal);
-            
-            if (healthyAfterCreate < targetTotal) {
-                throw new RuntimeException(String.format("物理模拟器数量验证失败: 需要 %d 个健康实例，实际只有 %d 个。物理创建可能未成功，请检查 MumuManager 日志", targetTotal, healthyAfterCreate));
+            if (!finalList.isEmpty()) {
+                healthyAfterCreate = countHealthy(finalList);
+                log.info("物理模拟器验证: 创建方式={}, 总数={}, 健康={}, 需要目标总数={}", 
+                        createMethod, finalList.size(), healthyAfterCreate, targetTotal);
+                
+                if ("local".equals(createMethod) && healthyAfterCreate < targetTotal) {
+                    throw new RuntimeException(String.format("物理模拟器数量验证失败: 需要 %d 个健康实例，实际只有 %d 个。物理创建可能未成功，请检查 MumuManager 日志", targetTotal, healthyAfterCreate));
+                }
+                
+                physicalList = finalList;
+                log.info("物理模拟器验证通过，实际存在 {} 个健康实体", healthyAfterCreate);
+            } else {
+                log.info("Agent 模式下跳过验证，模拟器列表为空但创建命令已发送");
+                healthyAfterCreate = targetTotal;
             }
-            
-            physicalList = finalList;
-            log.info("物理模拟器验证通过，实际存在 {} 个健康实体", healthyAfterCreate);
         } catch (RuntimeException e) {
             log.error("物理模拟器验证失败: {}", e.getMessage());
             throw e;
@@ -667,6 +807,121 @@ public class EmuInstanceService {
     /**
      * 映射 Mumu 状态到数据库状态
      */
+    /**
+     * 同步数据库与物理模拟器：确保一一对应
+     * - 物理存在但数据库不存在 -> 创建
+     * - 物理不存在但数据库存在 -> 删除
+     * - 配置不一致 -> 更新
+     */
+    private void syncDatabaseWithPhysical(Long merchantId, String userId,
+                                           List<EmuInstance> existingInstances,
+                                           List<Map<String, Object>> physicalEmulators) {
+        log.info("开始同步数据库: 数据库现有 {} 条, 物理 {} 条", existingInstances.size(), physicalEmulators.size());
+        
+        // 构建物理模拟器索引映射 (key=物理index, value=物理数据)
+        Map<Integer, Map<String, Object>> physicalMap = new HashMap<>();
+        for (Map<String, Object> phys : physicalEmulators) {
+            Object idx = phys.get("index");
+            if (idx instanceof Number) {
+                physicalMap.put(((Number) idx).intValue(), phys);
+            }
+        }
+        
+        // 构建数据库记录索引映射 (key=数据库index, value=数据库记录)
+        Map<Integer, EmuInstance> dbMap = new HashMap<>();
+        for (EmuInstance inst : existingInstances) {
+            if (inst.getInstanceIndex() != null) {
+                dbMap.put(inst.getInstanceIndex(), inst);
+            }
+        }
+        
+        int created = 0, deleted = 0, updated = 0;
+        
+        // 1. 处理物理模拟器：创建或更新
+        for (Map<String, Object> phys : physicalEmulators) {
+            Object idxObj = phys.get("index");
+            if (!(idxObj instanceof Number)) continue;
+            int physIndex = ((Number) idxObj).intValue();
+            int dbIndex = physIndex + 1;
+            
+            String physName = (String) phys.get("name");
+            String physStatusStr = phys.get("status") != null ? phys.get("status").toString() : "STOPPED";
+            EmuInstance.EmuStatus physStatus = mapMumuStatus(physStatusStr);
+            int physCpu = phys.get("cpuCount") != null ? ((Number) phys.get("cpuCount")).intValue() : 1;
+            int physMem = phys.get("memoryMB") != null ? ((Number) phys.get("memoryMB")).intValue() / 1024 : 1;
+            Integer physAdbPort = phys.get("adbPort") != null ? ((Number) phys.get("adbPort")).intValue() : null;
+            
+            if (dbMap.containsKey(dbIndex)) {
+                // 更新已有记录
+                EmuInstance existing = dbMap.get(dbIndex);
+                boolean needUpdate = false;
+                
+                if (physName != null && !physName.equals(existing.getName())) {
+                    existing.setName(physName);
+                    needUpdate = true;
+                }
+                if (existing.getStatus() != physStatus) {
+                    existing.setStatus(physStatus);
+                    needUpdate = true;
+                }
+                if (physCpu != existing.getCpuCores()) {
+                    existing.setCpuCores(physCpu);
+                    needUpdate = true;
+                }
+                if (physMem != existing.getMemoryGb()) {
+                    existing.setMemoryGb(physMem);
+                    needUpdate = true;
+                }
+                if (physAdbPort != null && !physAdbPort.equals(existing.getAdbPort())) {
+                    existing.setAdbPort(physAdbPort);
+                    needUpdate = true;
+                }
+                
+                if (needUpdate) {
+                    existing.setUpdatedAt(Instant.now());
+                    instanceRepository.save(existing);
+                    updated++;
+                    log.info("同步更新: {} (index={})", existing.getName(), dbIndex);
+                }
+            } else {
+                // 创建新记录
+                EmuInstance inst = new EmuInstance();
+                inst.setMerchantId(merchantId);
+                inst.setUserId(userId);
+                inst.setName(physName != null ? physName : "V" + String.format("%03d", dbIndex));
+                inst.setInstanceIndex(dbIndex);
+                inst.setStatus(physStatus);
+                inst.setCpuCores(physCpu);
+                inst.setMemoryGb(physMem);
+                inst.setResolution("720x1280");
+                inst.setAdbPort(physAdbPort);
+                inst.setDiscordInstalled(false);
+                inst.setDiscordLoggedIn(false);
+                inst.setAutoRunning(false);
+                inst.setAddedCount(0);
+                inst.setCreatedAt(Instant.now());
+                inst.setUpdatedAt(Instant.now());
+                instanceRepository.save(inst);
+                created++;
+                log.info("同步创建: {} (index={})", inst.getName(), dbIndex);
+            }
+        }
+        
+        // 2. 处理多余的数据库记录（物理不存在）
+        for (Map.Entry<Integer, EmuInstance> entry : dbMap.entrySet()) {
+            int dbIndex = entry.getKey();
+            int physIndex = dbIndex - 1;
+            if (!physicalMap.containsKey(physIndex)) {
+                EmuInstance toDelete = entry.getValue();
+                instanceRepository.delete(toDelete);
+                deleted++;
+                log.info("同步删除: {} (dbIndex={}, 物理index={} 不存在)", toDelete.getName(), dbIndex, physIndex);
+            }
+        }
+        
+        log.info("同步完成: 创建 {} 条, 更新 {} 条, 删除 {} 条", created, updated, deleted);
+    }
+
     private EmuInstance.EmuStatus mapMumuStatus(String mumuStatus) {
         if (mumuStatus == null) return EmuInstance.EmuStatus.CREATED;
         return switch (mumuStatus) {
@@ -1619,28 +1874,84 @@ public class EmuInstanceService {
         List<AgentRegistration> myAgents = webSocketService.getOnlineAgentsByUserId(userId);
         boolean agentOnline = !myAgents.isEmpty();
 
-        // 本地（云服务器）是否有 MuMu 模拟器
-        boolean localReachable = mumuClientService.isReachable();
+        // 本地（云服务器）检测：仅在 localMode 下才检测本地 MuMu
+        // Agent 模式下，localReachable 不应该依赖服务器本地环境
+        boolean localReachable = false;
+        if (localMode) {
+            localReachable = mumuClientService.isReachable();
+        }
 
-        // 可用条件：当前商户有在线 Agent，或者本地有 MuMu
+        // 可用条件：Agent 在线 或 本地模式下有 MuMu
         boolean available = agentOnline || localReachable;
 
         status.put("available", available);
         status.put("agentOnline", agentOnline);
         status.put("agentCount", myAgents.size());
         status.put("localReachable", localReachable);
+        status.put("localMode", localMode);
         status.put("userId", userId);
         status.put("merchantId", merchantId);
 
         if (agentOnline) {
             status.put("message", "已连接 Agent (" + myAgents.size() + " 台设备在线)");
         } else if (localReachable) {
-            status.put("message", "本地模拟器已连接");
+            // 本地模式下，检查是否有运行中的模拟器
+            int physicalCount = 0;
+            try {
+                java.util.List<com.discordadmin.model.EmulatorInfo> emus = emulatorService.getAllEmulators();
+                physicalCount = emus != null ? emus.size() : 0;
+            } catch (Exception e) {
+                // 忽略
+            }
+            if (physicalCount > 0) {
+                status.put("message", "本地环境已就绪，共 " + physicalCount + " 台模拟器");
+            } else {
+                status.put("message", "本地环境已就绪，但暂无运行中的模拟器");
+            }
+            status.put("physicalCount", physicalCount);
         } else {
-            status.put("message", "未检测到在线 Agent。请在本地运行 mumu-agent 客户端");
+            status.put("message", "未检测到在线 Agent。请启动 Agent 或 MuMuPlayer");
         }
 
         return status;
+    }
+
+    /**
+     * 获取当前用户所有在线 Agent 的详细信息
+     */
+    public Map<String, Object> getOnlineAgentDetails() {
+        Map<String, Object> result = new HashMap<>();
+        String userId = resolveUserId();
+        
+        List<AgentRegistration> myAgents = webSocketService.getOnlineAgentsByUserId(userId);
+        
+        List<Map<String, Object>> agentDetails = new ArrayList<>();
+        for (AgentRegistration agent : myAgents) {
+            Map<String, Object> detail = new HashMap<>();
+            detail.put("deviceId", agent.getDeviceId());
+            detail.put("userId", agent.getUserId());
+            detail.put("os", agent.getOs());
+            detail.put("osVersion", agent.getOsVersion());
+            detail.put("muMuPath", agent.getMuMuPath());
+            detail.put("status", agent.getStatus());
+            detail.put("lastHeartbeatAt", agent.getLastHeartbeatAt());
+            detail.put("createdAt", agent.getCreatedAt());
+            detail.put("updatedAt", agent.getUpdatedAt());
+            
+            // 计算在线时长
+            if (agent.getLastHeartbeatAt() != null) {
+                long secondsSinceHeartbeat = Instant.now().getEpochSecond() - agent.getLastHeartbeatAt().getEpochSecond();
+                detail.put("secondsSinceHeartbeat", secondsSinceHeartbeat);
+                detail.put("heartbeatStatus", secondsSinceHeartbeat < 90 ? "正常" : "超时");
+            }
+            
+            agentDetails.add(detail);
+        }
+        
+        result.put("userId", userId);
+        result.put("agentCount", myAgents.size());
+        result.put("agents", agentDetails);
+        return result;
     }
 
     /**
@@ -1657,10 +1968,18 @@ public class EmuInstanceService {
 
         List<Map<String, Object>> physicalList;
         try {
-            physicalList = mumuClientService.getAllEmulatorsWithError();
+            if (localMode) {
+                physicalList = mumuClientService.getAllEmulatorsWithError();
+            } else {
+                physicalList = webSocketService.getEmulatorsFromAgent(userId);
+                if (physicalList == null) {
+                    physicalList = new ArrayList<>();
+                    actions.add("Agent 未返回模拟器列表");
+                }
+            }
         } catch (Exception e) {
             result.put("success", false);
-            result.put("message", "无法连接到 MumuManager: " + e.getMessage());
+            result.put("message", "无法获取模拟器列表: " + e.getMessage());
             result.put("actions", actions);
             return result;
         }
@@ -1680,19 +1999,47 @@ public class EmuInstanceService {
             }
         }
 
-        // 1. 物理有但数据库没有 → 创建记录
+        // 1. 物理有但数据库没有 → 创建记录（使用物理数据的真实 CPU/内存）
+        Map<Integer, Map<String, Object>> physicalDataMap = new HashMap<>();
+        if (physicalList != null) {
+            for (Map<String, Object> emu : physicalList) {
+                Object idx = emu.get("index");
+                if (idx instanceof Number) {
+                    int cloudIdx = ((Number) idx).intValue() + 1;
+                    physicalDataMap.put(cloudIdx, emu);
+                }
+            }
+        }
+
         for (int physIdx : physicalIndices) {
             if (!dbIndices.contains(physIdx)) {
                 EmuInstance instance = new EmuInstance();
                 instance.setMerchantId(merchantId);
                 instance.setUserId(userId);
-                // 生成 V-prefix 名称（与 Mumu 一致）
                 String vName = "V" + String.format("%03d", physIdx);
                 instance.setName(vName);
                 instance.setInstanceIndex(physIdx);
-                instance.setStatus(EmuInstance.EmuStatus.CREATED);
-                instance.setCpuCores(1);
-                instance.setMemoryGb(1);
+                instance.setStatus(EmuInstance.EmuStatus.STOPPED);
+                // 使用物理数据中的真实 CPU/内存配置
+                Map<String, Object> physData = physicalDataMap.get(physIdx);
+                int cpuCores = 1;
+                int memoryGb = 1;
+                if (physData != null) {
+                    Object cpuObj = physData.get("cpuCount");
+                    if (cpuObj instanceof Number) {
+                        cpuCores = ((Number) cpuObj).intValue();
+                        if (cpuCores <= 0) cpuCores = 1;
+                    }
+                    Object memObj = physData.get("memoryMB");
+                    if (memObj instanceof Number) {
+                        int memMB = ((Number) memObj).intValue();
+                        if (memMB > 0) {
+                            memoryGb = Math.max(1, memMB / 1024);
+                        }
+                    }
+                }
+                instance.setCpuCores(cpuCores);
+                instance.setMemoryGb(memoryGb);
                 instance.setResolution("720x1280");
                 instance.setDiscordInstalled(false);
                 instance.setDiscordLoggedIn(false);
@@ -1700,8 +2047,8 @@ public class EmuInstanceService {
                 instance.setAddedCount(0);
                 instance.setCreatedAt(Instant.now());
                 instanceRepository.save(instance);
-                actions.add("为物理模拟器 #" + physIdx + " 创建了数据库记录");
-                log.info("同步：为物理模拟器 #{} 创建数据库记录, name={}", physIdx, vName);
+                actions.add("为物理模拟器 #" + physIdx + " 创建了数据库记录(" + cpuCores + "核/" + memoryGb + "GB)");
+                log.info("同步：为物理模拟器 #{} 创建数据库记录, name={}, cpu={}, mem={}GB", physIdx, vName, cpuCores, memoryGb);
             }
         }
 

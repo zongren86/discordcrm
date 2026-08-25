@@ -2,9 +2,12 @@ package com.discordadmin.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.discordadmin.entity.AutoAddConfigEntity;
 import com.discordadmin.model.AutoAddConfig;
 import com.discordadmin.model.DiscordAccount;
 import com.discordadmin.model.FriendConfig;
+import com.discordadmin.repository.AutoAddConfigRepository;
+import com.discordadmin.security.SecurityUtils;
 import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Service;
 
@@ -17,10 +20,15 @@ public class DataStoreService {
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final String dataDir = System.getProperty("user.home") + "/.discord-admin/data";
+    private final AutoAddConfigRepository configRepository;
 
     private final List<DiscordAccount> accounts = new CopyOnWriteArrayList<>();
     private final List<FriendConfig> friends = new CopyOnWriteArrayList<>();
     private final AutoAddConfig config = new AutoAddConfig();
+
+    public DataStoreService(AutoAddConfigRepository configRepository) {
+        this.configRepository = configRepository;
+    }
 
     @PostConstruct
     public void init() {
@@ -49,26 +57,108 @@ public class DataStoreService {
                 friends.clear();
                 friends.addAll(list);
             }
-            File cf = file("autoconfig.json");
-            if (cf.exists()) {
-                AutoAddConfig c = mapper.readValue(cf, AutoAddConfig.class);
-                config.setIntervalSeconds(c.getIntervalSeconds());
-                config.setDelayMinSeconds(c.getDelayMinSeconds());
-                config.setDelayMaxSeconds(c.getDelayMaxSeconds());
-                config.setAutoCrawlDiscordAccount(c.isAutoCrawlDiscordAccount());
-                config.setCrawlIntervalSeconds(c.getCrawlIntervalSeconds());
-                config.setAutoLoginDiscord(c.isAutoLoginDiscord());
-                config.setMaxConcurrentEmulators(c.getMaxConcurrentEmulators());
-                config.setEmulatorStartIntervalSec(c.getEmulatorStartIntervalSec());
-                config.setTestModeEnabled(c.isTestModeEnabled());
-                // 新字段
-                config.setAddStartTime(c.getAddStartTime());
-                config.setAddEndTime(c.getAddEndTime());
-                config.setDailyLimit(c.getDailyLimit());
-                config.setEstimatedSingleDurationMin(c.getEstimatedSingleDurationMin());
+            // 从数据库加载配置，若不存在则从文件迁移
+            String userId = getCurrentUserId();
+            Long merchantId = getCurrentMerchantId();
+            AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
+                .orElse(null);
+            if (entity != null) {
+                loadFromEntity(entity);
+            } else {
+                // 迁移：从文件加载并保存到数据库
+                File cf = file("autoconfig.json");
+                if (cf.exists()) {
+                    AutoAddConfig c = mapper.readValue(cf, AutoAddConfig.class);
+                    loadFromAutoAddConfig(c);
+                    saveConfigToDatabase();
+                } else {
+                    // 创建默认配置
+                    saveConfigToDatabase();
+                }
             }
         } catch (Exception e) {
             // 加载失败不影响启动
+        }
+    }
+
+    private String getCurrentUserId() {
+        try {
+            String id = SecurityUtils.currentUserId();
+            return id != null ? id : "default";
+        } catch (Exception e) {
+            return "default";
+        }
+    }
+
+    private Long getCurrentMerchantId() {
+        try {
+            Long id = SecurityUtils.currentMerchantId();
+            return id != null ? id : 1L;
+        } catch (Exception e) {
+            return 1L;
+        }
+    }
+
+    private void loadFromEntity(AutoAddConfigEntity entity) {
+        config.setIntervalSeconds(entity.getIntervalSeconds());
+        config.setDelayMinSeconds(entity.getDelayMinSeconds());
+        config.setDelayMaxSeconds(entity.getDelayMaxSeconds());
+        config.setAutoCrawlDiscordAccount(entity.getAutoCrawlDiscordAccount());
+        config.setCrawlIntervalSeconds(entity.getCrawlIntervalSeconds());
+        config.setAutoLoginDiscord(entity.getAutoLoginDiscord());
+        config.setMaxConcurrentEmulators(entity.getMaxConcurrentEmulators());
+        config.setEmulatorStartIntervalSec(entity.getEmulatorStartIntervalSec());
+        config.setTestModeEnabled(entity.getTestModeEnabled());
+        config.setAddStartTime(entity.getAddStartTime());
+        config.setAddEndTime(entity.getAddEndTime());
+        config.setDailyLimit(entity.getDailyLimit());
+        config.setEstimatedSingleDurationMin(entity.getEstimatedSingleDurationMin());
+    }
+
+    private void loadFromAutoAddConfig(AutoAddConfig c) {
+        config.setIntervalSeconds(c.getIntervalSeconds());
+        config.setDelayMinSeconds(c.getDelayMinSeconds());
+        config.setDelayMaxSeconds(c.getDelayMaxSeconds());
+        config.setAutoCrawlDiscordAccount(c.isAutoCrawlDiscordAccount());
+        config.setCrawlIntervalSeconds(c.getCrawlIntervalSeconds());
+        config.setAutoLoginDiscord(c.isAutoLoginDiscord());
+        config.setMaxConcurrentEmulators(c.getMaxConcurrentEmulators());
+        config.setEmulatorStartIntervalSec(c.getEmulatorStartIntervalSec());
+        config.setTestModeEnabled(c.isTestModeEnabled());
+        config.setAddStartTime(c.getAddStartTime());
+        config.setAddEndTime(c.getAddEndTime());
+        config.setDailyLimit(c.getDailyLimit());
+        config.setEstimatedSingleDurationMin(c.getEstimatedSingleDurationMin());
+    }
+
+    private void saveConfigToDatabase() {
+        try {
+            String userId = getCurrentUserId();
+            Long merchantId = getCurrentMerchantId();
+            AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
+                .orElseGet(() -> {
+                    AutoAddConfigEntity e = new AutoAddConfigEntity();
+                    e.setMerchantId(merchantId);
+                    e.setUserId(userId);
+                    return e;
+                });
+            entity.setIntervalSeconds(config.getIntervalSeconds());
+            entity.setDelayMinSeconds(config.getDelayMinSeconds());
+            entity.setDelayMaxSeconds(config.getDelayMaxSeconds());
+            entity.setAutoCrawlDiscordAccount(config.isAutoCrawlDiscordAccount());
+            entity.setCrawlIntervalSeconds(config.getCrawlIntervalSeconds());
+            entity.setAutoLoginDiscord(config.isAutoLoginDiscord());
+            entity.setMaxConcurrentEmulators(config.getMaxConcurrentEmulators());
+            entity.setEmulatorStartIntervalSec(config.getEmulatorStartIntervalSec());
+            entity.setTestModeEnabled(config.isTestModeEnabled());
+            entity.setAddStartTime(config.getAddStartTime());
+            entity.setAddEndTime(config.getAddEndTime());
+            entity.setDailyLimit(config.getDailyLimit());
+            entity.setEstimatedSingleDurationMin(config.getEstimatedSingleDurationMin());
+            entity.setUpdatedAt(java.time.Instant.now());
+            configRepository.save(entity);
+        } catch (Exception e) {
+            // 保存失败不影响运行
         }
     }
 
@@ -81,7 +171,7 @@ public class DataStoreService {
     }
 
     private void saveConfig() {
-        try { mapper.writeValue(file("autoconfig.json"), config); } catch (Exception ignored) {}
+        saveConfigToDatabase();
     }
 
     public List<DiscordAccount> getAccounts() {
@@ -253,10 +343,34 @@ public class DataStoreService {
     }
 
     public AutoAddConfig getConfig() {
+        // 从数据库加载当前用户的配置
+        try {
+            String userId = getCurrentUserId();
+            Long merchantId = getCurrentMerchantId();
+            AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
+                .orElse(null);
+            if (entity != null) {
+                loadFromEntity(entity);
+            }
+        } catch (Exception e) {
+            // 忽略
+        }
         return config;
     }
 
     public void updateConfig(int interval, int delayMin, int delayMax) {
+        // 从数据库加载当前用户配置
+        try {
+            String userId = getCurrentUserId();
+            Long merchantId = getCurrentMerchantId();
+            AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
+                .orElse(null);
+            if (entity != null) {
+                loadFromEntity(entity);
+            }
+        } catch (Exception e) {
+            // 忽略
+        }
         config.setIntervalSeconds(interval);
         config.setDelayMinSeconds(delayMin);
         config.setDelayMaxSeconds(delayMax);
@@ -275,6 +389,19 @@ public class DataStoreService {
     }
 
     public synchronized void updateFullConfig(Map<String, Object> body) {
+        // 从数据库加载当前用户配置
+        try {
+            String userId = getCurrentUserId();
+            Long merchantId = getCurrentMerchantId();
+            AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
+                .orElse(null);
+            if (entity != null) {
+                loadFromEntity(entity);
+            }
+        } catch (Exception e) {
+            // 忽略
+        }
+        
         if (body.containsKey("intervalSeconds"))
             config.setIntervalSeconds(toInt(body.get("intervalSeconds"), config.getIntervalSeconds()));
         if (body.containsKey("delayMinSeconds"))
@@ -293,7 +420,6 @@ public class DataStoreService {
             config.setEmulatorStartIntervalSec(toInt(body.get("emulatorStartIntervalSec"), config.getEmulatorStartIntervalSec()));
         if (body.containsKey("testModeEnabled"))
             config.setTestModeEnabled(Boolean.parseBoolean(String.valueOf(body.get("testModeEnabled"))));
-        // 新字段
         if (body.containsKey("addStartTime"))
             config.setAddStartTime(String.valueOf(body.get("addStartTime")));
         if (body.containsKey("addEndTime"))
@@ -302,11 +428,16 @@ public class DataStoreService {
             config.setDailyLimit(toInt(body.get("dailyLimit"), config.getDailyLimit()));
         if (body.containsKey("estimatedSingleDurationMin"))
             config.setEstimatedSingleDurationMin(toInt(body.get("estimatedSingleDurationMin"), config.getEstimatedSingleDurationMin()));
-        // 自动计算间隔时间
-        int calculatedInterval = config.calculateIntervalMinutes();
-        if (calculatedInterval > 0) {
-            config.setIntervalSeconds(calculatedInterval * 60);
+        
+        // 如果前端没有传 intervalSeconds，但传了时间范围和人数，则自动计算
+        if (!body.containsKey("intervalSeconds") && 
+            (body.containsKey("addStartTime") || body.containsKey("addEndTime") || body.containsKey("dailyLimit"))) {
+            int calculatedInterval = config.calculateIntervalMinutes();
+            if (calculatedInterval > 0) {
+                config.setIntervalSeconds(calculatedInterval * 60);
+            }
         }
+        
         saveConfig();
     }
 

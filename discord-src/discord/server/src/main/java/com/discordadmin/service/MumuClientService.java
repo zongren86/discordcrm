@@ -66,7 +66,13 @@ public class MumuClientService {
     public boolean isReachable() {
         try {
             List<EmulatorInfo> emus = emulatorService.getAllEmulators();
-            return emus != null;
+            // 模拟器列表不为空，说明守护进程可达
+            if (emus != null && !emus.isEmpty()) {
+                return true;
+            }
+            // 列表为空时，检查守护进程是否真正可达
+            // 如果有配置的 mumutool 路径，尝试直接检测端口
+            return emulatorService.isDaemonReady();
         } catch (Exception e) {
             log.debug("Mumu 不可达: {}", e.getMessage());
             return false;

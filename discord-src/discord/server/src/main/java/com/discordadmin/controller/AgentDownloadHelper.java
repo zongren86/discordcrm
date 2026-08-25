@@ -11,11 +11,14 @@ import org.springframework.stereotype.Component;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.zip.*;
 
 @Slf4j
 @Component
 public class AgentDownloadHelper {
+    
+    private static final ObjectMapper objectMapper = new ObjectMapper();
     
     public static ResponseEntity<Resource> downloadAgentPackage(String userId, Long merchantId, String serverName) {
         try {
@@ -40,55 +43,82 @@ public class AgentDownloadHelper {
             
             Path zipPath = Files.createTempFile("mumu-agent-", ".zip");
             
-            String configContent = "{\n" +
-                "  \"userId\": \"" + userId + "\",\n" +
-                "  \"merchantId\": " + (merchantId != null ? merchantId : 0) + ",\n" +
-                "  \"serverUrl\": \"wss://" + serverName + "/ws/agent\",\n" +
-                "  \"heartbeatInterval\": 30000,\n" +
-                "  \"autoStart\": true\n" +
-                "}";
+            // 生成统一的 config.json（包含所有平台配置）
+            Map<String, Object> configMap = new LinkedHashMap<>();
+            configMap.put("userId", userId);
+            configMap.put("merchantId", merchantId != null ? merchantId : 0);
+            configMap.put("serverUrl", "ws://" + serverName + "/ws/agent");
+            configMap.put("heartbeatInterval", 30000);
+            configMap.put("autoStart", true);
             
-            String readmeContent = "# MuMu Agent 安装说明\n\n" +
-                "## 安装步骤\n\n" +
-                "1. 安装 Node.js (>= 18)\n" +
-                "   下载地址: https://nodejs.org/\n\n" +
-                "2. 解压本压缩包\n\n" +
-                "3. 进入 mumu-agent 目录，安装依赖:\n" +
-                "   npm install\n\n" +
-                "4. 启动 Agent:\n" +
-                "   node agent.js\n\n\n" +
-                "5. 刷新管理后台页面，检查连接状态\n\n" +
-                "## 当前配置\n\n" +
-                "- 商户账号: " + userId + "\n" +
-                "- 商户ID: " + (merchantId != null ? merchantId : 0) + "\n" +
-                "- 服务器地址: wss://" + serverName + "/ws/agent\n\n" +
-                "## 注意事项\n\n" +
-                "- 请确保服务器上已安装 MuMu 模拟器\n" +
-                "- 同一账号只能在一台服务器上运行\n" +
-                "- 如需更换服务器，请先停止旧服务器上的 Agent\n";
+            // macOS 平台配置
+            Map<String, Object> darwinConfig = new LinkedHashMap<>();
+            darwinConfig.put("mumuPath", "/Applications/MuMuPlayer.app");
+            darwinConfig.put("adbPath", "");
+            
+            // Windows 平台配置
+            Map<String, Object> win32Config = new LinkedHashMap<>();
+            win32Config.put("mumuPath", "C:\\Program Files\\Netease\\MuMuPlayer-12.0");
+            win32Config.put("adbPath", "C:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe");
+            
+            // Linux 平台配置
+            Map<String, Object> linuxConfig = new LinkedHashMap<>();
+            linuxConfig.put("mumuPath", "/opt/MuMuPlayer");
+            linuxConfig.put("adbPath", "");
+            
+            Map<String, Object> platformsMap = new LinkedHashMap<>();
+            platformsMap.put("darwin", darwinConfig);
+            platformsMap.put("win32", win32Config);
+            platformsMap.put("linux", linuxConfig);
+            configMap.put("platforms", platformsMap);
+            
+            String configContent = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(configMap);
+            
+            // 从文件读取启动脚本
+            String startMacContent = readFileContent(agentFolder, "start_mac.command");
+            String startWinContent = readFileContent(agentFolder, "start_win.bat");
+            
+            // 生成 README
+            String readmeContent = 
+                "MuMu Agent v2.0.0 使用说明\n" +
+                "========================================\n\n" +
+                "## 快速开始\n\n" +
+                "### macOS 用户:\n" +
+                "    双击 start_mac.command\n\n" +
+                "### Windows 用户:\n" +
+                "    双击 start_win.bat\n\n" +
+                "## 前置条件\n" +
+                "- Node.js 18+ (https://nodejs.org/)\n" +
+                "- MuMu 模拟器已安装\n\n" +
+                "## 首次使用\n" +
+                "1. 解压下载的 zip 包\n" +
+                "2. 双击启动脚本:\n" +
+                "   - macOS: start_mac.command\n" +
+                "   - Windows: start_win.bat\n" +
+                "3. 脚本会自动:\n" +
+                "   - 检查 Node.js 环境\n" +
+                "   - 安装依赖 (npm install)\n" +
+                "   - 加载配置文件\n" +
+                "   - 启动 Agent\n\n" +
+                "## 配置说明\n" +
+                "- config.json: 唯一配置文件\n" +
+                "  - 通用配置: userId, serverUrl 等\n" +
+                "  - 平台配置: platforms.darwin/win32/linux\n" +
+                "- 启动时自动根据系统选择平台配置\n\n" +
+                "## 注意事项\n" +
+                "- 一个账号只能在一台服务器上运行\n" +
+                "- 请确保 MuMu 模拟器版本兼容\n" +
+                "- 如遇问题请查看命令行日志\n";
             
             Set<String> addedEntries = new HashSet<>();
             
             try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
                 addFolderToZip(agentFolder, "mumu-agent", zos, addedEntries);
                 
-                String configEntryName = "mumu-agent/config.json";
-                if (!addedEntries.contains(configEntryName)) {
-                    ZipEntry configEntry = new ZipEntry(configEntryName);
-                    zos.putNextEntry(configEntry);
-                    zos.write(configContent.getBytes("UTF-8"));
-                    zos.closeEntry();
-                    addedEntries.add(configEntryName);
-                }
-                
-                String readmeEntryName = "mumu-agent/README.txt";
-                if (!addedEntries.contains(readmeEntryName)) {
-                    ZipEntry readmeEntry = new ZipEntry(readmeEntryName);
-                    zos.putNextEntry(readmeEntry);
-                    zos.write(readmeContent.getBytes("UTF-8"));
-                    zos.closeEntry();
-                    addedEntries.add(readmeEntryName);
-                }
+                writeZipEntry(zos, addedEntries, "mumu-agent/config.json", configContent);
+                writeZipEntry(zos, addedEntries, "mumu-agent/start_mac.command", startMacContent);
+                writeZipEntry(zos, addedEntries, "mumu-agent/start_win.bat", startWinContent);
+                writeZipEntry(zos, addedEntries, "mumu-agent/README.txt", readmeContent);
             }
             
             Resource resource = new FileSystemResource(zipPath.toFile());
@@ -106,12 +136,44 @@ public class AgentDownloadHelper {
         }
     }
     
+    private static String readFileContent(File folder, String fileName) {
+        File file = new File(folder, fileName);
+        if (file.exists() && file.isFile()) {
+            try {
+                return new String(Files.readAllBytes(file.toPath()));
+            } catch (IOException e) {
+                log.warn("读取文件 {} 失败: {}", fileName, e.getMessage());
+            }
+        }
+        // 返回默认内容
+        if (fileName.equals("start_mac.command")) {
+            return "#!/bin/bash\necho '请将 start_mac.command 放到 mumu-agent 目录下'\n";
+        } else if (fileName.equals("start_win.bat")) {
+            return "@echo off\necho 请将 start_win.bat 放到 mumu-agent 目录下\npause\n";
+        }
+        return "";
+    }
+    
+    private static void writeZipEntry(ZipOutputStream zos, Set<String> addedEntries, String entryName, String content) throws IOException {
+        addedEntries.remove(entryName);
+        ZipEntry entry = new ZipEntry(entryName);
+        zos.putNextEntry(entry);
+        zos.write(content.getBytes("UTF-8"));
+        zos.closeEntry();
+        addedEntries.add(entryName);
+    }
+    
     private static void addFolderToZip(File folder, String parentFolder, ZipOutputStream zos, Set<String> addedEntries) throws IOException {
         File[] files = folder.listFiles();
         if (files == null) return;
         
         for (File file : files) {
-            if (file.getName().equals("node_modules") || file.getName().startsWith(".")) {
+            if (file.getName().equals("node_modules") || file.getName().startsWith(".") ||
+                file.getName().equals("config.json") ||
+                file.getName().equals("README.txt") ||
+                file.getName().equals("start_mac.command") ||
+                file.getName().equals("start.sh") || file.getName().equals("start.bat") ||
+                file.getName().equals("start_win.bat")) {
                 continue;
             }
             
@@ -121,7 +183,6 @@ public class AgentDownloadHelper {
                 addFolderToZip(file, entryName, zos, addedEntries);
             } else {
                 if (addedEntries.contains(entryName)) {
-                    log.debug("Skipping duplicate entry: {}", entryName);
                     continue;
                 }
                 zos.putNextEntry(new ZipEntry(entryName));

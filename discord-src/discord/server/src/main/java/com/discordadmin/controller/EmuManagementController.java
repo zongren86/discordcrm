@@ -47,6 +47,8 @@ public class EmuManagementController {
     private final EmuAutoAddDispatcher autoAddDispatcher;
     private final DataStoreService dataStore;
 
+    private final CloudWebSocketService cloudWebSocketService;
+
     public EmuManagementController(EmuAccountBindingService accountBindingService,
                                     EmuServerBindingService serverBindingService,
                                     EmuFriendPoolService friendPoolService,
@@ -58,7 +60,8 @@ public class EmuManagementController {
                                     DiscordAccountRepository discordAccountRepository,
                                     EmuServerBindingRepository emuServerBindingRepository,
                                     EmuAutoAddDispatcher autoAddDispatcher,
-                                    DataStoreService dataStore) {
+                                    DataStoreService dataStore,
+                                    CloudWebSocketService cloudWebSocketService) {
         this.accountBindingService = accountBindingService;
         this.serverBindingService = serverBindingService;
         this.friendPoolService = friendPoolService;
@@ -71,6 +74,7 @@ public class EmuManagementController {
         this.emuServerBindingRepository = emuServerBindingRepository;
         this.autoAddDispatcher = autoAddDispatcher;
         this.dataStore = dataStore;
+        this.cloudWebSocketService = cloudWebSocketService;
     }
 
     private Long resolveMerchantId() {
@@ -136,7 +140,8 @@ public class EmuManagementController {
         int cpuCores = body.containsKey("cpuCores") ? Integer.parseInt(body.get("cpuCores").toString()) : 1;
         int memoryGb = body.containsKey("memoryGb") ? Integer.parseInt(body.get("memoryGb").toString()) : 1;
         String mode = body.containsKey("mode") ? String.valueOf(body.get("mode")) : "set";
-        return instanceService.setInstanceCount(count, cpuCores, memoryGb, mode);
+        String deviceId = body.containsKey("deviceId") ? String.valueOf(body.get("deviceId")) : null;
+        return instanceService.setInstanceCount(count, cpuCores, memoryGb, mode, deviceId);
     }
 
     /**
@@ -880,6 +885,14 @@ public class EmuManagementController {
     }
 
     /**
+     * 获取当前用户所有在线 Agent 的详细信息
+     */
+    @GetMapping("/agent/details")
+    public Map<String, Object> getAgentDetails() {
+        return instanceService.getOnlineAgentDetails();
+    }
+
+    /**
      * 生成 mumu-agent 配置文件内容（供商户下载）
      */
     @GetMapping("/agent/config")
@@ -1036,4 +1049,36 @@ public class EmuManagementController {
             Map.of("step", "5", "text", "启动 mumu-agent，等待连接成功")
         );
     }
+
+    /**
+     * 断开指定 Agent 的连接
+     */
+    @PostMapping("/agent/disconnect")
+    public Map<String, Object> disconnectAgent(@RequestBody Map<String, String> params) {
+        String deviceId = params.get("deviceId");
+        if (deviceId == null || deviceId.isEmpty()) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "deviceId 不能为空");
+            return result;
+        }
+        return cloudWebSocketService.disconnectAgent(deviceId);
+    }
+
+    /**
+     * 删除指定 Agent 注册记录
+     */
+    @PostMapping("/agent/delete")
+    public Map<String, Object> deleteAgent(@RequestBody Map<String, String> params) {
+        String deviceId = params.get("deviceId");
+        String userId = resolveUserId();
+        if (deviceId == null || deviceId.isEmpty()) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", false);
+            result.put("message", "deviceId 不能为空");
+            return result;
+        }
+        return cloudWebSocketService.deleteAgent(userId, deviceId);
+    }
+
 }

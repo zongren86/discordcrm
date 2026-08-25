@@ -12,14 +12,16 @@
           <p class="page-desc">管理模拟器实例，配置自动加好友，监控添加状态</p>
         </div>
         <div class="header-actions">
-          <el-tag v-if="physicalStatus.agentOnline" type="success" effect="light">
-            Agent 已连接 ({{ physicalStatus.agentCount }}台设备)
+          <el-tag v-if="physicalStatus.agentOnline" type="success" effect="light" style="cursor: pointer" @click="getAgentDetails">
+            {{ physicalStatus.message || 'Agent 已连接' }}
+            <el-icon style="margin-left: 4px"><InfoFilled /></el-icon>
           </el-tag>
-          <el-tag v-else-if="physicalStatus.localReachable" type="success" effect="light">
-            本地模拟器已连接
+          <el-tag v-else-if="physicalStatus.localReachable" type="success" effect="light" style="cursor: pointer" @click="showLocalInfo">
+            {{ physicalStatus.message || '本地环境已就绪' }}
+            <el-icon style="margin-left: 4px"><InfoFilled /></el-icon>
           </el-tag>
           <el-tag v-else type="warning" effect="light">
-            未检测到在线 Agent
+            {{ physicalStatus.message || '未检测到在线 Agent' }}
           </el-tag>
           <el-button
             v-if="!physicalStatus.available"
@@ -32,52 +34,73 @@
       </div>
 
       <div class="page-body">
-        <!-- 后端服务状态提示 -->
-        <el-alert
-          v-if="!backendAvailable"
-          type="error"
-          :closable="false"
-          show-icon
-          title="后端服务未连接"
-          :description="'无法连接到后端服务（' + config.EMU_API_URL + '），正在后台自动重连...'"
-          style="margin-bottom: 12px"
-        />
 
-        <!-- 状态提示 -->
-        <el-alert
-          v-if="backendAvailable && !physicalStatus.available"
-          type="warning"
-          show-icon
-          :closable="false"
-          title="未检测到在线 Agent"
-          description="请在本地服务器上安装并启动 mumu-agent 客户端，以便管理 MuMu 模拟器。点击下方按钮查看安装指引。"
-          style="margin-bottom: 12px"
+
+
+
+
+
+
+
+        <!-- Agent 详情弹窗 -->
+        <el-dialog
+          v-model="showAgentDetails"
+          title="连接的 Agent 设备详情"
+          width="700px"
         >
-          <template #default>
-            <el-button type="primary" link size="small" @click="openAgentGuide">
-              查看安装指引
-            </el-button>
-          </template>
-        </el-alert>
-
-        <el-alert
-          v-else-if="backendAvailable && physicalStatus.agentOnline"
-          type="success"
-          show-icon
-          :closable="false"
-          :title="'Agent 已连接 - 当前商户共 ' + physicalStatus.agentCount + ' 台设备在线'"
-          style="margin-bottom: 12px"
-        />
-
-        <el-alert
-          v-else-if="backendAvailable && physicalStatus.localReachable"
-          type="info"
-          show-icon
-          :closable="false"
-          title="本地模拟器已连接（非 Agent 模式）"
-          description="当前使用本地模式管理模拟器，建议安装 mumu-agent 以支持远程管理。"
-          style="margin-bottom: 12px"
-        />
+          <div v-if="agentDetails.agents.length === 0" style="text-align: center; padding: 40px; color: #909399">
+            <el-icon :size="48" color="#c0c4cc"><Monitor /></el-icon>
+            <p style="margin-top: 12px">暂无在线 Agent 设备</p>
+          </div>
+          <div v-else>
+            <el-table :data="agentDetails.agents" stripe style="width: 100%">
+              <el-table-column prop="userId" label="账号" width="120">
+                <template #default="{ row }">
+                  <el-tag type="primary" size="small">{{ row.userId || '-' }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="deviceId" label="设备 ID" min-width="200">
+                <template #default="{ row }">
+                  <span style="font-family: monospace; font-size: 12px">{{ row.deviceId }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="os" label="操作系统" width="100">
+                <template #default="{ row }">
+                  <el-tag v-if="row.os === 'darwin'" type="info" size="small">macOS</el-tag>
+                  <el-tag v-else-if="row.os === 'win32'" type="warning" size="small">Windows</el-tag>
+                  <el-tag v-else-if="row.os === 'linux'" type="success" size="small">Linux</el-tag>
+                  <span v-else>{{ row.os || '-' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="heartbeatStatus" label="状态" width="100">
+                <template #default="{ row }">
+                  <el-tag v-if="row.heartbeatStatus === '超时'" type="danger" size="small">心跳超时</el-tag>
+                  <el-tag v-else type="success" size="small">正常</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="secondsSinceHeartbeat" label="最后心跳" width="100">
+                <template #default="{ row }">
+                  {{ formatDuration(row.secondsSinceHeartbeat) }}
+                </template>
+              </el-table-column>
+              <el-table-column prop="lastHeartbeatAt" label="最后心跳时间" width="180">
+                <template #default="{ row }">
+                  {{ row.lastHeartbeatAt ? new Date(row.lastHeartbeatAt).toLocaleString('zh-CN') : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="150" fixed="right">
+                <template #default="{ row }">
+                  <el-button type="warning" size="small" link @click="disconnectAgentDevice(row)">断开</el-button>
+                  <el-popconfirm title="确定删除该Agent？" @confirm="deleteAgentDevice(row)">
+                    <template #reference>
+                      <el-button type="danger" size="small" link>删除</el-button>
+                    </template>
+                  </el-popconfirm>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </el-dialog>
 
         <!-- Agent 引导弹窗 -->
         <el-dialog
@@ -409,6 +432,12 @@
             </el-button>
           </template>
         </el-table-column>
+        <el-table-column v-if="agentDetails.agents.length > 1" label="Agent" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" v-if="row.agentLabel">{{ row.agentLabel }}</el-tag>
+            <span v-else style="color: #909399">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="CPU/内存" width="90">
           <template #default="{ row }">
             <span v-if="row.cpuCores || row.memoryGb">{{ row.cpuCores || '-' }}核/{{ row.memoryGb || 0 }}G</span>
@@ -471,17 +500,19 @@
         <el-table-column label="下次添加时间" width="110">
           <template #default="{ row }">
             <span v-if="row.nextAddAt && row.autoRunning" style="color: #409eff; font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
-            <span v-else-if="row.nextAddAt" style="font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
             <span v-else style="color: #909399; font-size: 12px">-</span>
           </template>
         </el-table-column>
         <el-table-column label="加好友状态" width="200">
           <template #default="{ row }">
             <div class="friend-status-cell">
-              <div v-if="row.autoRunning" style="color: #67c23a">
+              <div v-if="row.status === 'RUNNING' && row.autoRunning" style="color: #67c23a">
                 运行中
               </div>
-              <div class="fs-stats">
+              <div v-else style="color: #909399; font-size: 12px">
+                {{ row.autoRunning ? '已启动(等待)' : '未启动' }}
+              </div>
+              <div class="fs-stats" v-if="(row.assignedCount || 0) > 0 || (row.successCount || 0) > 0 || (row.failedCount || 0) > 0">
                 <span class="fs-tag fs-assigned">已分配: {{ row.assignedCount || 0 }}</span>
                 <span class="fs-tag fs-success">成功: {{ row.successCount || 0 }}</span>
                 <span class="fs-tag fs-failed">失败: {{ row.failedCount || 0 }}</span>
@@ -676,8 +707,19 @@
     </template>
 
     <!-- 新增模拟器弹窗 -->
-    <el-dialog v-model="showAddDialog" title="新增模拟器" width="400px" :close-on-click-modal="false">
+    <el-dialog v-model="showAddDialog" title="新增模拟器" width="450px" :close-on-click-modal="false">
       <div class="add-emu-form">
+        <div class="form-row" v-if="agentDetails.agents.length > 1">
+          <label>目标 Agent</label>
+          <el-select v-model="addEmuDeviceId" size="small" style="width: 200px">
+            <el-option 
+              v-for="agent in agentDetails.agents" 
+              :key="agent.deviceId" 
+              :label="agent.userId + ' (' + (agent.os === 'darwin' ? 'macOS' : agent.os === 'win32' ? 'Windows' : agent.os) + ')'" 
+              :value="agent.deviceId" 
+            />
+          </el-select>
+        </div>
         <div class="form-row">
           <label>新增数量</label>
           <el-input-number v-model="addEmuCount" :min="1" :max="50" size="small" style="width: 120px" />
@@ -693,7 +735,7 @@
         <div class="form-row">
           <label>内存</label>
           <el-select v-model="addEmuConfig.memoryGb" size="small" style="width: 120px">
-            <el-option v-for="n in 8" :key="n" :label="n + 'G'" :value="n" />
+            <el-option v-for="n in 8" :key="n" :label="String(n)" :value="n" />
           </el-select>
           <span class="unit">G</span>
         </div>
@@ -825,7 +867,7 @@
 import {
   Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
   ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Avatar,
-  Edit, Check, Close, Flag, CopyDocument, Download, Guide
+  Edit, Check, Close, Flag, CopyDocument, Download, Guide, InfoFilled, Monitor
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElDialog, ElSteps, ElStep } from 'element-plus'
 import axios from 'axios'
@@ -855,6 +897,10 @@ function hideLoading() {
 
 // 物理模拟器连接状态
 const physicalStatus = ref({ available: false, message: '检测中...' })
+
+// Agent 详情弹窗状态
+const showAgentDetails = ref(false)
+const agentDetails = ref({ agents: [], agentCount: 0 })
 
 // Agent 引导弹窗状态
 const showAgentGuide = ref(false)
@@ -935,6 +981,7 @@ const activeTab = ref('list')
 const showAddDialog = ref(false)
 const addEmuCount = ref(1)
 const addEmuConfig = ref({ cpuCores: 1, memoryGb: 1 })
+const addEmuDeviceId = ref('')
 
 // 权限检查
 const authStore = useAuthStore()
@@ -1210,10 +1257,22 @@ function withTimeout(promise, ms, fallback = null) {
   ])
 }
 
+async function fetchAgentDetailsForInit() {
+  try {
+    const resp = await emuApi.get('/agent/details')
+    agentDetails.value = resp.data
+    // 如果只有一个 Agent，自动设置为默认
+    if (agentDetails.value.agents && agentDetails.value.agents.length === 1) {
+      addEmuDeviceId.value = agentDetails.value.agents[0].deviceId
+    }
+  } catch {}
+}
+
 onMounted(async () => {
   // 并行执行所有加载，不等待服务检查，每个任务最多8秒超时
   const LOAD_TIMEOUT = 8000
   const loadTasks = [
+    withTimeout(fetchAgentDetailsForInit(), LOAD_TIMEOUT),
     withTimeout(fetchEmulators(), LOAD_TIMEOUT),
     withTimeout(loadAddedServers(), LOAD_TIMEOUT),
     withTimeout(loadAvailableServers(), LOAD_TIMEOUT),
@@ -1338,8 +1397,67 @@ async function checkPhysicalStatus() {
     const resp = await emuApi.get('/emulators/physical-status')
     physicalStatus.value = resp.data
   } catch {
-    physicalStatus.value = { available: false, message: '无法检测物理模拟器状态' }
+    physicalStatus.value = { available: false, message: '未检测到物理模拟器' }
   }
+}
+
+function showLocalInfo() {
+  ElMessageBox.alert(
+    physicalStatus.value?.message || '本地环境已就绪',
+    '本地环境信息',
+    { confirmButtonText: '确定' }
+  )
+}
+
+async function getAgentDetails() {
+  try {
+    const resp = await emuApi.get('/agent/details')
+    agentDetails.value = resp.data
+    showAgentDetails.value = true
+  } catch (e) {
+    ElMessage.error('获取 Agent 详情失败')
+  }
+}
+
+async function disconnectAgentDevice(row) {
+  try {
+    await ElMessageBox.confirm(`确定要断开设备 ${row.deviceId} 的连接吗？`, '断开 Agent', {
+      type: 'warning'
+    })
+    const resp = await emuApi.post('/agent/disconnect', { deviceId: row.deviceId })
+    if (resp.data?.success) {
+      ElMessage.success('Agent 已断开')
+      showAgentDetails.value = false
+      await checkPhysicalStatus()
+    } else {
+      ElMessage.error(resp.data?.message || '断开失败')
+    }
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('断开失败: ' + (e.response?.data?.message || e.message))
+  }
+}
+
+async function deleteAgentDevice(row) {
+  try {
+    const resp = await emuApi.post('/agent/delete', { deviceId: row.deviceId })
+    if (resp.data?.success) {
+      ElMessage.success('Agent 已删除')
+      showAgentDetails.value = false
+      await checkPhysicalStatus()
+    } else {
+      ElMessage.error(resp.data?.message || '删除失败')
+    }
+  } catch (e) {
+    ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
+  }
+}
+
+function formatDuration(seconds) {
+  if (!seconds && seconds !== 0) return '-'
+  if (seconds < 60) return seconds + ' 秒前'
+  if (seconds < 3600) return Math.floor(seconds / 60) + ' 分钟前'
+  if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时前'
+  return Math.floor(seconds / 86400) + ' 天前'
 }
 
 // ========== Agent 引导功能 ==========
@@ -2043,6 +2161,7 @@ async function applyCount() {
     })
     emulators.value = Array.isArray(resp.data) ? resp.data : []
     ElMessage.success(`已新增 ${targetCount.value} 台模拟器 (${emuConfig.value.cpuCores}核, ${emuConfig.value.memoryGb}G)`)
+    setTimeout(() => fetchEmulators(), 2000)
   } catch (e) {
     ElMessage.error('新增失败: ' + (e.response?.data?.message || e.message))
   } finally {
@@ -2065,14 +2184,21 @@ async function confirmAddEmulators() {
   emuLoading.value = true
   showLoading(`正在创建 ${addEmuCount.value} 台模拟器...`)
   try {
-    const resp = await emuApi.post('/emulators/count', {
+    const requestBody = {
       count: addEmuCount.value,
       cpuCores: addEmuConfig.value.cpuCores,
       memoryGb: addEmuConfig.value.memoryGb,
       mode: 'add'
-    })
+    }
+    // 如果有多个 Agent，传递选择的 deviceId
+    if (addEmuDeviceId.value) {
+      requestBody.deviceId = addEmuDeviceId.value
+    }
+    const resp = await emuApi.post('/emulators/count', requestBody)
     emulators.value = Array.isArray(resp.data) ? resp.data : []
     ElMessage.success(`已新增 ${addEmuCount.value} 台模拟器 (${addEmuConfig.value.cpuCores}核, ${addEmuConfig.value.memoryGb}G)`)
+    // 延迟2秒后刷新列表，确保后端同步完成
+    setTimeout(() => fetchEmulators(), 2000)
   } catch (e) {
     ElMessage.error('新增失败: ' + (e.response?.data?.message || e.message))
   } finally {

@@ -8,6 +8,7 @@ import com.discordadmin.repository.AgentRegistrationRepository;
 import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.EmuInstanceRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -36,6 +37,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     private final Map<String, CompletableFuture<Map<String, Object>>> pendingRequests = new ConcurrentHashMap<>();
     
     private static final int REQUEST_TIMEOUT_SECONDS = 180;
+    private static final int HEARTBEAT_TIMEOUT_SECONDS = 90; // 心跳超时时间（秒）
     
     public CloudWebSocketService(AgentRegistrationRepository agentRepository, 
                                   AgentRepository agentEntityRepository,
@@ -269,7 +271,16 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             }
             
             int updatedCount = 0;
-            int createdCount = 0;
+            int skippedCount = 0;
+            int cleanedCount = 0;
+            // 收集物理模拟器的 cloudIndex 集合，用于检测需要清理的记录
+            Set<Integer> physicalCloudIndices = new HashSet<>();
+            for (Map<String, Object> emuData : emulators) {
+                Integer muMuIndex = emuData.get("index") != null ? ((Number) emuData.get("index")).intValue() : null;
+                if (muMuIndex == null) continue;
+                physicalCloudIndices.add(muMuIndex + 1);
+            }
+            
             for (Map<String, Object> emuData : emulators) {
                 log.info("心跳同步: 模拟器数据={}", emuData);
                 Integer muMuIndex = emuData.get("index") != null ? ((Number) emuData.get("index")).intValue() : null;
@@ -277,15 +288,9 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                     log.warn("心跳同步: 模拟器缺少 index 字段");
                     continue;
                 }
-                // MuMuManager 使用 0-based index，云端使用 1-based instanceIndex
                 Integer cloudIndex = muMuIndex + 1;
                 String status = (String) emuData.get("status");
                 Integer adbPort = emuData.get("adbPort") != null ? ((Number) emuData.get("adbPort")).intValue() : null;
-                String name = (String) emuData.get("name");
-                Integer cpuCores = emuData.get("cpuCount") != null ? ((Number) emuData.get("cpuCount")).intValue() : 2;
-                Integer memoryGb = emuData.get("memoryMB") != null ? ((Number) emuData.get("memoryMB")).intValue() / 1024 : 2;
-                
-                log.info("心跳同步: 处理模拟器 muMuIndex={}, cloudIndex={}, existingMap.containsKey={}", muMuIndex, cloudIndex, existingMap.containsKey(cloudIndex));
                 
                 EmuInstance instance = existingMap.get(cloudIndex);
                 if (instance != null) {
@@ -310,36 +315,38 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                         updatedCount++;
                     }
                 } else {
-                    // 自动创建不存在的模拟器记录
-                    instance = new EmuInstance();
-                    instance.setMerchantId(merchantId);
-                    instance.setUserId(userId);
-                    instance.setInstanceIndex(cloudIndex);
-                    instance.setName(name != null ? name : ("模拟器 #" + cloudIndex));
-                    instance.setStatus(mapStatus(status));
-                    instance.setCpuCores(cpuCores);
-                    instance.setMemoryGb(memoryGb);
-                    instance.setAdbPort(adbPort);
-                    instance.setCreatedAt(Instant.now());
-                    instance.setUpdatedAt(Instant.now());
-                    instanceRepository.save(instance);
-                    createdCount++;
-                    log.info("心跳同步: 自动创建模拟器 #{}, name={}", cloudIndex, name);
+                    // 物理存在但数据库不存在 -> 跳过，不自动创建（必须由用户手动创建）
+                    skippedCount++;
+                    log.info("心跳同步: 跳过模拟器 #{}, name={} (数据库无记录，不自动创建)", cloudIndex, emuData.get("name"));
                 }
             }
             
-            log.info("心跳同步完成: agent={}, 处理了 {} 个模拟器，更新了 {} 个，创建了 {} 个", agent.getDeviceId(), emulators.size(), updatedCount, createdCount);
+            // 清理数据库中物理已不存在的记录（安全清理）
+            for (EmuInstance dbInst : existingInstances) {
+                if (!physicalCloudIndices.contains(dbInst.getInstanceIndex())) {
+                    log.info("心跳同步: 清理孤立记录 #{}, name={} (物理已不存在)", dbInst.getInstanceIndex(), dbInst.getName());
+                    instanceRepository.delete(dbInst);
+                    cleanedCount++;
+                }
+            }
+            
+            log.info("心跳同步完成: agent={}, 处理了 {} 个模拟器，更新了 {} 个，跳过 {} 个，清理 {} 个", 
+                agent.getDeviceId(), emulators.size(), updatedCount, skippedCount, cleanedCount);
         } catch (Exception e) {
             log.warn("同步模拟器状态失败: {}", e.getMessage());
         }
     }
     
     private EmuInstance.EmuStatus mapStatus(String status) {
+        if (status == null || status.isEmpty()) {
+            return EmuInstance.EmuStatus.STOPPED;
+        }
         return switch (status) {
             case "RUNNING" -> EmuInstance.EmuStatus.RUNNING;
             case "STOPPED" -> EmuInstance.EmuStatus.STOPPED;
             case "CREATED" -> EmuInstance.EmuStatus.CREATED;
-            default -> null;
+
+            default -> EmuInstance.EmuStatus.STOPPED;
         };
     }
     
@@ -534,7 +541,65 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         return onlineAgents.get(deviceId);
     }
     
+    /**
+     * 定时检查心跳超时的 Agent
+     * 每隔 30 秒检查一次，如果 Agent 超过 90 秒没有发送心跳，则标记为离线
+     */
+    @Scheduled(fixedRate = 30000)
+    public void checkHeartbeatTimeout() {
+        Instant now = Instant.now();
+        List<String> timeoutAgents = new ArrayList<>();
+        
+        for (Map.Entry<String, AgentRegistration> entry : onlineAgents.entrySet()) {
+            AgentRegistration agent = entry.getValue();
+            Instant lastHeartbeat = agent.getLastHeartbeatAt();
+            
+            // 如果从未收到过心跳，但连接已超过 HEARTBEAT_TIMEOUT_SECONDS，则标记为离线
+            if (lastHeartbeat == null) {
+                // 检查连接时间
+                continue;
+            }
+            
+            long secondsSinceLastHeartbeat = java.time.Duration.between(lastHeartbeat, now).getSeconds();
+            if (secondsSinceLastHeartbeat > HEARTBEAT_TIMEOUT_SECONDS) {
+                timeoutAgents.add(entry.getKey());
+                log.warn("心跳超时: deviceId={}, 上次心跳={}秒前", entry.getKey(), secondsSinceLastHeartbeat);
+            }
+        }
+        
+        // 将超时的 Agent 标记为离线
+        for (String deviceId : timeoutAgents) {
+            AgentRegistration agent = onlineAgents.remove(deviceId);
+            if (agent != null) {
+                agent.setStatus("OFFLINE");
+                agent.setUpdatedAt(now);
+                agentRepository.save(agent);
+                log.info("Agent 心跳超时离线: deviceId={}", deviceId);
+                
+                // 关闭对应的 WebSocket 会话
+                String sessionId = deviceSessionMap.get(deviceId);
+                if (sessionId != null) {
+                    WebSocketSession session = sessions.get(sessionId);
+                    if (session != null && session.isOpen()) {
+                        try {
+                            session.close(CloseStatus.SERVER_ERROR);
+                        } catch (IOException e) {
+                            log.warn("关闭超时 Agent 会话失败: deviceId={}", deviceId);
+                        }
+                    }
+                    sessions.remove(sessionId);
+                    deviceSessionMap.remove(deviceId);
+                }
+            }
+        }
+    }
+    
+    /**
+     * 获取所有在线的 Agent（过滤掉已超时的）
+     */
     public List<AgentRegistration> getAllOnlineAgents() {
+        // 先执行一次超时检查
+        checkHeartbeatTimeout();
         return new ArrayList<>(onlineAgents.values());
     }
     
@@ -574,13 +639,37 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 .get(30, TimeUnit.SECONDS);
 
             if ("SUCCESS".equals(result.get("status"))) {
-                Map<String, Object> data = (Map<String, Object>) result.get("data");
-                if (data != null) {
-                    Object emulators = data.get("emulators");
-                    if (emulators instanceof List) {
-                        return (List<Map<String, Object>>) emulators;
+                // handleTaskResult 会把 data 展开到 result 顶层（putAll）
+                // 所以需要同时兼容两种格式: result.emulators 或 result.data.emulators
+                List<Map<String, Object>> emuList = null;
+                
+                // 方式1: emulators 已在顶层（handleTaskResult putAll 展开后）
+                Object emulatorsTop = result.get("emulators");
+                if (emulatorsTop instanceof List) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> list = (List<Map<String, Object>>) emulatorsTop;
+                    emuList = list;
+                }
+                
+                // 方式2: emulators 在 data 子对象中
+                if (emuList == null) {
+                    Object dataObj = result.get("data");
+                    if (dataObj instanceof Map) {
+                        Map<String, Object> data = (Map<String, Object>) dataObj;
+                        Object emulatorsNested = data.get("emulators");
+                        if (emulatorsNested instanceof List) {
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> list = (List<Map<String, Object>>) emulatorsNested;
+                            emuList = list;
+                        }
                     }
                 }
+                
+                if (emuList != null) {
+                    log.info("从 Agent 获取到 {} 个模拟器", emuList.size());
+                    return emuList;
+                }
+                log.warn("获取模拟器列表: emulators 列表为空或不存在, result keys={}", result.keySet());
                 return new ArrayList<>();
             } else {
                 log.warn("获取模拟器列表失败: {}", result.getOrDefault("message", "未知错误"));
@@ -705,6 +794,63 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             }
         }
         return false;
+    }
+
+
+    /**
+     * 断开指定 Agent 的连接
+     */
+    public Map<String, Object> disconnectAgent(String deviceId) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            String sessionId = deviceSessionMap.get(deviceId);
+            if (sessionId != null) {
+                WebSocketSession session = sessions.get(sessionId);
+                if (session != null && session.isOpen()) {
+                    session.close(CloseStatus.NORMAL);
+                    log.info("Agent 已主动断开: deviceId={}", deviceId);
+                }
+                sessions.remove(sessionId);
+                deviceSessionMap.remove(deviceId);
+            }
+            AgentRegistration agent = onlineAgents.remove(deviceId);
+            if (agent != null) {
+                agent.setStatus("OFFLINE");
+                agent.setUpdatedAt(Instant.now());
+                agentRepository.save(agent);
+            }
+            result.put("success", true);
+            result.put("message", "Agent 已断开");
+        } catch (Exception e) {
+            log.error("断开 Agent 失败: deviceId={}", deviceId, e);
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 删除指定 Agent 注册记录
+     */
+    public Map<String, Object> deleteAgent(String userId, String deviceId) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            // 先断开连接
+            disconnectAgent(deviceId);
+            
+            // 删除数据库记录
+            agentRepository.findByUserIdAndDeviceId(userId, deviceId)
+                .ifPresent(agentRepository::delete);
+            
+            log.info("Agent 注册记录已删除: userId={}, deviceId={}", userId, deviceId);
+            result.put("success", true);
+            result.put("message", "Agent 已删除");
+        } catch (Exception e) {
+            log.error("删除 Agent 失败: userId={}, deviceId={}", userId, deviceId, e);
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
     }
 
 }

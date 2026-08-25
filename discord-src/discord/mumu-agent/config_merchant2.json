@@ -1,8 +1,0 @@
-{
-  "userId": "merchantadmin2",
-  "merchantId": 2,
-  "serverUrl": "ws://localhost:8090/ws/agent",
-  "heartbeatInterval": 30000,
-  "mumuPath": "/Applications/MuMuPlayer.app",
-  "autoStart": true
-}
