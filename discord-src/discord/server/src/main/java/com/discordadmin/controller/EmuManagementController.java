@@ -1034,7 +1034,15 @@ public class EmuManagementController {
         String userId = resolveUserId();
         Long merchantId = resolveMerchantId();
         String serverName = request.getServerName();
-        return AgentDownloadHelper.downloadAgentPackage(userId, merchantId, serverName);
+        int serverPort = request.getServerPort();
+        // 如果是默认端口(80或443)，不添加端口号
+        String serverUrl;
+        if (serverPort == 80 || serverPort == 443) {
+            serverUrl = serverName;
+        } else {
+            serverUrl = serverName + ":" + serverPort;
+        }
+        return AgentDownloadHelper.downloadAgentPackage(userId, merchantId, serverUrl);
     }
     
     /**

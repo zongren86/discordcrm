@@ -20,7 +20,7 @@ public class AgentDownloadHelper {
     
     private static final ObjectMapper objectMapper = new ObjectMapper();
     
-    public static ResponseEntity<Resource> downloadAgentPackage(String userId, Long merchantId, String serverName) {
+    public static ResponseEntity<Resource> downloadAgentPackage(String userId, Long merchantId, String serverUrl) {
         try {
             String userDir = System.getProperty("user.dir");
             log.info("downloadAgentPackage user.dir: {}", userDir);
@@ -47,7 +47,7 @@ public class AgentDownloadHelper {
             Map<String, Object> configMap = new LinkedHashMap<>();
             configMap.put("userId", userId);
             configMap.put("merchantId", merchantId != null ? merchantId : 0);
-            configMap.put("serverUrl", "ws://" + serverName + "/ws/agent");
+            configMap.put("serverUrl", "ws://" + serverUrl + "/ws/agent");
             configMap.put("heartbeatInterval", 30000);
             configMap.put("autoStart", true);
             

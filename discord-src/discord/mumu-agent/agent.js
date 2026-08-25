@@ -405,30 +405,19 @@ class MuMuController {
 
     async isMuMuPlayerRunning() {
         const os = process.platform;
-        const processNames = [];
-        
-        if (os === 'darwin') {
-            processNames.push('MuMuPlayer', 'MuMuPlayer-12.0', 'mumu');
-        } else if (os === 'win32') {
-            processNames.push('MuMuPlayer.exe', 'MuMuPlayer-12.0.exe', 'MuMu Manager.exe');
-        } else {
-            processNames.push('MuMuPlayer');
-        }
 
         try {
             let cmd;
             if (os === 'win32') {
-                cmd = `tasklist /FI "IMAGENAME eq ${processNames[0]}" 2>nul`;
-                for (const name of processNames) {
-                    cmd += ` & tasklist /FI "IMAGENAME eq ${name}" 2>nul`;
-                }
+                cmd = 'tasklist | findstr /I "MuMuPlayer MuMuPlayer.exe"';
             } else {
-                cmd = `pgrep -x "${processNames.join('" -o -x "')}" || true`;
+                // macOS/Linux: 使用 ps aux 过滤 MuMuPlayer 进程
+                cmd = 'ps aux | grep -i "[M]uMuPlayer"';
             }
             const result = execSync(cmd, { encoding: 'utf8', shell: true, timeout: 3000 });
             return result.trim().length > 0;
         } catch (e) {
-            // 如果 pgrep 失败，尝试通过 mumutool 判断
+            // 如果 ps 命令失败，尝试通过 mumutool 判断
             if (this.mumutoolPath) {
                 try {
                     const checkResult = execSync(`"${this.mumutoolPath}" info all`, { 
