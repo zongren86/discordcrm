@@ -1433,7 +1433,7 @@ async function handleMessage(msg) {
                                 if (os === 'win32') {
                                     // Windows: 使用 start 命令启动 MuMu
                                     let mumuExe = mumu.mumuPath || config.mumuPath || '';
-                                    console.log(`[Agent] 当前 mumuPath: ${mumuExe}`);
+                                    console.log(`[Agent] config.mumuPath=${config.mumuPath}, mumu.mumuPath=${mumu.mumuPath}, 最终使用: ${mumuExe}`);
                                     
                                     // 检查路径是否存在
                                     if (!mumuExe || !fs.existsSync(mumuExe)) {
