@@ -1893,7 +1893,33 @@ public class EmuInstanceService {
         status.put("merchantId", merchantId);
 
         if (agentOnline) {
-            status.put("message", "已连接 Agent (" + myAgents.size() + " 台设备在线)");
+            // 检查所有 Agent 的 MuMuPlayer 状态
+            boolean anyMuMuPlayerRunning = false;
+            int totalEmulatorCount = 0;
+            int totalRunningCount = 0;
+            for (AgentRegistration agent : myAgents) {
+                if (Boolean.TRUE.equals(agent.getMumuPlayerRunning())) {
+                    anyMuMuPlayerRunning = true;
+                }
+                if (agent.getEmulatorCount() != null) {
+                    totalEmulatorCount += agent.getEmulatorCount();
+                }
+                if (agent.getRunningEmulatorCount() != null) {
+                    totalRunningCount += agent.getRunningEmulatorCount();
+                }
+            }
+            status.put("mumuPlayerRunning", anyMuMuPlayerRunning);
+            status.put("emulatorCount", totalEmulatorCount);
+            status.put("runningEmulatorCount", totalRunningCount);
+            
+            if (!anyMuMuPlayerRunning) {
+                status.put("message", "Agent已连接 (" + myAgents.size() + " 台)，但 MuMuPlayer 未启动");
+                status.put("available", false);
+            } else if (totalEmulatorCount == 0) {
+                status.put("message", "Agent已连接，MuMuPlayer已启动，但暂无模拟器");
+            } else {
+                status.put("message", "已连接 Agent (" + myAgents.size() + " 台)，" + totalEmulatorCount + " 台模拟器就绪");
+            }
         } else if (localReachable) {
             // 本地模式下，检查是否有运行中的模拟器
             int physicalCount = 0;

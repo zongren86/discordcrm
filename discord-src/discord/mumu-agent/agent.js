@@ -403,6 +403,47 @@ class MuMuController {
         return emulators;
     }
 
+    async isMuMuPlayerRunning() {
+        const os = process.platform;
+        const processNames = [];
+        
+        if (os === 'darwin') {
+            processNames.push('MuMuPlayer', 'MuMuPlayer-12.0', 'mumu');
+        } else if (os === 'win32') {
+            processNames.push('MuMuPlayer.exe', 'MuMuPlayer-12.0.exe', 'MuMu Manager.exe');
+        } else {
+            processNames.push('MuMuPlayer');
+        }
+
+        try {
+            let cmd;
+            if (os === 'win32') {
+                cmd = `tasklist /FI "IMAGENAME eq ${processNames[0]}" 2>nul`;
+                for (const name of processNames) {
+                    cmd += ` & tasklist /FI "IMAGENAME eq ${name}" 2>nul`;
+                }
+            } else {
+                cmd = `pgrep -x "${processNames.join('" -o -x "')}" || true`;
+            }
+            const result = execSync(cmd, { encoding: 'utf8', shell: true, timeout: 3000 });
+            return result.trim().length > 0;
+        } catch (e) {
+            // 如果 pgrep 失败，尝试通过 mumutool 判断
+            if (this.mumutoolPath) {
+                try {
+                    const checkResult = execSync(`"${this.mumutoolPath}" info all`, { 
+                        encoding: 'utf8', timeout: 5000 
+                    });
+                    const parsed = JSON.parse(checkResult);
+                    return parsed.errcode === 0 && parsed.return && parsed.return.results && parsed.return.results.length > 0;
+                } catch (e2) {
+                    return false;
+                }
+            }
+            return false;
+        }
+    }
+
     readVmConfig(index) {
         try {
             const os = process.platform;
@@ -748,11 +789,16 @@ function startHeartbeat() {
     heartbeatInterval = setInterval(async () => {
         try {
             const emulators = await mumu.getEmulators();
+            const mumuPlayerRunning = await mumu.isMuMuPlayerRunning();
+            const runningCount = emulators.filter(e => e.status === 'RUNNING').length;
             const heartbeatMsg = {
                 type: 'HEARTBEAT',
                 data: {
                     deviceId: deviceId,
-                    emulators: emulators
+                    emulators: emulators,
+                    mumuPlayerRunning: mumuPlayerRunning,
+                    emulatorCount: emulators.length,
+                    runningEmulatorCount: runningCount
                 }
             };
             send(heartbeatMsg);

@@ -223,6 +223,20 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 }
                 agent.setLastHeartbeatAt(Instant.now());
                 agent.setStatus("ONLINE");
+                
+                // 保存 MuMuPlayer 运行状态
+                Object mumuPlayerRunning = data.get("mumuPlayerRunning");
+                if (mumuPlayerRunning != null) {
+                    agent.setMumuPlayerRunning(Boolean.TRUE.equals(mumuPlayerRunning));
+                }
+                Object emulatorCount = data.get("emulatorCount");
+                if (emulatorCount != null) {
+                    agent.setEmulatorCount(((Number) emulatorCount).intValue());
+                }
+                Object runningEmulatorCount = data.get("runningEmulatorCount");
+                if (runningEmulatorCount != null) {
+                    agent.setRunningEmulatorCount(((Number) runningEmulatorCount).intValue());
+                }
                 agentRepository.save(agent);
                 
                 syncEmulatorStatusFromHeartbeat(agent, data);

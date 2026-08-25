@@ -39,6 +39,15 @@ public class AgentRegistration {
     @Column(name = "mumu_path", length = 512)
     private String muMuPath;
     
+    @Column(name = "mumu_player_running")
+    private Boolean mumuPlayerRunning = false;
+    
+    @Column(name = "emulator_count")
+    private Integer emulatorCount = 0;
+    
+    @Column(name = "running_emulator_count")
+    private Integer runningEmulatorCount = 0;
+    
     @Column(name = "status", length = 16)
     private String status = "ONLINE"; // ONLINE, OFFLINE
     
