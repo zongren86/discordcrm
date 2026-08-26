@@ -451,6 +451,12 @@ export function getMerchantConfig() {
 export function updateMerchantConfig(data) {
   return http.put('/merchant-config', data)
 }
+export function getMerchantConfigById(merchantId) {
+  return http.get('/merchant-config/' + merchantId)
+}
+export function updateMerchantConfigById(merchantId, data) {
+  return http.put('/merchant-config/' + merchantId, data)
+}
 
 // === 服务器管理 ===
 export function listGuildServers(discordAccountId) {

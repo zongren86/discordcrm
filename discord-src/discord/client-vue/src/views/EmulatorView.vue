@@ -528,7 +528,7 @@
                 style="width: 80px"
               />
               <span v-else style="font-weight: 600; color: #303133">
-                {{ (row.discordAccountNumber ? 'V' + String(row.discordAccountNumber).padStart(3, '0') : '—') }}
+                {{ (row.discordAccountCustomNo ? 'V' + String(row.discordAccountCustomNo).padStart(3, '0') : '—') }}
               </span>
               <el-tooltip v-if="row.discordAccountNumberExplicit" content="已显式绑定（非默认）" placement="top">
                 <el-icon :size="12" style="color: #409eff"><Flag /></el-icon>
@@ -1342,6 +1342,8 @@ async function fetchAgentDetailsForInit() {
   } catch {}
 }
 
+let refreshTimer = null
+
 onMounted(async () => {
   // 并行执行所有加载，不等待服务检查，每个任务最多8秒超时
   const LOAD_TIMEOUT = 8000
@@ -1386,11 +1388,19 @@ onMounted(async () => {
   countdownTimer = setInterval(() => {
     now.value = Date.now()
   }, 1000)
+  
+  // 定时刷新模拟器列表（每10秒）
+  refreshTimer = setInterval(() => {
+    if (!emuLoading.value) {
+      fetchEmulators()
+    }
+  }, 10000)
 })
 
 onUnmounted(() => {
   if (healthCheckTimer) { clearInterval(healthCheckTimer); healthCheckTimer = null }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null }
+  if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
   stopFriendPoolPolling()
   stopAutoAddStatusPolling()
 })
@@ -2143,7 +2153,7 @@ async function saveAutoConfig() {
 // ====== Discord账号编号 列编辑 ======
 function startEditAccountNumber(row) {
   editingAccountNumberIdx.value = row.index
-  editingAccountNumberValue.value = row.discordAccountNumber ? Number(row.discordAccountNumber) : Number(row.index)
+  editingAccountNumberValue.value = row.discordAccountCustomNo ? Number(row.discordAccountCustomNo) : null
 }
 function cancelEditAccountNumber() {
   editingAccountNumberIdx.value = null
@@ -2476,10 +2486,10 @@ async function deleteEmulator(index) {
     const resp = await emuApi.delete(`/emulators/${index}`)
     if (resp.data?.success) {
       ElMessage.success('删除成功')
-      emulators.value = emulators.value.filter(e => e.index !== index)
+      setTimeout(() => fetchEmulators(), 2000)
     }
   } catch (e) {
-    if (e !== 'cancel') ElMessage.error('删除失败')
+    if (e !== 'cancel') ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))
   } finally {
     hideLoading()
   }

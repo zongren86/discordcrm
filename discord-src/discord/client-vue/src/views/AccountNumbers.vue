@@ -20,7 +20,7 @@
     <div class="page-body">
       <div class="filter-bar">
         <div class="filter-controls">
-          <el-input v-model="filters.keyword" size="default" placeholder="搜索绑定账号或编号"
+          <el-input v-model="filters.keyword" size="default" placeholder="搜索自定义编号、绑定账号或ID"
             :prefix-icon="Search" clearable style="width: 240px;" @keyup.enter="fetchData" />
           <el-date-picker
             v-model="filters.dateRange"
@@ -58,7 +58,8 @@
             </template>
           </el-table-column>
 
-          <el-table-column prop="id" label="编号" width="100" align="center" />
+          <el-table-column prop="id" label="ID" width="80" align="center" />
+          <el-table-column prop="customNo" label="编号" width="100" align="center" />
 
           <el-table-column prop="accountName" label="用户名" min-width="200">
             <template #default="{ row }">

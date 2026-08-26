@@ -145,6 +145,7 @@ public class DiscordAccountNumberService {
         return numbers.stream().map(n -> {
             Map<String, Object> map = new HashMap<>();
             map.put("id", n.getId());
+            map.put("customNo", n.getCustomNo());
             map.put("discordAccountId", n.getDiscordAccountId());
             map.put("boundAccount", n.getBoundAccount());
             map.put("creatorId", n.getCreatorId());
@@ -168,11 +169,14 @@ public class DiscordAccountNumberService {
                 .orElseThrow(() -> new IllegalArgumentException("当前用户不存在")) : null;
         String creatorName = currentUser != null && currentUser.getDisplayName() != null ? currentUser.getDisplayName() : (currentUser != null ? currentUser.getUsername() : "系统");
 
+        Integer maxNo = accountNumberRepository.findMaxCustomNoByMerchantId(merchantId);
+        int nextNo = (maxNo == null ? 0 : maxNo) + 1;
         List<DiscordAccountNumber> numbers = new ArrayList<>();
         for (String account : accounts) {
             account = account.trim();
             if (!account.isEmpty()) {
                 DiscordAccountNumber num = new DiscordAccountNumber();
+                num.setCustomNo(nextNo++);
                 num.setBoundAccount(account);
                 num.setMerchantId(merchantId);  // 设置商户ID
                 num.setCreatorId(currentUser != null ? currentUser.getId() : null);
@@ -211,9 +215,12 @@ public class DiscordAccountNumberService {
                 .orElseThrow(() -> new IllegalArgumentException("当前用户不存在")) : null;
         String creatorName = currentUser != null && currentUser.getDisplayName() != null ? currentUser.getDisplayName() : (currentUser != null ? currentUser.getUsername() : "系统");
 
+        Integer maxNo = accountNumberRepository.findMaxCustomNoByMerchantId(merchantId);
+        int nextNo = (maxNo == null ? 0 : maxNo) + 1;
         List<DiscordAccountNumber> numbers = new ArrayList<>();
         for (int i = 0; i < quantity; i++) {
             DiscordAccountNumber num = new DiscordAccountNumber();
+            num.setCustomNo(nextNo++);
             num.setBoundAccount(null);
             num.setMerchantId(merchantId);  // 设置商户ID
             num.setCreatorId(currentUser != null ? currentUser.getId() : null);

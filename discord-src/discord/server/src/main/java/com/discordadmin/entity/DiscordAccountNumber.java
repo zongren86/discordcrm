@@ -7,7 +7,9 @@ import lombok.Setter;
 import java.time.Instant;
 
 @Entity
-@Table(name = "discord_account_numbers")
+@Table(name = "discord_account_numbers", uniqueConstraints = {
+    @UniqueConstraint(name = "uk_merchant_custom_no", columnNames = {"merchant_id", "custom_no"})
+})
 @Getter
 @Setter
 public class DiscordAccountNumber {
@@ -15,6 +17,10 @@ public class DiscordAccountNumber {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    /** 自定义编号（商户内唯一，从1开始，创建后不可修改） */
+    @Column(name = "custom_no", nullable = false, updatable = false)
+    private Integer customNo;
 
     /** 绑定的 Discord 账号ID */
     @Column(name = "discord_account_id")

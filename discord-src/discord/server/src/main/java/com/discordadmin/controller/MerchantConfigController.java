@@ -56,6 +56,61 @@ public class MerchantConfigController {
         if (payload.containsKey("archiveDays")) {
             config.setArchiveDays(Integer.valueOf(payload.get("archiveDays").toString()));
         }
+        if (payload.containsKey("maxUsers")) {
+            config.setMaxUsers(Integer.valueOf(payload.get("maxUsers").toString()));
+        }
+        if (payload.containsKey("maxLinkedAccounts")) {
+            config.setMaxLinkedAccounts(Integer.valueOf(payload.get("maxLinkedAccounts").toString()));
+        }
+
+        MerchantConfig updated = guildService.updateConfig(merchantId, config);
+        return toMap(updated);
+    }
+
+    /** 平台管理员获取指定商户的配置 */
+    @GetMapping("/{merchantId}")
+    public Map<String, Object> getConfigByMerchantId(@PathVariable Long merchantId) {
+        if (!SecurityUtils.isPlatformAdmin()) {
+            throw new IllegalStateException("仅平台管理员可访问");
+        }
+        MerchantConfig config = guildService.getOrCreateConfig(merchantId);
+        return toMap(config);
+    }
+
+    /** 平台管理员更新指定商户的配置 */
+    @PutMapping("/{merchantId}")
+    public Map<String, Object> updateConfigByMerchantId(
+            @PathVariable Long merchantId,
+            @RequestBody Map<String, Object> payload) {
+        if (!SecurityUtils.isPlatformAdmin()) {
+            throw new IllegalStateException("仅平台管理员可修改");
+        }
+        MerchantConfig config = new MerchantConfig();
+        
+        if (payload.containsKey("fetchLimit")) {
+            config.setFetchLimit(Integer.valueOf(payload.get("fetchLimit").toString()));
+        }
+        if (payload.containsKey("requestInterval")) {
+            config.setRequestInterval(Integer.valueOf(payload.get("requestInterval").toString()));
+        }
+        if (payload.containsKey("requestCount")) {
+            config.setRequestCount(Integer.valueOf(payload.get("requestCount").toString()));
+        }
+        if (payload.containsKey("maxDepth")) {
+            config.setMaxDepth(Integer.valueOf(payload.get("maxDepth").toString()));
+        }
+        if (payload.containsKey("maxRequests")) {
+            config.setMaxRequests(Integer.valueOf(payload.get("maxRequests").toString()));
+        }
+        if (payload.containsKey("archiveDays")) {
+            config.setArchiveDays(Integer.valueOf(payload.get("archiveDays").toString()));
+        }
+        if (payload.containsKey("maxUsers")) {
+            config.setMaxUsers(Integer.valueOf(payload.get("maxUsers").toString()));
+        }
+        if (payload.containsKey("maxLinkedAccounts")) {
+            config.setMaxLinkedAccounts(Integer.valueOf(payload.get("maxLinkedAccounts").toString()));
+        }
 
         MerchantConfig updated = guildService.updateConfig(merchantId, config);
         return toMap(updated);
@@ -71,6 +126,8 @@ public class MerchantConfigController {
         map.put("maxDepth", config.getMaxDepth());
         map.put("maxRequests", config.getMaxRequests());
         map.put("archiveDays", config.getArchiveDays());
+        map.put("maxUsers", config.getMaxUsers());
+        map.put("maxLinkedAccounts", config.getMaxLinkedAccounts());
         map.put("updatedAt", config.getUpdatedAt());
         return map;
     }
@@ -85,6 +142,8 @@ public class MerchantConfigController {
         map.put("maxDepth", 5);
         map.put("maxRequests", 1000);
         map.put("archiveDays", 30);
+        map.put("maxUsers", 10);
+        map.put("maxLinkedAccounts", 20);
         return map;
     }
 }

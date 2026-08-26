@@ -423,6 +423,14 @@ async function openPerm(row) {
     
     await nextTick()
     if (permTreeRef.value) {
+      // 先展开所有节点，再设置勾选，确保正确回显
+      const allKeys = getAllFeatureCodes()
+      for (const key of allKeys) {
+        const node = permTreeRef.value.getNode(key)
+        if (node) node.expanded = true
+      }
+      await nextTick()
+      // 使用 onlyLeafCheckKeys=false 的方式设置，确保父子关联正常
       permTreeRef.value.setCheckedKeys(permDialog.keys)
     }
   } catch (e) {
@@ -442,12 +450,22 @@ function resetPermDialog() {
 async function savePerm() {
   permDialog.saving = true
   try {
-    const checkedKeys = permTreeRef.value ? permTreeRef.value.getCheckedKeys() : []
-    // 收集全选和半选的节点（半选的是父节点）
-    const halfCheckedKeys = permTreeRef.value ? permTreeRef.value.getHalfCheckedKeys() : []
-    const allKeys = [...checkedKeys, ...halfCheckedKeys]
-    permDialog.keys = allKeys
-    await api.put(`/roles/${permDialog.roleId}/features`, { featureCodes: allKeys })
+    if (!permTreeRef.value) {
+      ElMessage.warning('权限树未就绪')
+      return
+    }
+    // Element Plus 的 el-tree：
+    // getCheckedKeys(true) 只返回叶子节点（叶子=true, 子树的叶子）
+    // getCheckedKeys() 返回所有选中的（含父节点，若父被勾选也会包含）
+    // getHalfCheckedKeys() 返回半选的父节点
+    // 正确做法：后端需要完整的所有勾选节点（包括半选父节点，因为功能是按 code 来匹配的）
+    const checkedLeafKeys = permTreeRef.value.getCheckedKeys(true) || []
+    const halfCheckedKeys = permTreeRef.value.getHalfCheckedKeys() || []
+    // 合并叶子节点和半选父节点，确保完整保存
+    const allKeysToSave = [...new Set([...checkedLeafKeys, ...halfCheckedKeys])]
+    
+    permDialog.keys = allKeysToSave
+    await api.put(`/roles/${permDialog.roleId}/features`, { featureCodes: allKeysToSave })
     ElMessage.success('权限已更新')
     permDialog.visible = false
   } catch (e) {} finally { permDialog.saving = false }

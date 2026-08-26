@@ -164,6 +164,8 @@ public class GuildService {
         if (config.getMaxDepth() != null) existing.setMaxDepth(config.getMaxDepth());
         if (config.getMaxRequests() != null) existing.setMaxRequests(config.getMaxRequests());
         if (config.getArchiveDays() != null) existing.setArchiveDays(config.getArchiveDays());
+        if (config.getMaxUsers() != null) existing.setMaxUsers(config.getMaxUsers());
+        if (config.getMaxLinkedAccounts() != null) existing.setMaxLinkedAccounts(config.getMaxLinkedAccounts());
         existing.setUpdatedAt(Instant.now());
         return merchantConfigRepository.save(existing);
     }

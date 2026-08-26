@@ -39,6 +39,12 @@ public class MerchantConfig {
     @Column(name = "archive_days")
     private Integer archiveDays = 30;
 
+    @Column(name = "max_users")
+    private Integer maxUsers = 10;
+
+    @Column(name = "max_linked_accounts")
+    private Integer maxLinkedAccounts = 20;
+
     @Column(name = "updated_at")
     private Instant updatedAt = Instant.now();
 

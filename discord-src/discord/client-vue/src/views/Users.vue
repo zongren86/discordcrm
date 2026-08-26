@@ -251,7 +251,8 @@
               <el-button size="small" type="danger" link @click="handleUnlinkNumber(row)">删除</el-button>
             </template>
           </el-table-column>
-          <el-table-column prop="number" label="编号" width="100" align="center" />
+          <el-table-column prop="id" label="ID" width="80" align="center" />
+          <el-table-column prop="customNo" label="编号" width="100" align="center" />
           <el-table-column prop="boundAccount" label="账号" min-width="180">
             <template #default="{ row }">
               <span>{{ row.boundAccount || '-' }}</span>
@@ -272,13 +273,13 @@
       <div class="link-tip">
         请输入要关联的编号范围，支持以下格式：
         <div class="format-examples">
-          <span>单个编号：<code>1</code></span>
-          <span>多个编号：<code>1, 3, 5</code></span>
+          <span>单个自定义编号：<code>1</code></span>
+          <span>多个自定义编号：<code>1, 3, 5</code></span>
           <span>连续范围：<code>1-5</code> 或 <code>1~5</code></span>
           <span>混合使用：<code>1-5, 10, 15-20</code></span>
         </div>
       </div>
-      <el-input v-model="linkNumbersDialog.range" placeholder="请输入编号范围，如：1-5, 10, 15-20" />
+      <el-input v-model="linkNumbersDialog.range" placeholder="请输入自定义编号范围，如：1-5, 10, 15-20" />
       <template #footer>
         <el-button @click="linkNumbersDialog.visible = false">取消</el-button>
         <el-button type="primary" @click="handleLinkNumbers">确定</el-button>

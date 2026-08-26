@@ -3,6 +3,7 @@ package com.discordadmin.service;
 import com.discordadmin.entity.Agent;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.Merchant;
+import com.discordadmin.entity.MerchantConfig;
 import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.MerchantRepository;
@@ -21,15 +22,18 @@ public class UserService {
     private final DiscordAccountRepository accountRepository;
     private final MerchantRepository merchantRepository;
     private final PasswordEncoder passwordEncoder;
+    private final GuildService guildService;
 
     public UserService(AgentRepository agentRepository,
                        DiscordAccountRepository accountRepository,
                        MerchantRepository merchantRepository,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder,
+                       GuildService guildService) {
         this.agentRepository = agentRepository;
         this.accountRepository = accountRepository;
         this.merchantRepository = merchantRepository;
         this.passwordEncoder = passwordEncoder;
+        this.guildService = guildService;
     }
 
     public List<Map<String, Object>> list() {
@@ -67,10 +71,32 @@ public class UserService {
 
     @Transactional
     public Agent create(UserRequest req) {
+        if (req.username() == null || req.username().isBlank()) {
+            throw new IllegalArgumentException("用户名不能为空");
+        }
+        if (req.password() == null || req.password().isBlank()) {
+            throw new IllegalArgumentException("密码不能为空");
+        }
         if (req.displayName() == null || req.displayName().isBlank()) {
             throw new IllegalArgumentException("姓名不能为空");
         }
+        
+        // 检查用户名是否已存在
+        agentRepository.findByUsername(req.username()).ifPresent(existing -> {
+            throw new IllegalArgumentException("用户名「" + req.username() + "」已存在，请使用其他用户名");
+        });
+        
         Long merchantId = resolveMerchantId(req);
+
+        // 用户数上限检查
+        if (merchantId != null && !SecurityUtils.isPlatformAdmin()) {
+            MerchantConfig config = guildService.getOrCreateConfig(merchantId);
+            Integer maxUsers = config.getMaxUsers() != null ? config.getMaxUsers() : 10;
+            long currentUserCount = agentRepository.findByMerchantId(merchantId).size();
+            if (currentUserCount >= maxUsers) {
+                throw new IllegalStateException("您的用户数已达上限，如果增加数量请联系平台客服");
+            }
+        }
 
         Agent agent = new Agent();
         agent.setUsername(req.username());
@@ -151,6 +177,11 @@ public class UserService {
 
     @Transactional
     public void delete(Long id) {
+        Agent agent = agentRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        if ("admin".equalsIgnoreCase(agent.getUsername())) {
+            throw new IllegalStateException("admin 账号不可以删除");
+        }
         agentRepository.deleteById(id);
     }
 
@@ -171,6 +202,16 @@ public class UserService {
 
         validateCrossMerchantLink(agent, account);
         validateNoDuplicateLink(account, id);
+
+        // 关联账号上限检查
+        if (agent.getMerchantId() != null) {
+            MerchantConfig config = guildService.getOrCreateConfig(agent.getMerchantId());
+            Integer maxLinkedAccounts = config.getMaxLinkedAccounts() != null ? config.getMaxLinkedAccounts() : 20;
+            int currentLinkedCount = agent.getDiscordAccounts().size();
+            if (currentLinkedCount >= maxLinkedAccounts) {
+                throw new IllegalStateException("该用户关联账号已达上限，如果要增加数量，请联系平台客服");
+            }
+        }
 
         agent.getDiscordAccounts().add(account);
         return agentRepository.save(agent);

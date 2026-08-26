@@ -57,7 +57,9 @@ public class AgentAccountNumberRelService {
 
             DiscordAccountNumber num = numberMap.get(rel.getAccountNumberId());
             if (num != null) {
-                map.put("number", num.getId());
+                map.put("id", num.getId());
+                map.put("customNo", num.getCustomNo());
+                map.put("number", num.getCustomNo());
                 map.put("boundAccount", num.getBoundAccount());
                 map.put("discordAccountId", num.getDiscordAccountId());
             }
@@ -186,5 +188,35 @@ public class AgentAccountNumberRelService {
             }
             return map;
         }).toList();
+    }
+
+    /** 批量按自定义编号关联账号编号给用户 */
+    @Transactional
+    public void batchLinkByCustomNos(Long agentId, List<Integer> customNos) {
+        Agent agent = agentRepository.findById(agentId)
+                .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        Long merchantId = agent.getMerchantId();
+        if (merchantId == null) {
+            throw new IllegalArgumentException("用户未关联商户，无法关联账号编号");
+        }
+
+        // 按商户和自定义编号查询 DiscordAccountNumber
+        List<DiscordAccountNumber> numbers = accountNumberRepository.findByMerchantIdAndCustomNoIn(merchantId, customNos);
+        if (numbers.size() != customNos.size()) {
+            // 找出不存在的 customNo
+            Set<Integer> foundNos = numbers.stream()
+                    .map(DiscordAccountNumber::getCustomNo)
+                    .collect(Collectors.toSet());
+            List<Integer> missingNos = customNos.stream()
+                    .filter(n -> !foundNos.contains(n))
+                    .toList();
+            throw new IllegalArgumentException("以下自定义编号在当前商户下不存在: " + missingNos);
+        }
+
+        List<Long> numberIds = numbers.stream()
+                .map(DiscordAccountNumber::getId)
+                .toList();
+
+        batchLinkNumbers(agentId, numberIds);
     }
 }

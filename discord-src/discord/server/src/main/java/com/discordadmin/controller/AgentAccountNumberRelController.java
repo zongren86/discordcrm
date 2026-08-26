@@ -22,16 +22,20 @@ public class AgentAccountNumberRelController {
         return relService.listByAgentId(id);
     }
 
-    /** 批量关联账号编号给用户 */
+    /** 批量关联账号编号给用户（按自定义编号） */
     @PostMapping("/{id}/account-numbers")
     public Map<String, Object> batchLinkNumbers(
             @PathVariable Long id,
             @RequestBody Map<String, String> body) {
         String rangeStr = body.get("range");
-        List<Long> numberIds = relService.parseNumberRange(rangeStr);
-        relService.batchLinkNumbers(id, numberIds);
+        List<Long> parsedNos = relService.parseNumberRange(rangeStr);
+        // 转换为 Integer 的 customNo 列表
+        List<Integer> customNos = parsedNos.stream()
+                .map(Long::intValue)
+                .toList();
+        relService.batchLinkByCustomNos(id, customNos);
         
-        Map<String, Object> result = Map.of("success", true, "count", numberIds.size());
+        Map<String, Object> result = Map.of("success", true, "count", customNos.size());
         return result;
     }
 

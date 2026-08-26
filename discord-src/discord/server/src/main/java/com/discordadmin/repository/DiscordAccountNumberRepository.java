@@ -14,12 +14,12 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
 
     @Query("SELECT n FROM DiscordAccountNumber n WHERE " +
            "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+           "(CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%') OR CAST(n.customNo AS string) LIKE CONCAT('%', :keyword, '%')))")
     Page<DiscordAccountNumber> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
 
     @Query("SELECT n FROM DiscordAccountNumber n WHERE " +
            "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%')) AND " +
+           "(CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%') OR CAST(n.customNo AS string) LIKE CONCAT('%', :keyword, '%'))) AND " +
            "n.createdAt BETWEEN :startTime AND :endTime")
     Page<DiscordAccountNumber> searchByKeywordAndTimeRange(@Param("keyword") String keyword,
                                                           @Param("startTime") Instant startTime,
@@ -54,7 +54,7 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
     /** 仅在指定编号ID范围内+关键字分页查询 */
     @Query("SELECT n FROM DiscordAccountNumber n WHERE n.id IN :assignedIds AND " +
            "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+           "(CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%') OR CAST(n.customNo AS string) LIKE CONCAT('%', :keyword, '%')))")
     Page<DiscordAccountNumber> searchByKeywordInIds(@Param("keyword") String keyword,
                                                     @Param("assignedIds") List<Long> assignedIds,
                                                     Pageable pageable);
@@ -62,7 +62,7 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
     /** 仅在指定编号ID范围内+关键字+时间范围分页查询 */
     @Query("SELECT n FROM DiscordAccountNumber n WHERE n.id IN :assignedIds AND " +
            "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%')) AND " +
+           "(CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%') OR CAST(n.customNo AS string) LIKE CONCAT('%', :keyword, '%'))) AND " +
            "n.createdAt BETWEEN :startTime AND :endTime")
     Page<DiscordAccountNumber> searchByKeywordAndTimeRangeInIds(@Param("keyword") String keyword,
                                                                  @Param("startTime") Instant startTime,
@@ -83,7 +83,7 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
     /** 按商户ID+关键字查询 */
     @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND " +
            "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+           "(CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%') OR CAST(n.customNo AS string) LIKE CONCAT('%', :keyword, '%')))")
     Page<DiscordAccountNumber> searchByKeywordAndMerchantId(@Param("keyword") String keyword,
                                                               @Param("merchantId") Long merchantId,
                                                               Pageable pageable);
@@ -91,7 +91,7 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
     /** 按商户ID+关键字+时间范围查询 */
     @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND " +
            "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%')) AND " +
+           "(CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%') OR CAST(n.customNo AS string) LIKE CONCAT('%', :keyword, '%'))) AND " +
            "n.createdAt BETWEEN :startTime AND :endTime")
     Page<DiscordAccountNumber> searchByKeywordAndTimeRangeAndMerchantId(@Param("keyword") String keyword,
                                                                          @Param("startTime") Instant startTime,
@@ -115,7 +115,7 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
     /** 按商户ID+编号ID范围+关键字查询 */
     @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND n.id IN :assignedIds AND " +
            "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%'))")
+           "(CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%') OR CAST(n.customNo AS string) LIKE CONCAT('%', :keyword, '%')))")
     Page<DiscordAccountNumber> searchByKeywordAndMerchantIdAndIdIn(@Param("keyword") String keyword,
                                                                      @Param("merchantId") Long merchantId,
                                                                      @Param("assignedIds") List<Long> assignedIds,
@@ -124,7 +124,7 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
     /** 按商户ID+编号ID范围+关键字+时间范围查询 */
     @Query("SELECT n FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId AND n.id IN :assignedIds AND " +
            "(LOWER(n.boundAccount) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%')) AND " +
+           "(CAST(n.id AS string) LIKE CONCAT('%', :keyword, '%') OR CAST(n.customNo AS string) LIKE CONCAT('%', :keyword, '%'))) AND " +
            "n.createdAt BETWEEN :startTime AND :endTime")
     Page<DiscordAccountNumber> searchByKeywordAndTimeRangeAndMerchantIdAndIdIn(@Param("keyword") String keyword,
                                                                                 @Param("startTime") Instant startTime,
@@ -140,4 +140,14 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
                                                                       @Param("merchantId") Long merchantId,
                                                                       @Param("assignedIds") List<Long> assignedIds,
                                                                       Pageable pageable);
+
+    /** 查询指定商户最大的自定义编号 */
+    @Query("SELECT MAX(n.customNo) FROM DiscordAccountNumber n WHERE n.merchantId = :merchantId")
+    Integer findMaxCustomNoByMerchantId(@Param("merchantId") Long merchantId);
+
+    /** 按商户和自定义编号查询 */
+    DiscordAccountNumber findByMerchantIdAndCustomNo(Long merchantId, Integer customNo);
+
+    /** 按商户和自定义编号查询（支持批量） */
+    List<DiscordAccountNumber> findByMerchantIdAndCustomNoIn(Long merchantId, List<Integer> customNos);
 }

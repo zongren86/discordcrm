@@ -2,7 +2,7 @@ const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
-const { execSync, execFileSync, spawn } = require('child_process');
+const { execSync, execFileSync, spawn, spawnSync } = require('child_process');
 const NL = String.fromCharCode(10);
 
 function getTimestamp() {
@@ -355,7 +355,6 @@ class MuMuController {
         const os = process.platform;
         const candidates = [];
         
-        // 获取 MuMu 安装根目录（mumuPath 可能是文件路径，需要取目录）
         let mumuBasePath = this.mumuPath;
         if (mumuBasePath && fs.existsSync(mumuBasePath) && fs.statSync(mumuBasePath).isFile()) {
             mumuBasePath = path.dirname(mumuBasePath);
@@ -365,87 +364,74 @@ class MuMuController {
             const mumuBase = this.mumuAppPath || this.mumuPath;
             candidates.push(`${mumuBase}/Contents/MacOS/mumutool`);
             candidates.push(`${mumuBase}/Contents/MacOS/mumu-cli`);
-            candidates.push(`${mumuBase}/Contents/MacOS/`);
         } else if (os === 'win32') {
-            // Windows 下尝试多个可能的路径（基于 MuMu 安装根目录）
             if (mumuBasePath) {
-                const mumuBaseDir = fs.existsSync(mumuBasePath) && fs.statSync(mumuBasePath).isFile() 
-                    ? path.dirname(mumuBasePath) 
-                    : mumuBasePath;
-                    
-                // MuMu 新版使用 mumu-cli.exe 作为命令行工具
-                candidates.push(path.join(mumuBaseDir, 'mumu-cli.exe'));
-                candidates.push(path.join(mumuBaseDir, 'shell', 'mumu-cli.exe'));
-                // 旧版使用 mumutool.exe
-                candidates.push(path.join(mumuBaseDir, 'mumutool.exe'));
-                candidates.push(path.join(mumuBaseDir, 'shell', 'mumutool.exe'));
-                candidates.push(mumuBaseDir); // 整个目录
+                const dirsToScan = [
+                    mumuBasePath,
+                    path.join(mumuBasePath, 'shell'),
+                    path.join(mumuBasePath, 'nx_main'),
+                    path.join(mumuBasePath, 'Tools'),
+                    path.join(mumuBasePath, 'bin'),
+                    path.dirname(mumuBasePath),
+                ];
                 
-                // 扫描 mumuBaseDir 及子目录查找工具
-                try {
-                    // 先扫描主目录
-                    if (fs.existsSync(mumuBaseDir) && fs.statSync(mumuBaseDir).isDirectory()) {
-                        const files = fs.readdirSync(mumuBaseDir);
-                        console.log(`[MuMu] MuMu主目录内容: ${files.join(', ')}`);
-                        for (const file of files) {
-                            const lowerFile = file.toLowerCase();
-                            // 匹配 mumutool 或 mumu-cli（注意：mumu-cli 不包含 "mumutool"）
-                            if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli') || lowerFile === 'mumu-cli.exe') {
-                                const fullPath = path.join(mumuBaseDir, file);
-                                candidates.push(fullPath);
-                                console.log(`[MuMu] 发现MuMu工具: ${fullPath}`);
-                            }
-                        }
-                        // 检查 shell 子目录
-                        const shellDir = path.join(mumuBaseDir, 'shell');
-                        if (fs.existsSync(shellDir) && fs.statSync(shellDir).isDirectory()) {
-                            const shellFiles = fs.readdirSync(shellDir);
-                            console.log(`[MuMu] shell 目录内容: ${shellFiles.join(', ')}`);
-                            for (const file of shellFiles) {
+                for (const dir of dirsToScan) {
+                    if (dir && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+                        try {
+                            const files = fs.readdirSync(dir);
+                            for (const file of files) {
                                 const lowerFile = file.toLowerCase();
-                                if (lowerFile.includes('mumutool') || lowerFile.includes('mumu-cli') || lowerFile === 'adb.exe') {
-                                    const fullPath = path.join(shellDir, file);
+                                if (lowerFile === 'mumu-cli.exe' || lowerFile === 'mumutool.exe') {
+                                    const fullPath = path.join(dir, file);
                                     candidates.push(fullPath);
-                                    console.log(`[MuMu] 发现shell工具: ${fullPath}`);
+                                    console.log(`[MuMu] 扫描到 MuMu 工具: ${fullPath}`);
                                 }
                             }
+                        } catch (e) {
                         }
                     }
-                } catch (e) {
-                    console.warn(`[MuMu] 扫描MuMu目录失败: ${e.message}`);
                 }
             }
             
-            // 不再使用硬编码路径，只使用用户配置的路径
-            // 如果用户配置的路径找不到 mumu-cli，将无法使用 mumutool 模式
+            const commonPaths = [
+                'C:\\Program Files\\Netease\\MuMu\\nx_main\\mumu-cli.exe',
+                'C:\\Program Files\\Netease\\MuMu\\shell\\mumu-cli.exe',
+                'C:\\Program Files\\Netease\\MuMuPlayer-12.0\\nx_main\\mumu-cli.exe',
+                'C:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\mumu-cli.exe',
+                'C:\\Program Files\\Netease\\MuMu\\mumu-cli.exe',
+                'C:\\Program Files (x86)\\Netease\\MuMu\\nx_main\\mumu-cli.exe',
+                'C:\\Program Files (x86)\\Netease\\MuMuPlayer-12.0\\nx_main\\mumu-cli.exe',
+            ];
+            candidates.push(...commonPaths);
         }
         
-        for (const p of candidates) {
+        const uniqueCandidates = [...new Set(candidates.filter(c => c && c.length > 0))];
+        
+        for (const p of uniqueCandidates) {
             try {
                 if (p && fs.existsSync(p)) {
-                    console.log(`[MuMu] 检查路径: ${p}`);
-                    // 如果是目录，尝试在目录中查找 mumutool
-                    if (fs.statSync(p).isDirectory()) {
-                        const files = fs.readdirSync(p);
-                        const tool = files.find(f => f.toLowerCase().includes('mumutool') || f.toLowerCase().includes('mumu-cli'));
-                        if (tool) {
-                            const fullPath = path.join(p, tool);
-                            console.log(`[MuMu] 在目录中找到 MuMu 工具: ${fullPath}`);
-                            return fullPath;
-                        }
-                    } else {
+                    if (fs.statSync(p).isFile()) {
                         console.log(`[MuMu] 找到 MuMu 工具: ${p}`);
                         return p;
+                    } else if (fs.statSync(p).isDirectory()) {
+                        try {
+                            const files = fs.readdirSync(p);
+                            const tool = files.find(f => {
+                                const lf = f.toLowerCase();
+                                return lf === 'mumu-cli.exe' || lf === 'mumutool.exe' || lf === 'mumu-cli' || lf === 'mumutool';
+                            });
+                            if (tool) {
+                                const fullPath = path.join(p, tool);
+                                console.log(`[MuMu] 在目录中找到 MuMu 工具: ${fullPath}`);
+                                return fullPath;
+                            }
+                        } catch (e) {}
                     }
                 }
-            } catch (e) {
-                // 忽略错误
-            }
+            } catch (e) {}
         }
         
-        console.warn(`[MuMu] 未找到 mumutool, 将使用系统命令作为后备方案`);
-        console.warn(`[MuMu] 请检查 MuMu 安装目录下是否有 mumutool 或 mumu-cli 工具`);
-        console.warn(`[MuMu] 尝试过的路径: ${candidates.slice(0, 5).join(', ')}`);
+        console.warn(`[MuMu] 未找到 mumu-cli 工具，尝试过的路径: ${uniqueCandidates.slice(0, 5).join(', ')}`);
         return null;
     }
 
@@ -547,7 +533,6 @@ class MuMuController {
         const command = path.basename(this.mumutoolPath);
         console.log(`[MuMu] 执行 ${command} ${args.join(' ')}`);
         
-        const isWindows = process.platform === 'win32';
         const toolPath = this.mumutoolPath;
         
         if (!fs.existsSync(toolPath)) {
@@ -555,56 +540,49 @@ class MuMuController {
         }
         
         try {
-            let result;
-            if (isWindows) {
-                // Windows: 使用 cmd.exe /c 执行，彻底解决路径空格问题
-                // cmd.exe /c 需要整个命令作为一个带引号的字符串
-                const allArgs = [toolPath, ...args];
-                const cmdStr = allArgs.map((a, idx) => {
-                    // 第一个参数是可执行文件路径，始终加引号
-                    if (idx === 0) return '"' + a + '"';
-                    // 其他参数如果包含空格或特殊字符也加引号
-                    if (a.includes(' ') || a.includes('"') || a.includes('\t')) {
-                        return '"' + a.replace(/"/g, '\\"') + '"';
-                    }
-                    return a;
-                }).join(' ');
-                const cmdLine = 'cmd.exe /c "' + cmdStr + '"';
-                console.log(`[MuMu] CMD: ${cmdLine}`);
-                result = execSync(cmdLine, { 
-                    timeout: timeout, 
-                    encoding: 'utf8', 
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                    cwd: path.dirname(toolPath)
-                });
-            } else {
-                result = execFileSync(toolPath, args, { 
-                    timeout: timeout, 
-                    encoding: 'utf8', 
-                    stdio: ['pipe', 'pipe', 'pipe']
-                });
+            const result = spawnSync(toolPath, args, { 
+                timeout: timeout,
+                cwd: path.dirname(toolPath),
+                encoding: 'utf8',
+                maxBuffer: 1024 * 1024 * 10
+            });
+            
+            if (result.error) {
+                throw result.error;
             }
             
-            const output = result.trim();
-            console.log(`[MuMu] ${command} 返回: ${output.substring(0, 200)}`);
+            const output = (result.stdout || '').trim();
+            const errOutput = (result.stderr || '').trim();
             
+            console.log(`[MuMu] ${command} stdout: ${output.substring(0, 200)}`);
+            if (errOutput) {
+                console.log(`[MuMu] ${command} stderr: ${errOutput.substring(0, 200)}`);
+            }
+            
+            const toParse = output || errOutput;
             try {
-                return JSON.parse(output);
+                return JSON.parse(toParse);
             } catch {
-                return { errcode: 0, message: output, return: null };
+                const jsonMatch = toParse.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    try {
+                        return JSON.parse(jsonMatch[0]);
+                    } catch {}
+                }
+                return { errcode: result.status === 0 ? 0 : -1, message: toParse, return: null };
             }
         } catch (e) {
-            const errorOutput = (e.stderr ? e.stderr.toString() : e.stdout ? e.stdout.toString() : e.message).trim();
-            console.error(`[MuMu] ${command} 执行错误: ${errorOutput}`);
+            console.error(`[MuMu] ${command} 执行错误: ${e.message}`);
             
+            const errMsg = e.message || '';
             try {
-                const jsonMatch = errorOutput.match(/\{[\s\S]*\}/);
+                const jsonMatch = errMsg.match(/\{[\s\S]*\}/);
                 if (jsonMatch) {
                     return JSON.parse(jsonMatch[0]);
                 }
             } catch {}
             
-            return { errcode: -1, message: errorOutput || e.message };
+            return { errcode: -1, message: errMsg };
         }
     }
 
@@ -839,24 +817,43 @@ class MuMuController {
                             indices.push(index);
                             console.log(`[MuMu] 找到模拟器 ${index}: vm.json 存在`);
                         } else {
-                            try {
-                                const contents = fs.readdirSync(vmDirPath);
-                                if (contents.length > 0) {
-                                    const hasMumuFiles = contents.some(f => 
-                                        f.startsWith('vm_') || 
-                                        f.endsWith('.img') || 
-                                        f === 'setting' ||
-                                        f === 'config' ||
-                                        f.includes('data')
-                                    );
-                                    if (hasMumuFiles || contents.length >= 2) {
-                                        indices.push(index);
-                                        console.log(`[MuMu] 找到模拟器 ${index}: 目录有 ${contents.length} 个内容 (无vm.json)`);
-                                    }
+                        try {
+                            const contents = fs.readdirSync(vmDirPath);
+                            console.log(`[MuMu] 模拟器 ${index} 目录内容: ${contents.slice(0, 10).join(', ')}`);
+                            
+                            if (contents.length > 0) {
+                                const hasMumuMarker = contents.some(f => 
+                                    f.startsWith('vm_') || 
+                                    f.endsWith('.img') || 
+                                    f === 'setting' ||
+                                    f === 'config' ||
+                                    f === 'data' ||
+                                    f.includes('data') ||
+                                    f === 'cache' ||
+                                    f === 'logs' ||
+                                    f === 'MuMu' ||
+                                    f === 'emulator' ||
+                                    f.startsWith('hardware') ||
+                                    f.startsWith('kernel') ||
+                                    f.startsWith('system')
+                                );
+                                
+                                if (hasMumuMarker) {
+                                    indices.push(index);
+                                    console.log(`[MuMu] 找到模拟器 ${index}: 目录有 ${contents.length} 个内容 (标记匹配: ${contents.filter(f => 
+                                        f.startsWith('vm_') || f.endsWith('.img') || f === 'setting' ||
+                                        f === 'config' || f === 'data' || f === 'cache' ||
+                                        f === 'logs' || f === 'MuMu' || f === 'emulator'
+                                    ).join(', ')})`);
+                                } else if (contents.length >= 1) {
+                                    indices.push(index);
+                                    console.log(`[MuMu] 找到模拟器 ${index}: 目录有 ${contents.length} 个内容 (无特定标记，但非空)`);
                                 }
-                            } catch (e) {
                             }
+                        } catch (e) {
+                            console.warn(`[MuMu] 读取模拟器 ${index} 目录内容失败: ${e.message}`);
                         }
+                    }
                     }
                 }
                 if (indices.length > 0) break;
@@ -872,45 +869,98 @@ class MuMuController {
         
         try {
             if (os === 'win32') {
-                console.log('[MuMu] Windows平台: 使用文件扫描方式获取模拟器列表');
-                const indices = this.scanVmJsonFiles();
-                console.log(`[MuMu] 扫描到 ${indices.length} 个模拟器索引: ${indices.join(',')}`);
+                console.log('[MuMu] Windows平台: 获取模拟器列表');
                 
-                for (const index of indices) {
+                // 1. 先尝试使用 mumu-cli list 命令
+                if (this.mumutoolPath) {
                     try {
-                        const vmConfig = this.readVmConfig(index);
-                        const emulator = this.buildEmulatorFromVmConfig(index, vmConfig);
-                        if (emulator) {
-                            emulators.push(emulator);
+                        console.log('[MuMu] 尝试 mumu-cli list 命令...');
+                        const listResult = await this.execMumutool(['list']);
+                        console.log(`[MuMu] list 命令返回: ${JSON.stringify(listResult).substring(0, 300)}`);
+                        
+                        if (listResult.errcode === 0 && listResult.return) {
+                            let listData = listResult.return;
+                            if (typeof listData === 'string') {
+                                try { listData = JSON.parse(listData); } catch(e) {}
+                            }
+                            
+                            // 解析返回的模拟器列表
+                            if (Array.isArray(listData)) {
+                                for (const item of listData) {
+                                    try {
+                                        let idx = -1;
+                                        if (typeof item === 'object' && item.index !== undefined) {
+                                            idx = typeof item.index === 'number' ? item.index : parseInt(item.index);
+                                        } else {
+                                            idx = parseInt(item);
+                                        }
+                                        
+                                        if (idx >= 0 && !emulators.find(e => e.index === idx)) {
+                                            const vmConfig = this.readVmConfig(idx);
+                                            const emulator = this.buildEmulatorFromVmConfig(idx, vmConfig);
+                                            if (emulator) {
+                                                emulators.push(emulator);
+                                            }
+                                        }
+                                    } catch (e) {
+                                        console.warn(`[MuMu] 解析 list 项失败: ${e.message}`);
+                                    }
+                                }
+                            } else if (listData && typeof listData === 'object') {
+                                // 可能是 { "0": {...}, "1": {...} } 格式
+                                Object.keys(listData).forEach(key => {
+                                    const idx = parseInt(key);
+                                    if (!isNaN(idx) && !emulators.find(e => e.index === idx)) {
+                                        const vmConfig = this.readVmConfig(idx);
+                                        const emulator = this.buildEmulatorFromVmConfig(idx, vmConfig);
+                                        if (emulator) {
+                                            emulators.push(emulator);
+                                        }
+                                    }
+                                });
+                            }
+                            
+                            console.log(`[MuMu] 通过 list 命令获取到 ${emulators.length} 个模拟器`);
                         }
-                    } catch (e) {
-                        console.warn(`[MuMu] 获取模拟器 ${index} 详情失败: ${e.message}`);
+                    } catch (listErr) {
+                        console.warn(`[MuMu] list 命令失败: ${listErr.message}`);
                     }
                 }
                 
-                if (emulators.length === 0 && this.mumutoolPath) {
-                    console.log('[MuMu] 文件扫描无结果，尝试 mumu-cli 命令...');
-                    try {
-                        const result = await this.execMumutool(['shell'], 3000);
-                        console.log(`[MuMu] shell 命令返回: errcode=${result.errcode}`);
-                    } catch (e) {
-                        console.warn(`[MuMu] mumu-cli 命令失败: ${e.message}`);
-                    }
+                // 2. 如果命令方式没有获取到，使用文件扫描作为回退
+                if (emulators.length === 0) {
+                    console.log('[MuMu] 命令方式无结果，使用文件扫描方式...');
+                    const indices = this.scanVmJsonFiles();
+                    console.log(`[MuMu] 扫描到 ${indices.length} 个模拟器索引: ${indices.join(',')}`);
                     
-                    if (emulators.length === 0) {
-                        console.log('[MuMu] 尝试遍历 0-31 索引...');
-                        for (let i = 0; i < 32; i++) {
-                            try {
-                                const vmConfig = this.readVmConfig(i);
-                                if (vmConfig) {
-                                    const emulator = this.buildEmulatorFromVmConfig(i, vmConfig);
-                                    if (emulator) {
-                                        emulators.push(emulator);
-                                        console.log(`[MuMu] 通过索引 ${i} 找到模拟器`);
-                                    }
-                                }
-                            } catch (e) {
+                    for (const index of indices) {
+                        try {
+                            const vmConfig = this.readVmConfig(index);
+                            const emulator = this.buildEmulatorFromVmConfig(index, vmConfig);
+                            if (emulator && !emulators.find(e => e.index === index)) {
+                                emulators.push(emulator);
                             }
+                        } catch (e) {
+                            console.warn(`[MuMu] 获取模拟器 ${index} 详情失败: ${e.message}`);
+                        }
+                    }
+                }
+                
+                // 3. 如果文件扫描也没结果，遍历 0-31 索引
+                if (emulators.length === 0) {
+                    console.log('[MuMu] 文件扫描无结果，尝试遍历 0-31 索引...');
+                    for (let i = 0; i < 32; i++) {
+                        try {
+                            const vmConfig = this.readVmConfig(i);
+                            if (vmConfig) {
+                                const emulator = this.buildEmulatorFromVmConfig(i, vmConfig);
+                                if (emulator) {
+                                    emulators.push(emulator);
+                                    console.log(`[MuMu] 通过索引 ${i} 找到模拟器`);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn(`[MuMu] 遍历索引 ${i} 读取模拟器配置失败: ${e.message}`);
                         }
                     }
                 }
@@ -1263,7 +1313,8 @@ class MuMuController {
                             return {
                                 vmCpuCount: config.vmCpuCount || 0,
                                 vmMemoryOfMB: config.vmMemoryOfMB || 0,
-                                vmName: config.vmName || ''
+                                vmName: config.vmName || '',
+                                adb_port: config.adb_port || config.adbPort || 0
                             };
                         } catch (e) {
                             console.warn(`[MuMu] 读取配置文件失败: ${configFile}, ${e.message}`);
@@ -1276,7 +1327,8 @@ class MuMuController {
                     return {
                         vmCpuCount: 1,
                         vmMemoryOfMB: 1024,
-                        vmName: `V${String(index + 1).padStart(3, '0')}`
+                        vmName: `V${String(index + 1).padStart(3, '0')}`,
+                        adb_port: 0
                     };
                 }
             }
@@ -1313,7 +1365,23 @@ class MuMuController {
                 await this.connectAdb(port);
                 return { success: true, message: '启动命令已发送' };
             } else if (process.platform === 'win32') {
-                // Windows: 查找 MuMuPlayer.exe 并启动
+                // Windows: 优先使用 mumu-cli.exe open 命令
+                const mumuCliPath = path.join(this.mumuPath, 'mumu-cli.exe');
+                const mumuCliShellPath = path.join(this.mumuPath, 'shell', 'mumu-cli.exe');
+                const cliPath = fs.existsSync(mumuCliPath) ? mumuCliPath : (fs.existsSync(mumuCliShellPath) ? mumuCliShellPath : null);
+                if (cliPath) {
+                    try {
+                        const result = spawnSync(cliPath, ['open', String(index)], { timeout: 10000, encoding: 'utf8', cwd: path.dirname(cliPath) });
+                        if (result.error) throw result.error;
+                        await new Promise(resolve => setTimeout(resolve, 3000));
+                        const port = 16384 + index * 32;
+                        await this.connectAdb(port);
+                        return { success: true, message: '启动命令已发送' };
+                    } catch (e) {
+                        console.warn(`[MuMu] mumu-cli open 失败: ${e.message}`);
+                    }
+                }
+                // Fallback: 查找 MuMuPlayer.exe 并启动
                 const exePath = path.join(this.mumuPath, 'MuMuPlayer.exe');
                 if (fs.existsSync(exePath)) {
                     try { execFileSync(exePath, ['-v', String(index)], { timeout: 5000, shell: true }); } catch(e) { execSync(`start "" "${exePath}" -v ${index}`, { timeout: 5000, shell: true }); }
@@ -1322,7 +1390,7 @@ class MuMuController {
                     await this.connectAdb(port);
                     return { success: true, message: '启动命令已发送' };
                 }
-                return { success: false, message: '未找到 MuMuPlayer.exe' };
+                return { success: false, message: '未找到 mumu-cli.exe 或 MuMuPlayer.exe' };
             }
             return { success: false, message: '需要手动启动模拟器' };
         } catch (e) {
@@ -1341,6 +1409,21 @@ class MuMuController {
                 }
             }
 
+            // Fallback: Windows 优先使用 mumu-cli.exe close
+            if (process.platform === 'win32') {
+                const mumuCliPath = path.join(this.mumuPath, 'mumu-cli.exe');
+                const mumuCliShellPath = path.join(this.mumuPath, 'shell', 'mumu-cli.exe');
+                const cliPath = fs.existsSync(mumuCliPath) ? mumuCliPath : (fs.existsSync(mumuCliShellPath) ? mumuCliShellPath : null);
+                if (cliPath) {
+                    try {
+                        const result = spawnSync(cliPath, ['close', String(index)], { timeout: 10000, encoding: 'utf8', cwd: path.dirname(cliPath) });
+                        if (result.error) throw result.error;
+                        return { success: true, message: '关闭命令已发送' };
+                    } catch (e) {
+                        console.warn(`[MuMu] mumu-cli close 失败: ${e.message}`);
+                    }
+                }
+            }
             // Fallback: 使用 ADB 关机
             const port = 16384 + index * 32;
             const deviceId = `127.0.0.1:${port}`;
@@ -1381,10 +1464,6 @@ class MuMuController {
 
     async applyEmulatorSetting(index, cpuCores, memoryGb, vmName) {
         try {
-            if (!this.mumutoolPath) {
-                return { success: false, message: '未找到 mumutool，无法应用配置' };
-            }
-            
             const setting = {};
             if (vmName) {
                 setting.vmName = vmName;
@@ -1400,22 +1479,195 @@ class MuMuController {
                 return { success: true, message: '无需应用配置' };
             }
             
-            const result = await this.execMumutool([
-                'config', String(index),
-                '--setting', JSON.stringify(setting)
-            ]);
-            
-            if (result.errcode === 0) {
-                console.log(`[MuMu] 模拟器${index} 已应用配置: cpu=${cpuCores}核, mem=${memoryGb}GB, name=${vmName}`);
-                return { success: true, message: '配置应用成功' };
-            } else {
-                console.warn(`[MuMu] 模拟器${index} 配置应用失败:`, result.message);
-                return { success: false, message: result.message || '配置应用失败' };
+            // 先尝试 mumu-cli 命令
+            if (this.mumutoolPath) {
+                try {
+                    const result = await this.execMumutool([
+                        'config', String(index),
+                        '--setting', JSON.stringify(setting)
+                    ]);
+                    if (result.errcode === 0) {
+                        console.log(`[MuMu] 模拟器${index} 通过 mumu-cli 配置成功: cpu=${cpuCores}核, mem=${memoryGb}GB, name=${vmName}`);
+                        return { success: true, message: '配置应用成功' };
+                    } else {
+                        console.warn(`[MuMu] 模拟器${index} mumu-cli 配置失败: ${result.message}`);
+                    }
+                } catch (cliErr) {
+                    console.warn(`[MuMu] 模拟器${index} mumu-cli 配置异常: ${cliErr.message}`);
+                }
             }
+            
+            // 回退：直接编辑 vm.json 文件
+            console.log(`[MuMu] 模拟器${index} 尝试直接编辑 vm.json 配置`);
+            const vmResult = this.updateVmJsonConfig(index, cpuCores, memoryGb, vmName);
+            if (vmResult.success) {
+                console.log(`[MuMu] 模拟器${index} 通过 vm.json 配置成功: cpu=${cpuCores}核, mem=${memoryGb}GB, name=${vmName}`);
+                return { success: true, message: '配置应用成功(vm.json)' };
+            }
+            
+            return { success: false, message: vmResult.message || '配置应用失败' };
         } catch (e) {
             console.warn(`[MuMu] 模拟器${index} 配置应用异常:`, e.message);
             return { success: false, message: e.message };
         }
+    }
+
+    updateVmJsonConfig(index, cpuCores, memoryGb, vmName) {
+        try {
+            const vmDirs = this.getAllVmDirs();
+            for (const vmDir of vmDirs) {
+                const configPaths = [
+                    path.join(vmDir, String(index), 'setting', 'vm.json'),
+                    path.join(vmDir, String(index), 'config', 'vm.json'),
+                    path.join(vmDir, String(index), 'vm.json'),
+                    path.join(vmDir, String(index).padStart(3, '0'), 'setting', 'vm.json'),
+                    path.join(vmDir, String(index).padStart(3, '0'), 'config', 'vm.json'),
+                    path.join(vmDir, String(index).padStart(3, '0'), 'vm.json'),
+                ];
+                
+                for (const configFile of configPaths) {
+                    if (fs.existsSync(configFile)) {
+                        let config = {};
+                        try {
+                            config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+                        } catch (e) {
+                            config = {};
+                        }
+                        
+                        if (cpuCores && cpuCores > 0) {
+                            config.vmCpuCount = cpuCores;
+                        }
+                        if (memoryGb && memoryGb > 0) {
+                            config.vmMemoryOfMB = memoryGb * 1024;
+                        }
+                        if (vmName) {
+                            config.vmName = vmName;
+                        }
+                        
+                        fs.writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8');
+                        console.log(`[MuMu] 已更新 vm.json: ${configFile}, vmCpuCount=${config.vmCpuCount}, vmMemoryOfMB=${config.vmMemoryOfMB}, vmName=${config.vmName}`);
+                        return { success: true, message: 'vm.json 配置成功' };
+                    }
+                }
+            }
+            
+            // 尝试使用 vmsBasePath
+            if (this.vmsBasePath) {
+                const configPaths = [
+                    path.join(this.vmsBasePath, String(index), 'setting', 'vm.json'),
+                    path.join(this.vmsBasePath, String(index), 'config', 'vm.json'),
+                    path.join(this.vmsBasePath, String(index), 'vm.json'),
+                ];
+                for (const configFile of configPaths) {
+                    if (fs.existsSync(configFile)) {
+                        let config = {};
+                        try {
+                            config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+                        } catch (e) {
+                            config = {};
+                        }
+                        
+                        if (cpuCores && cpuCores > 0) {
+                            config.vmCpuCount = cpuCores;
+                        }
+                        if (memoryGb && memoryGb > 0) {
+                            config.vmMemoryOfMB = memoryGb * 1024;
+                        }
+                        if (vmName) {
+                            config.vmName = vmName;
+                        }
+                        
+                        fs.writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8');
+                        console.log(`[MuMu] 已更新 vm.json: ${configFile}, vmCpuCount=${config.vmCpuCount}, vmMemoryOfMB=${config.vmMemoryOfMB}, vmName=${config.vmName}`);
+                        return { success: true, message: 'vm.json 配置成功' };
+                    }
+                }
+            }
+            
+            return { success: false, message: '未找到 vm.json 文件' };
+        } catch (e) {
+            return { success: false, message: '编辑 vm.json 失败: ' + e.message };
+        }
+    }
+
+    getAllVmDirs() {
+        const os = process.platform;
+        const dirs = [];
+        
+        if (this.vmsBasePath) {
+            dirs.push(this.vmsBasePath);
+        }
+        
+        if (os === 'darwin') {
+            const homeDir = process.env.HOME || require('os').homedir();
+            dirs.push(
+                path.join(homeDir, 'Library', 'Application Support', 'com.netease.mumu.nemux', 'vms'),
+                path.join(homeDir, 'Library', 'Application Support', 'Netease', 'MuMuPlayer', 'vms'),
+                path.join(homeDir, 'Library', 'Application Support', 'Netease', 'MuMuPlayer-12.0', 'vms'),
+                path.join(homeDir, 'Documents', 'MuMu', 'vms'),
+                path.join(homeDir, 'Documents', 'MuMuPlayer', 'vms'),
+            );
+        } else if (os === 'win32') {
+            const homeDir = require('os').homedir();
+            const userProfile = process.env.USERPROFILE || homeDir;
+            const publicDir = process.env.PUBLIC || 'C:\\Users\\Public';
+            const appData = process.env.APPDATA || '';
+            const localAppData = process.env.LOCALAPPDATA || '';
+            
+            if (userProfile) {
+                dirs.push(
+                    path.join(userProfile, 'Documents', 'MuMuPlayer', 'vms'),
+                    path.join(userProfile, 'Documents', 'MuMuPlayer-12.0', 'vms'),
+                    path.join(userProfile, 'Documents', 'MuMu', 'vms'),
+                    path.join(userProfile, 'Documents', 'Netease', 'MuMuPlayer', 'vms'),
+                    path.join(userProfile, 'Documents', 'Netease', 'MuMuPlayer-12.0', 'vms'),
+                );
+            }
+            if (publicDir) {
+                dirs.push(
+                    path.join(publicDir, 'Documents', 'MuMu', 'vms'),
+                    path.join(publicDir, 'Documents', 'MuMuPlayer', 'vms'),
+                );
+            }
+            if (appData) {
+                dirs.push(
+                    path.join(appData, 'Netease', 'MuMuPlayer', 'vms'),
+                    path.join(appData, 'Netease', 'MuMuPlayer-12.0', 'vms'),
+                );
+            }
+            if (localAppData) {
+                dirs.push(
+                    path.join(localAppData, 'Netease', 'MuMuPlayer', 'vms'),
+                    path.join(localAppData, 'Netease', 'MuMuPlayer-12.0', 'vms'),
+                );
+            }
+            
+            // 从 mumuPath 推断
+            if (this.mumuPath) {
+                let installDir = this.mumuPath;
+                try {
+                    if (fs.existsSync(installDir) && fs.statSync(installDir).isFile()) {
+                        installDir = path.dirname(installDir);
+                    }
+                    const baseName = path.basename(installDir).toLowerCase();
+                    if (baseName === 'nx_main') {
+                        installDir = path.dirname(installDir);
+                    }
+                    dirs.push(path.join(installDir, 'vms'));
+                    dirs.push(path.join(installDir, 'nx_main', 'vms'));
+                    const parentDir = path.dirname(installDir);
+                    if (parentDir) {
+                        dirs.push(path.join(parentDir, 'MuMuPlayer', 'vms'));
+                        dirs.push(path.join(parentDir, 'MuMuPlayer-12.0', 'vms'));
+                        dirs.push(path.join(parentDir, 'Netease', 'MuMuPlayer', 'vms'));
+                        dirs.push(path.join(parentDir, 'Netease', 'MuMuPlayer-12.0', 'vms'));
+                    }
+                } catch (e) {}
+            }
+        }
+        
+        // 过滤不存在的目录并去重
+        return [...new Set(dirs.filter(d => d && d.length > 0))];
     }
 
     async deleteEmulator(index) {
@@ -1426,6 +1678,23 @@ class MuMuController {
                 await new Promise(resolve => setTimeout(resolve, 1500));
             } catch (e) {
                 console.warn(`[MuMu] 删除前停止模拟器${index}失败: ${e.message}`);
+            }
+
+            // Windows: 优先使用 mumu-cli.exe delete 命令
+            if (process.platform === 'win32') {
+                const mumuCliPath = path.join(this.mumuPath || '', 'mumu-cli.exe');
+                const mumuCliShellPath = path.join(this.mumuPath || '', 'shell', 'mumu-cli.exe');
+                const cliPath = fs.existsSync(mumuCliPath) ? mumuCliPath : (fs.existsSync(mumuCliShellPath) ? mumuCliShellPath : null);
+                if (cliPath) {
+                    try {
+                        const result = spawnSync(cliPath, ['delete', String(index)], { timeout: 15000, encoding: 'utf8', cwd: path.dirname(cliPath) });
+                        if (result.error) throw result.error;
+                        console.log(`[MuMu] mumu-cli delete 模拟器${index} 成功`);
+                        return { success: true, message: '删除成功' };
+                    } catch (e) {
+                        console.warn(`[MuMu] mumu-cli delete 失败: ${e.message}, 尝试 mumutool 和手动删除`);
+                    }
+                }
             }
 
             if (this.mumutoolPath) {
@@ -1898,34 +2167,55 @@ async function handleMessage(msg) {
                             const vmName = 'V' + String(index + 1).padStart(3, '0');
                             console.log('[Agent] 为模拟器 index=' + index + ' 配置: 名称=' + vmName + ', CPU=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
                             
-                            // 使用 --setting 参数一次性配置
-                            const settingObj = { vmName: vmName };
-                            if (cpuCores > 0) settingObj.vmCpuCount = cpuCores;
-                            if (memoryGb > 0) settingObj.vmMemoryOfMB = memoryGb * 1024;
-                            const settingJson = JSON.stringify(settingObj);
-                            
+                            // 优先使用直接编辑 vm.json 方式配置
+                            let configSuccess = false;
                             try {
-                                const cfgResult = await mumu.execMumutool(['config', String(index), '--setting', settingJson]);
-                                if (cfgResult.errcode === 0) {
-                                    console.log('[Agent] 配置模拟器 ' + vmName + ' 成功: cpu=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
+                                const vmResult = mumu.updateVmJsonConfig(index, cpuCores, memoryGb, vmName);
+                                console.log(`[Agent] vm.json 配置参数: index=${index}, cpuCores=${cpuCores}, memoryGb=${memoryGb}, vmName=${vmName}`);
+                                if (vmResult.success) {
+                                    console.log('[Agent] 通过 vm.json 配置模拟器 ' + vmName + ' 成功');
+                                    configSuccess = true;
                                 } else {
-                                    console.warn('[Agent] 配置模拟器失败: ' + cfgResult.message);
-                                    // 回退：逐字段配置
-                                    try {
-                                        if (cpuCores > 0) {
-                                            await mumu.execMumutool(['config', String(index), 'vmCpuCount', String(cpuCores)]);
-                                        }
-                                        if (memoryGb > 0) {
-                                            await mumu.execMumutool(['config', String(index), 'vmMemoryOfMB', String(memoryGb * 1024)]);
-                                        }
-                                        await mumu.execMumutool(['config', String(index), 'vmName', vmName]);
-                                        console.log('[Agent] 回退配置成功: ' + vmName);
-                                    } catch (fallbackErr) {
-                                        console.warn('[Agent] 回退配置也失败: ' + fallbackErr.message);
-                                    }
+                                    console.warn('[Agent] vm.json 配置失败: ' + vmResult.message + ', 尝试 mumu-cli');
                                 }
-                            } catch (e) {
-                                console.warn('[Agent] 配置模拟器异常: ' + e.message);
+                            } catch (vmErr) {
+                                console.warn('[Agent] vm.json 配置异常: ' + vmErr.message + ', 尝试 mumu-cli');
+                            }
+                            
+                            // 如果 vm.json 失败或未执行，回退到 mumu-cli
+                            if (!configSuccess && mumu.mumutoolPath) {
+                                const settingObj = { vmName: vmName };
+                                if (cpuCores > 0) settingObj.vmCpuCount = cpuCores;
+                                if (memoryGb > 0) settingObj.vmMemoryOfMB = memoryGb * 1024;
+                                const settingJson = JSON.stringify(settingObj);
+                                console.log(`[Agent] mumu-cli 配置参数: index=${index}, settingJson=${settingJson}`);
+                                
+                                try {
+                                    const cfgResult = await mumu.execMumutool(['config', String(index), '--setting', settingJson]);
+                                    if (cfgResult.errcode === 0) {
+                                        console.log('[Agent] 通过 mumu-cli 配置模拟器 ' + vmName + ' 成功: cpu=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
+                                        configSuccess = true;
+                                    } else {
+                                        console.warn('[Agent] mumu-cli 配置模拟器失败: ' + cfgResult.message);
+                                        // 回退：逐字段配置
+                                        try {
+                                            console.log(`[Agent] 逐字段配置参数: index=${index}, vmCpuCount=${cpuCores}, vmMemoryOfMB=${memoryGb * 1024}, vmName=${vmName}`);
+                                            if (cpuCores > 0) {
+                                                await mumu.execMumutool(['config', String(index), 'vmCpuCount', String(cpuCores)]);
+                                            }
+                                            if (memoryGb > 0) {
+                                                await mumu.execMumutool(['config', String(index), 'vmMemoryOfMB', String(memoryGb * 1024)]);
+                                            }
+                                            await mumu.execMumutool(['config', String(index), 'vmName', vmName]);
+                                            console.log('[Agent] mumu-cli 逐字段配置成功: ' + vmName);
+                                            configSuccess = true;
+                                        } catch (fallbackErr) {
+                                            console.warn('[Agent] mumu-cli 逐字段配置也失败: ' + fallbackErr.message);
+                                        }
+                                    }
+                                } catch (e) {
+                                    console.warn('[Agent] mumu-cli 配置模拟器异常: ' + e.message);
+                                }
                             }
                             
                             // 验证配置（仅日志，不影响结果）
@@ -2034,31 +2324,29 @@ async function handleMessage(msg) {
                                 // 优化：减少等待时间到 500ms
                                 await new Promise(resolve => setTimeout(resolve, 500));
                                 
-                                // 设置名称和配置（即使没有 mumutool 也尝试通过直接编辑 vm.json 配置）
+                                // 设置名称和配置：优先使用直接编辑 vm.json，再尝试 mumu-cli
                                 const vmName = 'V' + String(index + 1).padStart(3, '0');
                                 try {
-                                    const settingObj = {vmName: vmName, vmCpuCount: cpuCores, vmMemoryOfMB: memoryGb * 1024};
-                                    if (mumu.mumutoolPath) {
+                                    // 优先使用直接编辑 vm.json
+                                    let cfgSuccess = false;
+                                    try {
+                                        const vmResult = mumu.updateVmJsonConfig(index, cpuCores, memoryGb, vmName);
+                                        if (vmResult.success) {
+                                            console.log(`[Agent] 通过 vm.json 配置模拟器 ${vmName} 成功: cpu=${cpuCores}核, 内存=${memoryGb}GB`);
+                                            cfgSuccess = true;
+                                        } else {
+                                            console.warn(`[Agent] vm.json 配置失败: ${vmResult.message}`);
+                                        }
+                                    } catch (jsonErr) {
+                                        console.warn(`[Agent] vm.json 配置异常: ${jsonErr.message}`);
+                                    }
+                                    
+                                    // vm.json 失败时回退到 mumu-cli
+                                    if (!cfgSuccess && mumu.mumutoolPath) {
+                                        const settingObj = {vmName: vmName, vmCpuCount: cpuCores, vmMemoryOfMB: memoryGb * 1024};
                                         const settingArgs = ['config', String(index), '--setting', JSON.stringify(settingObj)];
                                         await mumu.execMumutool(settingArgs);
-                                        console.log(`[Agent] 模拟器 ${vmName} 配置成功: cpu=${cpuCores}核, 内存=${memoryGb}GB`);
-                                    } else {
-                                        // 回退：直接编辑 vm.json 文件
-                                        try {
-                                            const vmJsonPath = path.join(mumu.vmsBasePath || '', String(index), 'setting', 'vm.json');
-                                            if (fs.existsSync(vmJsonPath)) {
-                                                let vmConfig = JSON.parse(fs.readFileSync(vmJsonPath, 'utf8'));
-                                                if (cpuCores > 0) vmConfig.vmCpuCount = cpuCores;
-                                                if (memoryGb > 0) vmConfig.vmMemoryOfMB = memoryGb * 1024;
-                                                vmConfig.vmName = vmName;
-                                                fs.writeFileSync(vmJsonPath, JSON.stringify(vmConfig, null, 2), 'utf8');
-                                                console.log(`[Agent] 通过编辑 vm.json 配置模拟器 ${vmName} 成功`);
-                                            } else {
-                                                console.warn(`[Agent] vm.json 不存在，跳过配置: ${vmJsonPath}`);
-                                            }
-                                        } catch (jsonErr) {
-                                            console.warn(`[Agent] 编辑 vm.json 失败: ${jsonErr.message}`);
-                                        }
+                                        console.log(`[Agent] 通过 mumu-cli 配置模拟器 ${vmName} 成功: cpu=${cpuCores}核, 内存=${memoryGb}GB`);
                                     }
                                 } catch (e) {
                                     console.warn(`[Agent] 设置模拟器 ${index} 失败: ${e.message}`);

@@ -60,6 +60,9 @@
               <el-button size="small" type="primary" link @click="openEdit(row)">
                 <el-icon><Edit /></el-icon> 编辑
               </el-button>
+              <el-button size="small" type="primary" link @click="openConfig(row)">
+                <el-icon><Setting /></el-icon> 配置
+              </el-button>
               <el-button size="small" type="primary" link @click="remove(row)">
                 <el-icon><Delete /></el-icon> 删除
               </el-button>
@@ -104,15 +107,49 @@
         <el-button type="primary" :loading="dialog.saving" @click="save">保存</el-button>
       </template>
     </el-dialog>
+    <!-- 商户配置弹窗 -->
+    <el-dialog
+      v-model="configDialog.visible"
+      title="商户配置"
+      width="480px"
+    >
+      <el-form :model="configDialog.form" label-width="120px">
+        <el-form-item label="可创建用户数">
+          <el-input-number
+            v-model="configDialog.form.maxUsers"
+            :min="1"
+            :max="1000"
+            style="width: 100%"
+            placeholder="该商户最多可创建的用户数量"
+          />
+          <div class="form-hint">用户管理里创建用户时的数量上限</div>
+        </el-form-item>
+        <el-form-item label="用户关联数上限">
+          <el-input-number
+            v-model="configDialog.form.maxLinkedAccounts"
+            :min="1"
+            :max="1000"
+            style="width: 100%"
+            placeholder="每个用户最多关联的Discord账号数"
+          />
+          <div class="form-hint">用户管理>关联账号功能中，每个用户的关联上限</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="configDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="configDialog.saving" @click="saveConfig">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Edit, Delete, Refresh } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete, Refresh, Setting } from '@element-plus/icons-vue'
 import {
-  listMerchants, createMerchant, updateMerchant, deleteMerchant
+  listMerchants, createMerchant, updateMerchant, deleteMerchant,
+  getMerchantConfigById, updateMerchantConfigById
 } from '@/api'
 
 const list = ref([])
@@ -221,6 +258,50 @@ async function remove(row) {
   }
 }
 
+
+const configDialog = reactive({
+  visible: false,
+  merchantId: null,
+  merchantName: '',
+  saving: false,
+  form: {
+    maxUsers: 10,
+    maxLinkedAccounts: 20
+  }
+})
+
+async function openConfig(row) {
+  configDialog.visible = true
+  configDialog.merchantId = row.id
+  configDialog.merchantName = row.name
+  configDialog.saving = true
+  try {
+    const res = await getMerchantConfigById(row.id)
+    configDialog.form.maxUsers = res?.maxUsers ?? 10
+    configDialog.form.maxLinkedAccounts = res?.maxLinkedAccounts ?? 20
+  } catch (e) {
+    configDialog.form.maxUsers = 10
+    configDialog.form.maxLinkedAccounts = 20
+  } finally {
+    configDialog.saving = false
+  }
+}
+
+async function saveConfig() {
+  configDialog.saving = true
+  try {
+    await updateMerchantConfigById(configDialog.merchantId, {
+      maxUsers: configDialog.form.maxUsers,
+      maxLinkedAccounts: configDialog.form.maxLinkedAccounts
+    })
+    ElMessage.success('配置已保存')
+    configDialog.visible = false
+  } catch (e) {
+  } finally {
+    configDialog.saving = false
+  }
+}
+
 onMounted(() => {
   fetchList()
 })
@@ -264,5 +345,11 @@ onMounted(() => {
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
   color: var(--color-text-2);
+}
+
+.form-hint {
+  font-size: 12px;
+  color: var(--color-text-3);
+  margin-top: 4px;
 }
 </style>
