@@ -68,7 +68,7 @@ public class PhysicalSyncScheduler {
                 .map(EmuInstance::getInstanceIndex)
                 .collect(Collectors.toSet());
 
-            String userId = userInstances.get(0).getUserId();
+            Long userId = userInstances.get(0).getUserId();
 
             // 1. 物理有但数据库没有 → 只提示
             for (int physIdx : physicalIndices) {

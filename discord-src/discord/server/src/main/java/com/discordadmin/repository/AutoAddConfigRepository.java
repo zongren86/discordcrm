@@ -8,5 +8,5 @@ import java.util.Optional;
 
 @Repository
 public interface AutoAddConfigRepository extends JpaRepository<AutoAddConfigEntity, Long> {
-    Optional<AutoAddConfigEntity> findByMerchantIdAndUserId(Long merchantId, String userId);
+    Optional<AutoAddConfigEntity> findByMerchantIdAndUserId(Long merchantId, Long userId);
 }

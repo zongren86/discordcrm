@@ -102,6 +102,71 @@
           </div>
         </el-dialog>
 
+        <!-- 差异检测弹窗 -->
+        <el-dialog
+          v-model="showDiffDialog"
+          title="检测到物理模拟器与数据库存在差异"
+          width="600px"
+          :close-on-click-modal="false"
+        >
+          <div v-if="diffEmulators.length > 0">
+            <el-alert
+              type="warning"
+              :closable="false"
+              style="margin-bottom: 16px"
+            >
+              <template #title>
+                检测到 {{ diffEmulators.length }} 个物理模拟器在数据库中不存在记录，请选择要创建的模拟器
+              </template>
+            </el-alert>
+            
+            <div style="margin-bottom: 12px;">
+              <el-checkbox
+                :model-value="selectedDiffIndices.length === diffEmulators.length"
+                @change="toggleSelectAllDiff"
+              >全选</el-checkbox>
+              <span style="margin-left: 12px; color: #909399;">
+                已选择 {{ selectedDiffIndices.length }} / {{ diffEmulators.length }}
+              </span>
+            </div>
+            
+            <el-table :data="diffEmulators" stripe size="small" max-height="300">
+              <el-table-column width="50">
+                <template #default="{ row }">
+                  <el-checkbox
+                    :model-value="selectedDiffIndices.includes(row.index)"
+                    @change="toggleDiffSelection(row.index)"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column prop="name" label="名称" width="120" />
+              <el-table-column prop="index" label="序号" width="80">
+                <template #default="{ row }">V{{ String(row.index).padStart(3, '0') }}</template>
+              </el-table-column>
+              <el-table-column prop="status" label="状态" width="100">
+                <template #default="{ row }">
+                  <el-tag :type="row.status === 'RUNNING' ? 'success' : 'info'" size="small">
+                    {{ row.status === 'RUNNING' ? '运行中' : '已停止' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="cpuCores" label="CPU" width="60" />
+              <el-table-column prop="memoryGb" label="内存(G)" width="70" />
+            </el-table>
+          </div>
+          
+          <template #footer>
+            <el-button @click="showDiffDialog = false">稍后处理</el-button>
+            <el-button
+              type="primary"
+              :disabled="selectedDiffIndices.length === 0"
+              @click="confirmDiffEmulators"
+            >
+              创建选中的 {{ selectedDiffIndices.length }} 条记录
+            </el-button>
+          </template>
+        </el-dialog>
+
         <!-- Agent 引导弹窗 -->
         <el-dialog
           v-model="showAgentGuide"
@@ -983,6 +1048,15 @@ const addEmuCount = ref(1)
 const addEmuConfig = ref({ cpuCores: 1, memoryGb: 1 })
 const addEmuDeviceId = ref('')
 
+// 差异检测相关
+const diffEmulators = ref([])
+const showDiffDialog = ref(false)
+const selectedDiffIndices = ref([])
+const isMerchantAdmin = computed(() => {
+  const agent = authStore.agent
+  return agent && agent.accountType === 0 && agent.merchantId != null
+})
+
 // 权限检查
 const authStore = useAuthStore()
 // 如果用户没有任何 emulator 相关权限，默认显示所有 TAB（向下兼容）
@@ -1553,7 +1627,70 @@ async function fetchEmulators() {
   try {
     const resp = await emuApi.get('/emulators')
     emulators.value = Array.isArray(resp.data) ? resp.data : []
+    await checkDiffEmulators()
   } catch { emulators.value = [] }
+}
+
+// 检测物理模拟器与数据库的差异
+async function checkDiffEmulators() {
+  if (!isMerchantAdmin.value) return
+  
+  try {
+    const resp = await emuApi.get('/emulators/diff')
+    const diffList = resp.data?.data || resp.data || []
+    if (Array.isArray(diffList) && diffList.length > 0) {
+      diffEmulators.value = diffList
+      selectedDiffIndices.value = diffList.map(d => d.index)
+      showDiffDialog.value = true
+    }
+  } catch (e) {
+    console.warn('检测差异失败:', e.message)
+  }
+}
+
+// 确认创建差异模拟器
+async function confirmDiffEmulators() {
+  if (selectedDiffIndices.value.length === 0) {
+    ElMessage.warning('请至少选择一个模拟器')
+    return
+  }
+  
+  try {
+    const resp = await emuApi.post('/emulators/diff/confirm', {
+      indices: selectedDiffIndices.value
+    })
+    
+    if (resp.data?.success) {
+      ElMessage.success(resp.data?.message || '创建成功')
+      showDiffDialog.value = false
+      diffEmulators.value = []
+      selectedDiffIndices.value = []
+      await fetchEmulators()
+    } else {
+      ElMessage.error(resp.data?.message || '创建失败')
+    }
+  } catch (e) {
+    ElMessage.error('创建失败: ' + (e.response?.data?.message || e.message))
+  }
+}
+
+// 选择/取消选择差异项
+function toggleDiffSelection(index) {
+  const idx = selectedDiffIndices.value.indexOf(index)
+  if (idx === -1) {
+    selectedDiffIndices.value.push(index)
+  } else {
+    selectedDiffIndices.value.splice(idx, 1)
+  }
+}
+
+// 全选/取消全选
+function toggleSelectAllDiff() {
+  if (selectedDiffIndices.value.length === diffEmulators.value.length) {
+    selectedDiffIndices.value = []
+  } else {
+    selectedDiffIndices.value = diffEmulators.value.map(d => d.index)
+  }
 }
 
 async function checkApkStatus() {

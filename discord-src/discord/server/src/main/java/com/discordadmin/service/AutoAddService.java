@@ -66,16 +66,16 @@ public class AutoAddService {
         return id != null ? id : 1L;
     }
 
-    private String resolveUserId() {
-        String id = SecurityUtils.currentUserId();
-        return id != null ? id : "default";
+    private Long resolveUserId() {
+        Long id = SecurityUtils.currentUserId();
+        return id != null ? id : 1L;
     }
 
     /** 同步内存态状态到数据库（index 为 MuMu 0-based，需转 DB 1-based） */
     private void syncToDb(int index) {
         try {
             Long merchantId = resolveMerchantId();
-            String userId = resolveUserId();
+            Long userId = resolveUserId();
             
             EmulatorInfo info = emulatorService.getEmulator(index);
             // DB instance_index 是 1-based，MuMu index 是 0-based

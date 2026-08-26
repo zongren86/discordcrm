@@ -40,7 +40,7 @@ public class EmuServerBindingService {
     /**
      * 获取商户已添加的服务器列表
      */
-    public List<Map<String, Object>> getAddedServers(Long merchantId, String userId) {
+    public List<Map<String, Object>> getAddedServers(Long merchantId, Long userId) {
         List<EmuServerBinding> bindings = bindingRepository.findByMerchantId(merchantId);
         List<Map<String, Object>> result = new ArrayList<>();
 
@@ -83,7 +83,7 @@ public class EmuServerBindingService {
      * 获取可用的服务器列表
      * 返回所有未添加的服务器，账号筛选变为可选的过滤条件
      */
-    public List<Map<String, Object>> getAvailableServers(Long merchantId, String userId, 
+    public List<Map<String, Object>> getAvailableServers(Long merchantId, Long userId, 
                                                           String keyword, Long accountId) {
         String role = SecurityUtils.currentRole();
         
@@ -158,20 +158,10 @@ public class EmuServerBindingService {
     /**
      * 获取当前用户可用的Discord账号ID集合
      */
-    private Set<Long> getAvailableAccountIds(Long merchantId, String userId, String role) {
+    private Set<Long> getAvailableAccountIds(Long merchantId, Long userId, String role) {
         Set<Long> accountIds = new HashSet<>();
         
-        // 如果 userId 不是有效数字（如 "default"），直接返回商户级别的账号
-        Long agentId = null;
-        try {
-            if (userId != null && !userId.isEmpty()) {
-                agentId = Long.parseLong(userId);
-            }
-        } catch (NumberFormatException e) {
-            // userId 不是数字，跳过普通用户逻辑
-        }
-        
-        if ("MERCHANT_ADMIN".equals(role) || agentId == null) {
+        if ("MERCHANT_ADMIN".equals(role) || userId == null) {
             // 商户管理员或默认用户：获取商户已添加的账号
             List<EmuAccountBinding> accountBindings = accountBindingRepository.findByMerchantId(merchantId);
             accountIds = accountBindings.stream()
@@ -179,7 +169,7 @@ public class EmuServerBindingService {
                 .collect(Collectors.toSet());
         } else {
             // 普通用户：获取其关联账号中已添加的账号
-            List<AgentAccountNumberRel> rels = relRepository.findByAgentId(agentId);
+            List<AgentAccountNumberRel> rels = relRepository.findByAgentId(userId);
             Set<Long> numberIds = rels.stream()
                 .map(AgentAccountNumberRel::getAccountNumberId)
                 .collect(Collectors.toSet());
@@ -208,7 +198,7 @@ public class EmuServerBindingService {
      * 添加服务器绑定
      */
     @Transactional
-    public EmuServerBinding addServer(Long merchantId, String userId, Long serverId, Long discordAccountId) {
+    public EmuServerBinding addServer(Long merchantId, Long userId, Long serverId, Long discordAccountId) {
         // 检查服务器是否存在
         GuildServer server = serverRepository.findById(serverId)
             .orElseThrow(() -> new RuntimeException("服务器不存在"));

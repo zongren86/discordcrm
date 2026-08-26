@@ -12,7 +12,7 @@ public interface EmuAccountBindingRepository extends JpaRepository<EmuAccountBin
 
     List<EmuAccountBinding> findByMerchantId(Long merchantId);
 
-    List<EmuAccountBinding> findByUserId(String userId);
+    List<EmuAccountBinding> findByUserId(Long userId);
 
     List<EmuAccountBinding> findByMerchantIdAndStatus(Long merchantId, EmuAccountBinding.BindingStatus status);
 

@@ -22,8 +22,8 @@ public class AutoAddConfigEntity {
     @Column(name = "merchant_id")
     private Long merchantId;
 
-    @Column(name = "user_id", length = 64)
-    private String userId;
+    @Column(name = "user_id")
+    private Long userId;
 
     @Column(name = "interval_seconds")
     private Integer intervalSeconds = 900;

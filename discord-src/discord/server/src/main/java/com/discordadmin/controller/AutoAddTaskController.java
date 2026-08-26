@@ -35,7 +35,7 @@ public class AutoAddTaskController {
     @PostMapping
     public Map<String, Object> createTask(@RequestBody CreateTaskRequest request) {
         Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long userId = SecurityUtils.currentUserId();
         
         AutoAddTask task = taskService.createTask(
             merchantId,
@@ -109,7 +109,7 @@ public class AutoAddTaskController {
     @PostMapping("/batch")
     public Map<String, Object> batchCreateTasks(@RequestBody BatchCreateRequest request) {
         Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long userId = SecurityUtils.currentUserId();
         
         int successCount = 0;
         int failCount = 0;

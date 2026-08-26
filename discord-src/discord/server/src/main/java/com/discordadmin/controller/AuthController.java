@@ -51,7 +51,7 @@ public class AuthController {
             throw new IllegalArgumentException("用户名或密码错误");
         }
 
-        String token = jwtUtil.generateToken(agent.getId(), agent.getUsername(),
+        String token = jwtUtil.generateToken(agent.getId(), agent.getId(), agent.getUsername(),
                 agent.getAccountType(), agent.getMerchantId());
 
         String merchantName = null;

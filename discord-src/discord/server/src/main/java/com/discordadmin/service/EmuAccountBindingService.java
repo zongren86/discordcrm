@@ -37,7 +37,7 @@ public class EmuAccountBindingService {
     /**
      * 获取商户已添加的账号列表
      */
-    public List<Map<String, Object>> getAddedAccounts(Long merchantId, String userId) {
+    public List<Map<String, Object>> getAddedAccounts(Long merchantId, Long userId) {
         List<EmuAccountBinding> bindings = bindingRepository.findByMerchantId(merchantId);
         List<Map<String, Object>> result = new ArrayList<>();
 
@@ -91,7 +91,7 @@ public class EmuAccountBindingService {
      * - 商户管理员：获取商户所有账号
      * - 普通用户：获取其关联的账号
      */
-    public List<Map<String, Object>> getAvailableAccounts(Long merchantId, String userId, String keyword) {
+    public List<Map<String, Object>> getAvailableAccounts(Long merchantId, Long userId, String keyword) {
         String role = SecurityUtils.currentRole();
         
         // 获取商户已添加的账号ID
@@ -110,7 +110,7 @@ public class EmuAccountBindingService {
             accounts = accountRepository.findByMerchantId(merchantId);
         } else {
             // 普通用户：获取其关联的账号
-            Long agentId = Long.parseLong(userId);
+            Long agentId = userId;
             List<AgentAccountNumberRel> rels = relRepository.findByAgentId(agentId);
             Set<Long> numberIds = rels.stream()
                 .map(AgentAccountNumberRel::getAccountNumberId)
@@ -197,7 +197,7 @@ public class EmuAccountBindingService {
      * 添加账号绑定
      */
     @Transactional
-    public EmuAccountBinding addAccount(Long merchantId, String userId, Long discordAccountId) {
+    public EmuAccountBinding addAccount(Long merchantId, Long userId, Long discordAccountId) {
         // 检查账号是否存在
         DiscordAccount account = accountRepository.findById(discordAccountId)
             .orElseThrow(() -> new RuntimeException("账号不存在"));

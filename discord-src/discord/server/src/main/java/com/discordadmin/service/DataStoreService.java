@@ -58,7 +58,7 @@ public class DataStoreService {
                 friends.addAll(list);
             }
             // 从数据库加载配置，若不存在则从文件迁移
-            String userId = getCurrentUserId();
+            Long userId = getCurrentUserId();
             Long merchantId = getCurrentMerchantId();
             AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
                 .orElse(null);
@@ -81,12 +81,12 @@ public class DataStoreService {
         }
     }
 
-    private String getCurrentUserId() {
+    private Long getCurrentUserId() {
         try {
-            String id = SecurityUtils.currentUserId();
-            return id != null ? id : "default";
+            Long id = SecurityUtils.currentUserId();
+            return id != null ? id : 1L;
         } catch (Exception e) {
-            return "default";
+            return 1L;
         }
     }
 
@@ -133,7 +133,7 @@ public class DataStoreService {
 
     private void saveConfigToDatabase() {
         try {
-            String userId = getCurrentUserId();
+            Long userId = getCurrentUserId();
             Long merchantId = getCurrentMerchantId();
             AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
                 .orElseGet(() -> {
@@ -345,7 +345,7 @@ public class DataStoreService {
     public AutoAddConfig getConfig() {
         // 从数据库加载当前用户的配置
         try {
-            String userId = getCurrentUserId();
+            Long userId = getCurrentUserId();
             Long merchantId = getCurrentMerchantId();
             AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
                 .orElse(null);
@@ -361,7 +361,7 @@ public class DataStoreService {
     public void updateConfig(int interval, int delayMin, int delayMax) {
         // 从数据库加载当前用户配置
         try {
-            String userId = getCurrentUserId();
+            Long userId = getCurrentUserId();
             Long merchantId = getCurrentMerchantId();
             AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
                 .orElse(null);
@@ -391,7 +391,7 @@ public class DataStoreService {
     public synchronized void updateFullConfig(Map<String, Object> body) {
         // 从数据库加载当前用户配置
         try {
-            String userId = getCurrentUserId();
+            Long userId = getCurrentUserId();
             Long merchantId = getCurrentMerchantId();
             AutoAddConfigEntity entity = configRepository.findByMerchantIdAndUserId(merchantId, userId)
                 .orElse(null);

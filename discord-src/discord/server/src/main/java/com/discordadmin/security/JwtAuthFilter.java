@@ -44,9 +44,10 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 Integer accountType = claims.get("accountType", Integer.class);
                 Long agentId = claims.get("agentId", Long.class);
                 Long merchantId = claims.get("merchantId", Long.class);
+                Long userId = claims.get("userId", Long.class);
 
                 var authToken = new UsernamePasswordAuthenticationToken(
-                        new AuthenticatedAgent(agentId, username, accountType, merchantId),
+                        new AuthenticatedAgent(agentId, userId, username, accountType, merchantId),
                         null,
                         List.of(new SimpleGrantedAuthority("ROLE_" + (accountType == 0 ? "ADMIN" : "USER")))
                 );
@@ -62,6 +63,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    public record AuthenticatedAgent(Long agentId, String username, Integer accountType, Long merchantId) {
+    public record AuthenticatedAgent(Long agentId, Long userId, String username, Integer accountType, Long merchantId) {
     }
 }

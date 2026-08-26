@@ -1027,10 +1027,10 @@ public class EmulatorService {
     public String execAdb(int index, String... args) {
         // 如果有在线 Agent，优先通过 Agent 执行
         if (cloudWebSocketService != null && currentUserId != null) {
-            List<AgentRegistration> agents = cloudWebSocketService.getOnlineAgentsByUserId(currentUserId);
+            List<AgentRegistration> agents = cloudWebSocketService.getOnlineAgentsByUserId(Long.parseLong(currentUserId));
             if (!agents.isEmpty()) {
                 log.debug("Agent 模式: 通过 Agent 执行 ADB 命令, userId={}, index={}", currentUserId, index);
-                return cloudWebSocketService.execAdb(currentUserId, index, args);
+                return cloudWebSocketService.execAdb(Long.parseLong(currentUserId), index, args);
             }
         }
         

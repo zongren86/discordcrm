@@ -30,9 +30,9 @@ public final class SecurityUtils {
         return agent != null ? agent.agentId() : null;
     }
 
-    public static String currentUserId() {
+    public static Long currentUserId() {
         JwtAuthFilter.AuthenticatedAgent agent = currentAgent();
-        return agent != null ? agent.username() : null;
+        return agent != null ? agent.userId() : null;
     }
 
     public static String currentRole() {

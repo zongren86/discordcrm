@@ -82,9 +82,9 @@ public class EmuManagementController {
         return id != null ? id : 1L;
     }
 
-    private String resolveUserId() {
-        String id = SecurityUtils.currentUserId();
-        return id != null ? id : "default";
+    private Long resolveUserId() {
+        Long id = SecurityUtils.currentUserId();
+        return id != null ? id : 1L;
     }
 
     // ========== APK 管理 ==========
@@ -223,6 +223,63 @@ public class EmuManagementController {
     @PostMapping("/emulators/sync")
     public Map<String, Object> syncEmulators() {
         return instanceService.syncPhysicalAndDb();
+    }
+
+
+    /**
+     * 检测物理模拟器与数据库的差异（仅商户账号可用）
+     */
+    @GetMapping("/emulators/diff")
+    public ResponseEntity<?> getDiffEmulators() {
+        if (!SecurityUtils.isMerchantAdmin()) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", "仅商户账号可使用此功能");
+            return ResponseEntity.status(403).body(error);
+        }
+
+        List<Map<String, Object>> diffList = instanceService.getDiffEmulators();
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("data", diffList);
+        result.put("total", diffList.size());
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 确认创建差异模拟器的数据库记录（仅商户账号可用）
+     */
+    @PostMapping("/emulators/diff/confirm")
+    public ResponseEntity<?> confirmDiffEmulators(@RequestBody Map<String, Object> body) {
+        if (!SecurityUtils.isMerchantAdmin()) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", "仅商户账号可使用此功能");
+            return ResponseEntity.status(403).body(error);
+        }
+
+        try {
+            @SuppressWarnings("unchecked")
+            List<Integer> indices = (List<Integer>) body.get("indices");
+            if (indices == null || indices.isEmpty()) {
+                Map<String, Object> error = new HashMap<>();
+                error.put("success", false);
+                error.put("message", "请选择要创建的模拟器");
+                return ResponseEntity.badRequest().body(error);
+            }
+
+            List<Map<String, Object>> createdList = instanceService.createDiffEmulators(indices);
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put("message", "成功创建 " + createdList.size() + " 条记录");
+            result.put("data", createdList);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("success", false);
+            error.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(error);
+        }
     }
 
     // ========== Discord 控制 ==========
@@ -397,7 +454,7 @@ public class EmuManagementController {
     @GetMapping("/accounts/added")
     public List<Map<String, Object>> getAddedAccounts() {
         Long merchantId = resolveMerchantId();
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         return accountBindingService.getAddedAccounts(merchantId, userId);
     }
 
@@ -407,7 +464,7 @@ public class EmuManagementController {
     @GetMapping("/accounts/available")
     public List<Map<String, Object>> getAvailableAccounts(@RequestParam(required = false) String keyword) {
         Long merchantId = resolveMerchantId();
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         return accountBindingService.getAvailableAccounts(merchantId, userId, keyword);
     }
 
@@ -418,7 +475,7 @@ public class EmuManagementController {
     public Map<String, Object> addAccount(@RequestBody Map<String, Long> body) {
         Long discordAccountId = body.get("discordAccountId");
         Long merchantId = resolveMerchantId();
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
 
         EmuAccountBinding binding = accountBindingService.addAccount(merchantId, userId, discordAccountId);
         
@@ -447,7 +504,7 @@ public class EmuManagementController {
     @GetMapping("/servers/added")
     public List<Map<String, Object>> getAddedServers() {
         Long merchantId = resolveMerchantId();
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         return serverBindingService.getAddedServers(merchantId, userId);
     }
 
@@ -460,7 +517,7 @@ public class EmuManagementController {
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) Long accountId) {
         Long merchantId = resolveMerchantId();
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         return serverBindingService.getAvailableServers(merchantId, userId, keyword, accountId);
     }
 
@@ -473,7 +530,7 @@ public class EmuManagementController {
         Long discordAccountId = body.containsKey("discordAccountId") && body.get("discordAccountId") != null 
             ? Long.valueOf(body.get("discordAccountId").toString()) : null;
         Long merchantId = resolveMerchantId();
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
 
         EmuServerBinding binding = serverBindingService.addServer(merchantId, userId, serverId, discordAccountId);
         
@@ -898,7 +955,7 @@ public class EmuManagementController {
      */
     @GetMapping("/agent/config")
     public Map<String, Object> getAgentConfig() {
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         Long merchantId = resolveMerchantId();
         
         Map<String, Object> config = new HashMap<>();
@@ -920,7 +977,7 @@ public class EmuManagementController {
      */
     @GetMapping("/agent/download-script")
     public Map<String, Object> downloadAgentScript() {
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         Long merchantId = resolveMerchantId();
         
         // 生成安装脚本内容
@@ -939,7 +996,7 @@ public class EmuManagementController {
      */
     @GetMapping("/agent/guide")
     public Map<String, Object> getAgentGuide() {
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         Long merchantId = resolveMerchantId();
         
         Map<String, Object> result = new HashMap<>();
@@ -960,7 +1017,7 @@ public class EmuManagementController {
     /**
      * 生成 macOS 安装脚本
      */
-    private String generateInstallScript(String userId, Long merchantId) {
+    private String generateInstallScript(Long userId, Long merchantId) {
         StringBuilder sb = new StringBuilder();
         sb.append("#!/bin/bash\n");
         sb.append("# MuMu Agent 安装脚本\n");
@@ -1032,7 +1089,7 @@ public class EmuManagementController {
      */
     @GetMapping("/agent/download-package")
     public ResponseEntity<Resource> downloadAgentPackage(HttpServletRequest request) {
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         Long merchantId = resolveMerchantId();
         String serverName = request.getServerName();
         int serverPort = request.getServerPort();
@@ -1080,7 +1137,7 @@ public class EmuManagementController {
     @PostMapping("/agent/delete")
     public Map<String, Object> deleteAgent(@RequestBody Map<String, String> params) {
         String deviceId = params.get("deviceId");
-        String userId = resolveUserId();
+        Long userId = resolveUserId();
         if (deviceId == null || deviceId.isEmpty()) {
             Map<String, Object> result = new HashMap<>();
             result.put("success", false);

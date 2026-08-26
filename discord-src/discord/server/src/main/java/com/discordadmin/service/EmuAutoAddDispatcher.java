@@ -133,9 +133,9 @@ public class EmuAutoAddDispatcher {
         
         // 获取模拟器总数
         Long merchantId = SecurityUtils.currentMerchantId();
-        String userId = SecurityUtils.currentUserId();
+        Long userId = SecurityUtils.currentUserId();
         if (merchantId == null) merchantId = 1L;
-        if (userId == null) userId = "default";
+        if (userId == null) userId = 1L;
         
         List<EmuInstance> all = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         int totalEmulators = all.size();
@@ -170,7 +170,7 @@ public class EmuAutoAddDispatcher {
         // 启动执行
         final AutoAddConfig cfgFinal = cfg;
         final long merchantIdF = merchantId;
-        final String userIdF = userId;
+        final Long userIdF = userId;
         final String modeF = mode;
 
         if ("continuous".equals(mode)) {
@@ -248,7 +248,7 @@ public class EmuAutoAddDispatcher {
     /**
      * 执行一轮加好友
      */
-    private void executeOneRound(AutoAddConfig cfg, Long merchantId, String userId) {
+    private void executeOneRound(AutoAddConfig cfg, Long merchantId, Long userId) {
         if (stopFlag || !cfg.isInAddPeriod()) {
             if (stopFlag) {
                 log.info("任务已停止，跳过本轮执行");
@@ -305,7 +305,7 @@ public class EmuAutoAddDispatcher {
                 continue;
             }
             final Long merchantIdF = merchantId;
-            final String userIdF = userId;
+            final Long userIdF = userId;
 
             // 按启动间隔时间逐个启动，递增延迟
             final long sleepMs = intervalMs * index;
@@ -337,7 +337,7 @@ public class EmuAutoAddDispatcher {
     /**
      * 连续执行模式的周期性检查
      */
-    private void startContinuousCheck(AutoAddConfig cfg, Long merchantId, String userId, long checkIntervalMs) {
+    private void startContinuousCheck(AutoAddConfig cfg, Long merchantId, Long userId, long checkIntervalMs) {
         if (continuousCheckTimer != null) {
             // 已经在运行中，不需要重复启动
             return;
@@ -374,7 +374,7 @@ public class EmuAutoAddDispatcher {
     /**
      * 定时循环模式的调度检查
      */
-    private void startScheduledCheck(AutoAddConfig cfg, Long merchantId, String userId, long intervalMs) {
+    private void startScheduledCheck(AutoAddConfig cfg, Long merchantId, Long userId, long intervalMs) {
         if (schedulerTimer != null) {
             return;
         }
@@ -449,7 +449,7 @@ public class EmuAutoAddDispatcher {
     }
 
     /** 单次生命周期：启动 → 开Discord → 加好友/测试 → 关闭模拟器 → 写入nextAddAt */
-    private void runOneLifecycle(EmuInstance emu, AutoAddConfig cfg, Long merchantId, String userId) {
+    private void runOneLifecycle(EmuInstance emu, AutoAddConfig cfg, Long merchantId, Long userId) {
         int dbIndex = emu.getInstanceIndex();
         int mumuIndex = dbIndex - 1;
         boolean testMode = cfg.isTestModeEnabled();
@@ -626,7 +626,7 @@ public class EmuAutoAddDispatcher {
     }
 
     /** 关闭模拟器（生产/测试均要关闭）；写入nextAddAt */
-    private void scheduleNextAndClose(int dbIndex, Long merchantId, String userId, AutoAddConfig cfg, boolean actionHappened) {
+    private void scheduleNextAndClose(int dbIndex, Long merchantId, Long userId, AutoAddConfig cfg, boolean actionHappened) {
         // 关模拟器
         try {
             log.info("模拟器#{} 完成本次任务，关闭模拟器", dbIndex);
@@ -651,7 +651,7 @@ public class EmuAutoAddDispatcher {
     }
 
     /** 写 autoLastResult / lastError / discordLoggedIn / discordOnHome / discordAccountName 到 EmuInstance（即"回传给后台模拟器列表"） */
-    private void writeResult(int dbIndex, Long merchantId, String userId, boolean testMode,
+    private void writeResult(int dbIndex, Long merchantId, Long userId, boolean testMode,
                              boolean ok, String msg, Boolean discordLoggedIn, Boolean onHome, String accountName,
                              Instant startTs) {
         EmuInstance e = refresh(dbIndex, merchantId, userId);
@@ -665,7 +665,7 @@ public class EmuAutoAddDispatcher {
         instanceRepository.save(e);
     }
 
-    private void stopAutoRunning(int dbIndex, Long merchantId, String userId) {
+    private void stopAutoRunning(int dbIndex, Long merchantId, Long userId) {
         EmuInstance e = refresh(dbIndex, merchantId, userId);
         if (e == null) return;
         e.setAutoRunning(false);
@@ -673,7 +673,7 @@ public class EmuAutoAddDispatcher {
         instanceRepository.save(e);
     }
 
-    private void safeUpdateLastError(int dbIndex, Long merchantId, String userId, String msg) {
+    private void safeUpdateLastError(int dbIndex, Long merchantId, Long userId, String msg) {
         try { stopAutoRunning(dbIndex, merchantId, userId);
             EmuInstance e = refresh(dbIndex, merchantId, userId);
             if (e != null) {
@@ -694,7 +694,7 @@ public class EmuAutoAddDispatcher {
         if (e == null || e.getId() == null) return null;
         return instanceRepository.findById(e.getId()).orElse(null);
     }
-    private EmuInstance refresh(int dbIndex, Long merchantId, String userId) {
+    private EmuInstance refresh(int dbIndex, Long merchantId, Long userId) {
         return instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, dbIndex).orElse(null);
     }
     private int countByEmulatorIndex(int dbIndex) {
@@ -705,7 +705,7 @@ public class EmuAutoAddDispatcher {
             return (int)(assigned + success + failed);
         } catch (Exception e) { return 0; }
     }
-    private Long resolveServerId(Long merchantId, String userId, int dbIndex) {
+    private Long resolveServerId(Long merchantId, Long userId, int dbIndex) {
         EmuInstance e = refresh(dbIndex, merchantId, userId);
         if (e != null && e.getGuildServerId() != null) return e.getGuildServerId();
         try {
@@ -728,7 +728,7 @@ public class EmuAutoAddDispatcher {
      * 重置所有模拟器的 autoRunning 状态为 false
      * 用于在任务未运行时清理残留状态
      */
-    public void resetAllAutoRunning(Long merchantId, String userId) {
+    public void resetAllAutoRunning(Long merchantId, Long userId) {
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         int resetCount = 0;
         for (EmuInstance e : instances) {

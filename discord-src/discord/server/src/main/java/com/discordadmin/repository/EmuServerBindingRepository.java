@@ -12,7 +12,7 @@ public interface EmuServerBindingRepository extends JpaRepository<EmuServerBindi
 
     List<EmuServerBinding> findByMerchantId(Long merchantId);
 
-    List<EmuServerBinding> findByUserId(String userId);
+    List<EmuServerBinding> findByUserId(Long userId);
 
     List<EmuServerBinding> findByServerId(Long serverId);
 

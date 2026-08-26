@@ -37,7 +37,7 @@ public class AutoAddTaskService {
     }
     
     @Transactional
-    public AutoAddTask createTask(Long merchantId, String userId, Long serverId, 
+    public AutoAddTask createTask(Long merchantId, Long userId, Long serverId, 
                                    Long discordAccountId, Integer pauseDurationSeconds,
                                    Integer delayMinSeconds, Integer delayMaxSeconds) {
         
@@ -55,7 +55,7 @@ public class AutoAddTaskService {
         // 创建任务
         AutoAddTask task = new AutoAddTask();
         task.setMerchantId(merchantId);
-        task.setUserId(userId);
+        task.setUserId(String.valueOf(userId));
         task.setServerId(serverId);
         task.setDiscordAccountId(discordAccountId);
         task.setStatus(AutoAddTask.TaskStatus.PENDING);
@@ -103,7 +103,7 @@ public class AutoAddTaskService {
         }
         
         // 查找在线的 Agent
-        List<AgentRegistration> agents = webSocketService.getOnlineAgentsByUserId(task.getUserId());
+        List<AgentRegistration> agents = webSocketService.getOnlineAgentsByUserId(Long.parseLong(task.getUserId()));
         if (agents.isEmpty()) {
             throw new RuntimeException("未找到在线的本地 Agent，请先在本地启动 Agent 服务");
         }
@@ -236,7 +236,7 @@ public class AutoAddTaskService {
         for (AutoAddTask task : pendingTasks) {
             try {
                 // 查找在线 Agent
-                List<AgentRegistration> agents = webSocketService.getOnlineAgentsByUserId(task.getUserId());
+                List<AgentRegistration> agents = webSocketService.getOnlineAgentsByUserId(Long.parseLong(task.getUserId()));
                 if (!agents.isEmpty()) {
                     startTask(task.getId());
                 }

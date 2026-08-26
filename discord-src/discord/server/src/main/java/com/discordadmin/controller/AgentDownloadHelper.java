@@ -20,7 +20,7 @@ public class AgentDownloadHelper {
     
     private static final ObjectMapper objectMapper = new ObjectMapper();
     
-    public static ResponseEntity<Resource> downloadAgentPackage(String userId, Long merchantId, String serverUrl) {
+    public static ResponseEntity<Resource> downloadAgentPackage(Long userId, Long merchantId, String serverUrl) {
         try {
             String userDir = System.getProperty("user.dir");
             log.info("downloadAgentPackage user.dir: {}", userDir);

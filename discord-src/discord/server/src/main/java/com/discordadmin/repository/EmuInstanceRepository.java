@@ -12,9 +12,14 @@ public interface EmuInstanceRepository extends JpaRepository<EmuInstance, Long> 
 
     List<EmuInstance> findByMerchantId(Long merchantId);
 
-    List<EmuInstance> findByMerchantIdAndUserId(Long merchantId, String userId);
+    List<EmuInstance> findByMerchantIdAndUserId(Long merchantId, Long userId);
 
-    Optional<EmuInstance> findByMerchantIdAndUserIdAndInstanceIndex(Long merchantId, String userId, Integer instanceIndex);
+    Optional<EmuInstance> findByMerchantIdAndUserIdAndInstanceIndex(Long merchantId, Long userId, Integer instanceIndex);
+
+    /**
+     * 按商户ID和实例索引查找（用于删除时的回退查询）
+     */
+    Optional<EmuInstance> findByMerchantIdAndInstanceIndex(Long merchantId, Integer instanceIndex);
 
     List<EmuInstance> findByStatus(EmuInstance.EmuStatus status);
 

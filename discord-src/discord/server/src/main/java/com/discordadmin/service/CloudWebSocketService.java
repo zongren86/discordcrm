@@ -57,7 +57,8 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         if (query != null) {
             Map<String, String> params = parseQueryParams(query);
             String deviceId = params.get("deviceId");
-            String userId = params.get("userId");
+            String userIdStr = params.get("userId");
+            Long userId = resolveUserId(userIdStr);
             if (deviceId != null && userId != null) {
                 sessions.put(session.getId(), session);
                 deviceSessionMap.put(deviceId, session.getId());
@@ -83,6 +84,23 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             }
         }
         return params;
+    }
+
+    /**
+     * 将 userId 字符串转换为 Long 类型的用户 ID
+     * 支持两种格式：数字 ID（如 "1"）或用户名（如 "merchantadmin"）
+     */
+    private Long resolveUserId(String userIdStr) {
+        if (userIdStr == null || userIdStr.isEmpty()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(userIdStr);
+        } catch (NumberFormatException e) {
+            return agentEntityRepository.findByUsername(userIdStr)
+                .map(Agent::getId)
+                .orElse(null);
+        }
     }
     
     @Override
@@ -129,17 +147,18 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     
     private void handleRegister(WebSocketSession session, Map<String, Object> msg) {
         String deviceId = (String) msg.get("deviceId");
-        String userId = (String) msg.get("userId");
+        String userIdStr = (String) msg.get("userId");
+        Long userId = resolveUserId(userIdStr);
         
         Object paramsObj = msg.get("params");
         Map<String, Object> params = (paramsObj instanceof Map) ? (Map<String, Object>) paramsObj : null;
         if (params != null) {
             if (deviceId == null) deviceId = (String) params.get("deviceId");
-            if (userId == null) userId = (String) params.get("userId");
+            if (userId == null && params.get("userId") != null) userId = resolveUserId((String) params.get("userId"));
         }
         
         final String finalDeviceId = deviceId;
-        final String finalUserId = userId;
+        final Long finalUserId = userId;
         
         log.info("处理 REGISTER: userId={}, deviceId={}", finalUserId, finalDeviceId);
         
@@ -167,10 +186,10 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             sessions.put(session.getId(), session);
             deviceSessionMap.put(finalDeviceId, session.getId());
             
-            AgentRegistration agent = agentRepository.findByUserIdAndDeviceId(finalUserId, finalDeviceId)
+            AgentRegistration agent = agentRepository.findByUserIdAndDeviceId(String.valueOf(finalUserId), finalDeviceId)
                 .orElseGet(() -> {
                     AgentRegistration newAgent = new AgentRegistration();
-                    newAgent.setUserId(finalUserId);
+                    newAgent.setUserId(String.valueOf(finalUserId));
                     newAgent.setDeviceId(finalDeviceId);
                     return newAgent;
                 });
@@ -182,7 +201,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             
             // 尝试通过 AgentRepository 查找 merchantId
             if (agent.getMerchantId() == null) {
-                Long merchantIdFromAgent = agentEntityRepository.findByUsername(finalUserId)
+                Long merchantIdFromAgent = agentEntityRepository.findByUsername(String.valueOf(finalUserId))
                     .map(Agent::getMerchantId)
                     .orElse(null);
                 if (merchantIdFromAgent != null) {
@@ -198,7 +217,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             onlineAgents.put(finalDeviceId, agent);
             
             log.info("Agent 注册成功: userId={}, deviceId={}, merchantId={}", 
-                finalUserId, finalDeviceId, agent.getMerchantId());
+                String.valueOf(finalUserId), finalDeviceId, agent.getMerchantId());
             
             sendMessage(session, Map.of(
                 "type", "REGISTER_ACK",
@@ -206,7 +225,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 "agentId", agent.getId()
             ));
         } catch (Exception e) {
-            log.error("Agent 注册失败: userId={}, deviceId={}", finalUserId, finalDeviceId, e);
+            log.error("Agent 注册失败: userId={}, deviceId={}", String.valueOf(finalUserId), finalDeviceId, e);
             sendError(session, "注册失败: " + e.getMessage());
         }
     }
@@ -216,16 +235,17 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         if (data != null) {
 
             String deviceId = (String) data.get("deviceId");
-            String userId = (String) data.get("userId");
+            String userIdStr = (String) data.get("userId");
+            Long userId = userIdStr != null ? Long.parseLong(userIdStr) : null;
             if (deviceId != null) {
                 AgentRegistration agent = onlineAgents.get(deviceId);
                 if (agent == null) {
                     // 从数据库查找或创建（带去重逻辑）
                     final String finalDeviceId = deviceId;
-                    final String finalUserId = userId;
+                    final Long finalUserId = userId;
                     
                     // 先检查是否有重复记录，进行清理
-                    List<AgentRegistration> duplicates = agentRepository.findAllByUserIdAndDeviceIdOrdered(userId, deviceId);
+                    List<AgentRegistration> duplicates = agentRepository.findAllByUserIdAndDeviceIdOrdered(userId != null ? String.valueOf(userId) : null, deviceId);
                     if (duplicates.size() > 1) {
                         log.warn("发现重复 Agent 记录: userId={}, deviceId={}, count={}", userId, deviceId, duplicates.size());
                         // 保留最早的记录，删除其他重复记录
@@ -236,10 +256,10 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                     }
                     
                     // 使用 findByUserIdAndDeviceId 查找（现在应该只有一条记录）
-                    agent = agentRepository.findByUserIdAndDeviceId(userId, deviceId)
+                    agent = agentRepository.findByUserIdAndDeviceId(userId != null ? String.valueOf(userId) : null, deviceId)
                         .orElseGet(() -> {
                             AgentRegistration newAgent = new AgentRegistration();
-                            newAgent.setUserId(finalUserId);
+                            newAgent.setUserId(String.valueOf(finalUserId));
                             newAgent.setDeviceId(finalDeviceId);
                             return newAgent;
                         });
@@ -291,6 +311,14 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 return;
             }
             
+            Long userIdLong;
+            try {
+                userIdLong = Long.parseLong(userId);
+            } catch (NumberFormatException e) {
+                log.warn("心跳同步: userId 不是有效数字，userId={}", userId);
+                return;
+            }
+            
             // 获取 merchantId，如果 AgentRegistration 中没有，则通过 AgentRepository 查找
             Long merchantId = agent.getMerchantId();
             if (merchantId == null) {
@@ -309,7 +337,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 return;
             }
             
-            List<EmuInstance> existingInstances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+            List<EmuInstance> existingInstances = instanceRepository.findByMerchantIdAndUserId(merchantId, userIdLong);
             Map<Integer, EmuInstance> existingMap = new HashMap<>();
             for (EmuInstance inst : existingInstances) {
                 existingMap.put(inst.getInstanceIndex(), inst);
@@ -497,11 +525,11 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     /**
      * 向指定 userId 的所有在线 Agent 广播指令
      */
-    public List<CompletableFuture<Map<String, Object>>> broadcastCommandToUser(String userId, String commandType, Map<String, Object> params) {
+    public List<CompletableFuture<Map<String, Object>>> broadcastCommandToUser(Long userId, String commandType, Map<String, Object> params) {
         List<CompletableFuture<Map<String, Object>>> futures = new ArrayList<>();
         
         for (AgentRegistration agent : onlineAgents.values()) {
-            if (agent.getUserId().equals(userId) && "ONLINE".equals(agent.getStatus())) {
+            if (userId != null && agent.getUserId().equals(String.valueOf(userId)) && "ONLINE".equals(agent.getStatus())) {
                 futures.add(sendCommandAndWait(agent.getDeviceId(), commandType, params));
             }
         }
@@ -516,7 +544,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
      * @param args ADB 命令参数
      * @return ADB 命令输出
      */
-    public String execAdb(String userId, int index, String... args) {
+    public String execAdb(Long userId, int index, String... args) {
         List<AgentRegistration> agents = getOnlineAgentsByUserId(userId);
         if (agents.isEmpty()) {
             log.warn("Agent 模式: 无在线 Agent, userId={}", userId);
@@ -552,10 +580,10 @@ public class CloudWebSocketService extends TextWebSocketHandler {
      * 获取指定 userId 的在线 Agent；若 userId 为空则返回所有在线 Agent
      * 优先从内存 Map 获取，如果内存为空则从数据库回退查询
      */
-    public List<AgentRegistration> getOnlineAgentsByUserId(String userId) {
+    public List<AgentRegistration> getOnlineAgentsByUserId(Long userId) {
         List<AgentRegistration> result = onlineAgents.values().stream()
             .filter(a -> "ONLINE".equals(a.getStatus()))
-            .filter(a -> userId == null || userId.isEmpty() || userId.equals(a.getUserId()))
+            .filter(a -> userId == null || userId.toString().equals(a.getUserId()))
             .collect(java.util.stream.Collectors.toList());
 
         if (!result.isEmpty()) {
@@ -567,7 +595,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         return agentRepository.findAll().stream()
             .filter(a -> "ONLINE".equals(a.getStatus()))
             .filter(a -> a.getLastHeartbeatAt() != null && a.getLastHeartbeatAt().isAfter(threshold))
-            .filter(a -> userId == null || userId.isEmpty() || userId.equals(a.getUserId()))
+            .filter(a -> userId == null || userId.toString().equals(a.getUserId()))
             .peek(a -> {
                 if (!onlineAgents.containsKey(a.getDeviceId())) {
                     onlineAgents.put(a.getDeviceId(), a);
@@ -671,7 +699,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
      * @return 物理模拟器列表
      */
     @SuppressWarnings("unchecked")
-    public List<Map<String, Object>> getEmulatorsFromAgent(String userId) {
+    public List<Map<String, Object>> getEmulatorsFromAgent(Long userId) {
         List<AgentRegistration> agents = getOnlineAgentsByUserId(userId);
         if (agents.isEmpty()) {
             log.warn("获取模拟器列表失败: 无在线 Agent, userId={}", userId);
@@ -732,7 +760,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
      * @param index 模拟器索引 (0-based)
      * @return 操作结果
      */
-    public Map<String, Object> deleteEmulatorOnAgent(String userId, int index) {
+    public Map<String, Object> deleteEmulatorOnAgent(Long userId, int index) {
         List<AgentRegistration> agents = getOnlineAgentsByUserId(userId);
         if (agents.isEmpty()) {
             log.warn("通过 Agent 删除模拟器失败: 无在线 Agent, userId={}", userId);
@@ -780,7 +808,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
      * @param index 模拟器索引 (0-based)
      * @return 操作结果
      */
-    public Map<String, Object> stopEmulatorOnAgent(String userId, int index) {
+    public Map<String, Object> stopEmulatorOnAgent(Long userId, int index) {
         List<AgentRegistration> agents = getOnlineAgentsByUserId(userId);
         if (agents.isEmpty()) {
             log.warn("通过 Agent 停止模拟器失败: 无在线 Agent, userId={}", userId);
@@ -828,7 +856,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
      * @param index 模拟器索引 (0-based)
      * @return 是否存在
      */
-    public boolean emulatorExistsOnAgent(String userId, int index) {
+    public boolean emulatorExistsOnAgent(Long userId, int index) {
         List<Map<String, Object>> emulators = getEmulatorsFromAgent(userId);
         if (emulators == null) return false;
         
@@ -876,14 +904,14 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     /**
      * 删除指定 Agent 注册记录
      */
-    public Map<String, Object> deleteAgent(String userId, String deviceId) {
+    public Map<String, Object> deleteAgent(Long userId, String deviceId) {
         Map<String, Object> result = new HashMap<>();
         try {
             // 先断开连接
             disconnectAgent(deviceId);
             
             // 删除数据库记录
-            agentRepository.findByUserIdAndDeviceId(userId, deviceId)
+            agentRepository.findByUserIdAndDeviceId(String.valueOf(userId), deviceId)
                 .ifPresent(agentRepository::delete);
             
             log.info("Agent 注册记录已删除: userId={}, deviceId={}", userId, deviceId);

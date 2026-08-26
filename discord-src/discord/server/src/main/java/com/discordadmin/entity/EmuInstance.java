@@ -27,8 +27,8 @@ public class EmuInstance {
     @Column(name = "merchant_id", nullable = false)
     private Long merchantId;
 
-    @Column(name = "user_id", length = 64)
-    private String userId;
+    @Column(name = "user_id")
+    private Long userId;
 
     @Column(name = "name", length = 128)
     private String name;
