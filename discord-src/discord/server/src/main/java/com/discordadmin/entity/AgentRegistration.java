@@ -25,8 +25,8 @@ public class AgentRegistration {
     @Column(name = "merchant_id")
     private Long merchantId;
     
-    @Column(name = "user_id", nullable = false, length = 128)
-    private String userId;
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
     
     @Column(name = "device_id", nullable = false, length = 256)
     private String deviceId;

@@ -33,4 +33,9 @@ public interface EmuInstanceRepository extends JpaRepository<EmuInstance, Long> 
      * 按实例索引查找（定时检测场景使用，物理模拟器索引唯一）
      */
     EmuInstance findFirstByInstanceIndex(Integer instanceIndex);
+
+    /**
+     * 按用户ID查找所有模拟器实例
+     */
+    List<EmuInstance> findByUserId(Long userId);
 }

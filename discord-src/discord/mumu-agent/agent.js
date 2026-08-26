@@ -1730,7 +1730,7 @@ async function handleMessage(msg) {
                                     console.warn(`[Agent] 设置模拟器 ${index} 失败: ${e.message}`);
                                 }
 
-                                results.push({ index, success: true, message: '创建命令已发送' });
+                                results.push({ index, success: true, name: vmName, cpuCores, memoryGb, message: '创建命令已发送' });
                                 console.log(`[Agent] 模拟器 ${vmName} 创建命令已发送`);
                             } catch (e) {
                                 failCount++;
@@ -1758,19 +1758,21 @@ async function handleMessage(msg) {
                         console.log(`[Agent] getEmulators 返回空，从创建结果构造模拟器列表`);
                         for (const r of results) {
                             if (r.success) {
+                                const emuName = r.name || `V${String(r.index + 1).padStart(3, '0')}`;
+                                const emuCpu = r.cpuCores || cpuCores || 1;
+                                const emuMem = r.memoryGb || memoryGb || 1;
                                 allEmulators.push({
                                     index: r.index,
                                     adbPort: 16384 + r.index * 32,
                                     status: 'STOPPED',
-                                    name: r.name || `V${String(r.index + 1).padStart(3, '0')}`,
-                                    cpuCount: cpuCores || 1,
-                                    memoryMB: (memoryGb || 1) * 1024
+                                    name: emuName,
+                                    cpuCount: emuCpu,
+                                    memoryMB: emuMem * 1024
                                 });
                             }
                         }
                         console.log(`[Agent] 从创建结果构造出 ${allEmulators.length} 个模拟器`);
                     }
-
                     // 将结果与完整模拟器数据合并
                     const enrichedResults = results.map(r => {
                         const fullData = allEmulators.find(e => e.index === r.index);
@@ -1962,10 +1964,21 @@ async function handleMessage(msg) {
 
 // ========== 主程序入口 ==========
 function main() {
-    console.log('========================================');
-    console.log('  MuMu Agent v2.0.0 (mumutool 增强版)');
-    console.log('========================================');
+    // 先尝试读取 config.json 中的版本号（即使 loadConfig 失败也能显示）
+    let agentVersion = 'v2.7.0';
+    try {
+        const configPath = path.join(__dirname, 'config.json');
+        if (fs.existsSync(configPath)) {
+            const rawConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            if (rawConfig.version) agentVersion = rawConfig.version;
+        }
+    } catch (e) {
+        // 忽略读取错误
+    }
     
+    console.log('========================================');
+    console.log(`  MuMu Agent ${agentVersion}`);
+    console.log('========================================');
     if (!loadConfig()) {
         console.error('[Agent] 请创建 config.json 配置文件');
         console.error('[Agent] 模板:');

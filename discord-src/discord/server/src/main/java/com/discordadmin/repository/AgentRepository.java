@@ -13,6 +13,7 @@ import java.util.Set;
 
 public interface AgentRepository extends JpaRepository<Agent, Long> {
     Optional<Agent> findByUsername(String username);
+    List<Agent> findAllByUsername(String username);
     List<Agent> findByMerchantId(Long merchantId);
     List<Agent> findByMerchantIdAndEnabledTrue(Long merchantId);
     List<Agent> findByDiscordAccountsContaining(DiscordAccount account);

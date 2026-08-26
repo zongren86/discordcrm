@@ -13,24 +13,24 @@ import org.springframework.data.repository.query.Param;
 @Repository
 public interface AgentRegistrationRepository extends JpaRepository<AgentRegistration, Long> {
     
-    Optional<AgentRegistration> findByUserIdAndDeviceId(String userId, String deviceId);
+    Optional<AgentRegistration> findByUserIdAndDeviceId(Long userId, String deviceId);
     
-    List<AgentRegistration> findByUserId(String userId);
+    List<AgentRegistration> findByUserId(Long userId);
     
     List<AgentRegistration> findByStatus(String status);
     
-    List<AgentRegistration> findByUserIdAndStatus(String userId, String status);
+    List<AgentRegistration> findByUserIdAndStatus(Long userId, String status);
     
-    long countByUserId(String userId);
+    long countByUserId(Long userId);
     
-    void deleteByUserIdAndDeviceId(String userId, String deviceId);
+    void deleteByUserIdAndDeviceId(Long userId, String deviceId);
     
     List<AgentRegistration> findByLastHeartbeatAtBefore(Instant threshold);
     
     // 查找同一 userId+deviceId 的多条记录（用于清理重复数据）
     @Query("SELECT ar FROM AgentRegistration ar WHERE ar.userId = :userId AND ar.deviceId = :deviceId ORDER BY ar.id")
-    List<AgentRegistration> findAllByUserIdAndDeviceIdOrdered(@Param("userId") String userId, @Param("deviceId") String deviceId);
+    List<AgentRegistration> findAllByUserIdAndDeviceIdOrdered(@Param("userId") Long userId, @Param("deviceId") String deviceId);
     
     // 统计同一 userId+deviceId 的记录数
-    long countByUserIdAndDeviceId(String userId, String deviceId);
+    long countByUserIdAndDeviceId(Long userId, String deviceId);
 }

@@ -14,7 +14,10 @@ import java.time.Instant;
     @Index(name = "idx_emu_merchant", columnList = "merchant_id"),
     @Index(name = "idx_emu_status", columnList = "status"),
     @Index(name = "idx_emu_account", columnList = "discord_account_id"),
-    @Index(name = "idx_emu_index", columnList = "instance_index")
+    @Index(name = "idx_emu_index", columnList = "instance_index"),
+    @Index(name = "idx_emu_merchant_user_idx", columnList = "merchant_id, user_id, instance_index", unique = true)
+}, uniqueConstraints = {
+    @UniqueConstraint(name = "uk_merchant_user_instance", columnNames = {"merchant_id", "user_id", "instance_index"})
 })
 @Getter
 @Setter

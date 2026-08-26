@@ -86,10 +86,12 @@ public class EmuInstanceService {
         log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
         
         // 1. 直接从数据库查询（管理后台以数据库为准）
+        // 商户隔离：必须按 merchantId + userId 查询，确保数据隔离
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         log.info("按 merchantId+userId 查询: 找到 {} 个模拟器", instances.size());
         
         // 2. 回退查询：如果按 userId 查询结果为空，回退到只按 merchantId 查询
+        // 仅作为兼容处理，确保历史数据能显示
         if (instances.isEmpty()) {
             List<EmuInstance> allByMerchant = instanceRepository.findByMerchantId(merchantId);
             log.warn("按 merchantId+userId 查询为空，回退到按 merchantId 查询: 找到 {} 个模拟器", allByMerchant.size());
@@ -563,6 +565,29 @@ public class EmuInstanceService {
                                                                      int targetTotal,
                                                                      int cpuCores, int memoryGb,
                                                                      List<Map<String, Object>> physicalList) {
+        // 先清理可能存在的重复记录（按 instanceIndex 去重，保留最早的）
+        if (!existingInstances.isEmpty()) {
+            Map<Integer, List<EmuInstance>> indexGroups = existingInstances.stream()
+                    .filter(e -> e.getInstanceIndex() != null)
+                    .collect(Collectors.groupingBy(EmuInstance::getInstanceIndex));
+            int cleanedCount = 0;
+            for (Map.Entry<Integer, List<EmuInstance>> entry : indexGroups.entrySet()) {
+                if (entry.getValue().size() > 1) {
+                    List<EmuInstance> duplicates = entry.getValue();
+                    // 保留最早的，删除其余
+                    for (int i = 1; i < duplicates.size(); i++) {
+                        instanceRepository.delete(duplicates.get(i));
+                        cleanedCount++;
+                    }
+                }
+            }
+            if (cleanedCount > 0) {
+                log.warn("清理了 {} 条重复的模拟器记录", cleanedCount);
+                // 重新获取现有记录
+                existingInstances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+            }
+        }
+        
         // 已有 instanceIndex 集合
         Set<Integer> existingIndexSet = existingInstances.stream()
                 .map(EmuInstance::getInstanceIndex)
@@ -617,17 +642,9 @@ public class EmuInstanceService {
             instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", dbIndex));
             instance.setInstanceIndex(dbIndex);
             instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
-            // 优先使用物理模拟器返回的 CPU/内存参数，没有则回退到用户传入参数
-            int emuCpuCores = cpuCores;
-            int emuMemoryGb = memoryGb;
-            if (mumuEmu.get("cpuCount") instanceof Number) {
-                emuCpuCores = ((Number) mumuEmu.get("cpuCount")).intValue();
-            }
-            if (mumuEmu.get("memoryMB") instanceof Number) {
-                int memoryMBVal = ((Number) mumuEmu.get("memoryMB")).intValue();
-                emuMemoryGb = memoryMBVal / 1024; // MB 转 GB
-                if (emuMemoryGb < 1) emuMemoryGb = 1;
-            }
+            // 优先使用用户传入的 CPU/内存参数（确保按管理后台配置创建）
+            int emuCpuCores = cpuCores > 0 ? cpuCores : 1;
+            int emuMemoryGb = memoryGb > 0 ? memoryGb : 1;
             instance.setCpuCores(emuCpuCores);
             instance.setMemoryGb(emuMemoryGb);
             instance.setResolution("720x1280");
@@ -641,7 +658,7 @@ public class EmuInstanceService {
             instance.setUpdatedAt(Instant.now());
             instanceRepository.save(instance);
             created++;
-            log.info("追加创建DB记录: {} (DB index={})", instance.getName(), dbIndex);
+            log.info("追加创建DB记录: {} (DB index={}, cpu={}核, 内存={}GB)", instance.getName(), dbIndex, emuCpuCores, emuMemoryGb);
         }
 
         log.info("追加完成: 新增 {} 条, 保留 {} 条", created, existingIndexSet.size());
@@ -714,17 +731,9 @@ public class EmuInstanceService {
             instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", mumuIndex + 1));
             instance.setInstanceIndex(mumuIndex + 1);
             instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
-            // 优先使用物理模拟器返回的 CPU/内存参数，没有则回退到用户传入参数
-            int emuCpuCores = cpuCores;
-            int emuMemoryGb = memoryGb;
-            if (mumuEmu.get("cpuCount") instanceof Number) {
-                emuCpuCores = ((Number) mumuEmu.get("cpuCount")).intValue();
-            }
-            if (mumuEmu.get("memoryMB") instanceof Number) {
-                int memoryMBVal = ((Number) mumuEmu.get("memoryMB")).intValue();
-                emuMemoryGb = memoryMBVal / 1024; // MB 转 GB
-                if (emuMemoryGb < 1) emuMemoryGb = 1;
-            }
+            // 优先使用用户传入的 CPU/内存参数（确保按管理后台配置创建）
+            int emuCpuCores = cpuCores > 0 ? cpuCores : 1;
+            int emuMemoryGb = memoryGb > 0 ? memoryGb : 1;
             instance.setCpuCores(emuCpuCores);
             instance.setMemoryGb(emuMemoryGb);
             instance.setResolution("720x1280");
@@ -738,7 +747,7 @@ public class EmuInstanceService {
             
             instanceRepository.save(instance);
             createdCount++;
-            log.info("创建数据库记录: {} (Mumu index={}, DB index={})", mumuName, mumuIndex, mumuIndex + 1);
+            log.info("创建数据库记录: {} (Mumu index={}, DB index={}, cpu={}核, 内存={}GB)", mumuName, mumuIndex, mumuIndex + 1, emuCpuCores, emuMemoryGb);
         }
 
         return instanceRepository.findByMerchantIdAndUserId(merchantId, userId).stream()
@@ -1873,14 +1882,10 @@ public class EmuInstanceService {
         status.put("merchantId", merchantId);
 
         if (agentOnline) {
-            // 检查所有 Agent 的 MuMuPlayer 状态
-            boolean anyMuMuPlayerRunning = false;
+            // 统计模拟器数量（不再检查 MuMuPlayer 状态）
             int totalEmulatorCount = 0;
             int totalRunningCount = 0;
             for (AgentRegistration agent : myAgents) {
-                if (Boolean.TRUE.equals(agent.getMumuPlayerRunning())) {
-                    anyMuMuPlayerRunning = true;
-                }
                 if (agent.getEmulatorCount() != null) {
                     totalEmulatorCount += agent.getEmulatorCount();
                 }
@@ -1888,18 +1893,14 @@ public class EmuInstanceService {
                     totalRunningCount += agent.getRunningEmulatorCount();
                 }
             }
-            status.put("mumuPlayerRunning", anyMuMuPlayerRunning);
+            status.put("mumuPlayerRunning", true);  // 不再检测，默认 true
             status.put("emulatorCount", totalEmulatorCount);
             status.put("runningEmulatorCount", totalRunningCount);
             
-            if (!anyMuMuPlayerRunning) {
-                status.put("message", "Agent已连接 (" + myAgents.size() + " 台)，MuMuPlayer检测中...");
-                // Agent 在线时允许操作，不因 MuMuPlayer 检测失败而阻止
-                status.put("available", true);
-            } else if (totalEmulatorCount == 0) {
-                status.put("message", "Agent已连接，MuMuPlayer已启动，但暂无模拟器");
+            if (totalEmulatorCount == 0) {
+                status.put("message", "Agent已连接 (" + myAgents.size() + " 台)，暂无模拟器");
             } else {
-                status.put("message", "已连接 Agent (" + myAgents.size() + " 台)，" + totalEmulatorCount + " 台模拟器就绪");
+                status.put("message", "Agent已连接 (" + myAgents.size() + " 台)，" + totalEmulatorCount + " 台模拟器就绪");
             }
         } else if (localReachable) {
             // 本地模式下，检查是否有运行中的模拟器
@@ -1917,7 +1918,7 @@ public class EmuInstanceService {
             }
             status.put("physicalCount", physicalCount);
         } else {
-            status.put("message", "未检测到在线 Agent，请确保 Agent 和 MuMuPlayer");
+            status.put("message", "未检测到在线 Agent，请启动 Agent");
         }
 
         return status;
@@ -2020,6 +2021,14 @@ public class EmuInstanceService {
 
         for (int physIdx : physicalIndices) {
             if (!dbIndices.contains(physIdx)) {
+                // 双重检查：通过唯一查询确认不存在（防止并发重复）
+                Optional<EmuInstance> existingCheck = instanceRepository
+                    .findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, physIdx);
+                if (existingCheck.isPresent()) {
+                    log.warn("同步：模拟器 #{} 已存在，跳过创建", physIdx);
+                    continue;
+                }
+                
                 EmuInstance instance = new EmuInstance();
                 instance.setMerchantId(merchantId);
                 instance.setUserId(userId);
@@ -2053,9 +2062,18 @@ public class EmuInstanceService {
                 instance.setAutoRunning(false);
                 instance.setAddedCount(0);
                 instance.setCreatedAt(Instant.now());
-                instanceRepository.save(instance);
-                actions.add("为物理模拟器 #" + physIdx + " 创建了数据库记录(" + cpuCores + "核/" + memoryGb + "GB)");
-                log.info("同步：为物理模拟器 #{} 创建数据库记录, name={}, cpu={}, mem={}GB", physIdx, vName, cpuCores, memoryGb);
+                try {
+                    instanceRepository.save(instance);
+                    actions.add("为物理模拟器 #" + physIdx + " 创建了数据库记录(" + cpuCores + "核/" + memoryGb + "GB)");
+                    log.info("同步：为物理模拟器 #{} 创建数据库记录, name={}, cpu={}, mem={}GB", physIdx, vName, cpuCores, memoryGb);
+                } catch (Exception e) {
+                    // 唯一约束冲突，说明已存在，跳过
+                    String errMsg = e.getMessage(); if (errMsg != null && (errMsg.contains("uk_merchant_user_instance") || errMsg.contains("Duplicate entry"))) {
+                        log.warn("同步：模拟器 #{} 创建时发现重复记录，跳过", physIdx);
+                    } else {
+                        throw e;
+                    }
+                }
             }
         }
 
@@ -2389,6 +2407,12 @@ public class EmuInstanceService {
         
         try {
             List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+            // 回退逻辑：如果按 userId 查询结果为空，回退到只按 merchantId 查询
+            if (instances.isEmpty()) {
+                List<EmuInstance> allByMerchant = instanceRepository.findByMerchantId(merchantId);
+                log.warn("检测差异: 按 merchantId+userId 查询为空，回退到按 merchantId 查询: 找到 {} 个模拟器", allByMerchant.size());
+                instances = allByMerchant;
+            }
             Set<Integer> dbIndexSet = instances.stream()
                 .map(EmuInstance::getInstanceIndex)
                 .collect(Collectors.toSet());
