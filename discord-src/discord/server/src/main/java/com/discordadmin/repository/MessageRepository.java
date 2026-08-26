@@ -18,14 +18,9 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     @Query("SELECT m FROM Message m WHERE m.conversation = :conversation AND (m.isDeleted IS NULL OR m.isDeleted = false) ORDER BY m.createdAt ASC")
     List<Message> findByConversationOrderByCreatedAtAsc(@Param("conversation") Conversation conversation);
 
-    /**
-     * 按倒序取最新一批消息（默认 50 条，走 createdAt 索引，避免大列表加载缓慢）。
-     * 返回类型 Slice 可判断是否还有更早的消息让前端继续"加载更多"。
-     */
     @Query("SELECT m FROM Message m WHERE m.conversation = :conversation AND (m.isDeleted IS NULL OR m.isDeleted = false) ORDER BY m.createdAt DESC, m.id DESC")
     Slice<Message> findLatestByConversation(@Param("conversation") Conversation conversation, Pageable pageable);
 
-    /** 游标分页：取 createdAt < before（或id < beforeId）的更早一批消息 */
     @Query("SELECT m FROM Message m WHERE m.conversation = :conversation AND (m.isDeleted IS NULL OR m.isDeleted = false) " +
             "AND (m.createdAt < :before OR (m.createdAt = :before AND m.id < :beforeId)) " +
             "ORDER BY m.createdAt DESC, m.id DESC")
@@ -36,7 +31,6 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
 
     Optional<Message> findByDiscordMessageId(String discordMessageId);
 
-    /** per-conversation去重：查找同一会话中是否已存在该Discord消息 */
     Optional<Message> findByConversationAndDiscordMessageId(Conversation conversation, String discordMessageId);
 
     void deleteByConversation(Conversation conversation);
@@ -91,46 +85,31 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
                                             @Param("end") Instant end,
                                             @Param("merchantId") Long merchantId);
 
-    /** 按客服统计消息数 */
     @Query("SELECT COUNT(m) FROM Message m WHERE m.senderAgent.id = :agentId")
     long countByAgent(@Param("agentId") Long agentId);
 
-    /** 按客服+日期范围统计消息数 */
     @Query("SELECT COUNT(m) FROM Message m WHERE m.senderAgent.id = :agentId AND m.createdAt >= :start AND m.createdAt < :end")
     long countByAgentAndDateRange(@Param("agentId") Long agentId,
                                    @Param("start") Instant start,
                                    @Param("end") Instant end);
 
-    /** 统计指定时间后的消息数 */
     long countByCreatedAtAfter(Instant start);
 
-    /** 按商户统计指定时间后的消息数 */
     @Query("SELECT COUNT(m) FROM Message m JOIN m.conversation c WHERE m.createdAt >= :start AND c.merchantId = :merchantId")
     long countByCreatedAtAfterAndMerchant(@Param("start") Instant start, @Param("merchantId") Long merchantId);
 
-    /** 统计指定时间后活跃客户数 */
     @Query("SELECT COUNT(DISTINCT c.discordUser.id) FROM Message m JOIN m.conversation c WHERE m.createdAt >= :start")
     long countActiveCustomersSince(@Param("start") Instant start);
 
-    /** 按商户统计指定时间后活跃客户数 */
     @Query("SELECT COUNT(DISTINCT c.discordUser.id) FROM Message m JOIN m.conversation c WHERE m.createdAt >= :start AND c.merchantId = :merchantId")
     long countActiveCustomersSinceAndMerchant(@Param("start") Instant start, @Param("merchantId") Long merchantId);
 
-    /** 平台级：统计账号所属商户为null的会话中的消息数 */
     @Query("SELECT COUNT(m) FROM Message m JOIN m.conversation c WHERE c.discordAccount.merchantId IS NULL")
     long countPlatformMessages();
 
-    /** 按商户统计消息总数 */
     @Query("SELECT COUNT(m) FROM Message m JOIN m.conversation c WHERE c.merchantId = :merchantId")
     long countByMerchantId(@Param("merchantId") Long merchantId);
 
-    /** 批量统计会话的未读消息数
-     * 基准时间 = MAX(lastReadAt, 最后一条OUTBOUND消息时间)：
-     *   - 客服在后台markAsRead（lastReadAt更新） → 以该时间为准；
-     *   - 客服在后台发过OUTBOUND消息（比lastReadAt更晚），说明客服已看过之前消息 → 以最后OUTBOUND时间为准；
-     *   - 从未看过也从未回复 → 基准为1970，所有INBOUND算未读。
-     * 统计 INBOUND 消息中 created_at > 基准时间 的数量。
-     */
     @Query("""
         SELECT c.id, COUNT(m) FROM Message m JOIN m.conversation c
         WHERE c.id IN :convIds AND m.direction = 'INBOUND'
@@ -149,7 +128,6 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
         """)
     List<Object[]> countUnreadByConversationIds(@Param("convIds") List<Long> convIds);
 
-    /** 统计单个会话的未读消息数 */
     @Query("""
         SELECT COUNT(m) FROM Message m JOIN m.conversation c
         WHERE c.id = :convId AND m.direction = 'INBOUND'
@@ -167,7 +145,6 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
         """)
     int countUnreadByConversationId(@Param("convId") Long convId);
 
-    /** 检查会话是否双方都有消息（既有INBOUND又有OUTBOUND） */
     @Query("""
         SELECT COUNT(m) > 0 FROM Message m
         WHERE m.conversation = :conversation AND m.direction = 'INBOUND'
@@ -175,41 +152,74 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
         """)
     boolean hasBothDirectionsMessages(@Param("conversation") Conversation conversation);
 
-    /** 统计会话中INBOUND消息数量 */
     @Query("SELECT COUNT(m) FROM Message m WHERE m.conversation = :conversation AND m.direction = 'INBOUND'")
     long countInboundMessages(@Param("conversation") Conversation conversation);
 
-    /** 统计会话中OUTBOUND消息数量 */
     @Query("SELECT COUNT(m) FROM Message m WHERE m.conversation = :conversation AND m.direction = 'OUTBOUND'")
     long countOutboundMessages(@Param("conversation") Conversation conversation);
 
-    /** 平台级：统计账号所属商户为null的会话中的活跃客户数 */
     @Query("SELECT COUNT(DISTINCT c.discordUser.id) FROM Message m JOIN m.conversation c WHERE m.createdAt >= :start AND c.discordAccount.merchantId IS NULL")
     long countPlatformActiveCustomersSince(@Param("start") Instant start);
 
-    /** 取会话里 discordMessageId 最小的一条（即最早的消息）；用于历史回填翻页时判断是否已衔接上已有旧数据 */
     @Query("SELECT MIN(m.discordMessageId) FROM Message m WHERE m.conversation = :conversation AND m.discordMessageId IS NOT NULL")
     Optional<String> findMinDiscordMessageIdByConversation(@Param("conversation") Conversation conversation);
 
-    /** 取会话里 discordMessageId 最大的一条（即最新的消息）；用于轮询增量时判断 Discord 返回的消息里是否已进入"已入库"范围 */
     @Query("SELECT MAX(m.discordMessageId) FROM Message m WHERE m.conversation = :conversation AND m.discordMessageId IS NOT NULL")
     Optional<String> findMaxDiscordMessageIdByConversation(@Param("conversation") Conversation conversation);
 
-    /** 获取会话中所有已存在的discordMessageId列表，用于内存去重（避免逐条DB查询） */
     @Query("SELECT m.discordMessageId FROM Message m WHERE m.conversation.id = :convId AND m.discordMessageId IS NOT NULL")
     List<String> findDiscordMessageIdsByConversation(@Param("convId") Long convId);
 
-    /** 查找需要翻译的INBOUND消息（translatedContent为空或等于原文，且是文本消息） */
     @Query("SELECT m FROM Message m WHERE m.direction = 'INBOUND' " +
             "AND (m.translatedContent IS NULL OR m.translatedContent = m.content) " +
             "AND m.messageType = 'text' AND m.content IS NOT NULL AND m.content != '' " +
             "AND m.createdAt > :since ORDER BY m.createdAt DESC")
     List<Message> findUntranslatedInboundMessages(@Param("since") Instant since, org.springframework.data.domain.Pageable pageable);
 
-    /** 查找指定会话中需要翻译的INBOUND消息 */
     @Query("SELECT m FROM Message m WHERE m.conversation.id = :convId AND m.direction = 'INBOUND' " +
             "AND (m.translatedContent IS NULL OR m.translatedContent = m.content) " +
             "AND m.messageType = 'text' AND m.content IS NOT NULL AND m.content != '' " +
             "ORDER BY m.createdAt DESC")
     List<Message> findUntranslatedMessagesByConversation(@Param("convId") Long convId);
+
+    /** 按商户+账号列表+客服列表+时间范围统计消息总数 */
+    @Query("SELECT COUNT(m) FROM Message m JOIN m.conversation c WHERE c.merchantId = :merchantId " +
+            "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
+            "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
+            "AND (:start IS NULL OR m.createdAt >= :start) " +
+            "AND (:end IS NULL OR m.createdAt < :end)")
+    long countByFilters(@Param("merchantId") Long merchantId,
+                        @Param("accountIds") List<Long> accountIds,
+                        @Param("agentIds") List<Long> agentIds,
+                        @Param("start") Instant start,
+                        @Param("end") Instant end);
+
+    /** 按商户+账号列表+客服列表+时间范围统计每日各活跃客户数（当天发送消息>=3的客户数） */
+    @Query("SELECT DATE(m.createdAt) as d, COUNT(DISTINCT c.discordUser.id) FROM Message m " +
+            "JOIN m.conversation c WHERE c.merchantId = :merchantId " +
+            "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
+            "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
+            "AND m.createdAt >= :start AND m.createdAt < :end " +
+            "GROUP BY DATE(m.createdAt), c.discordUser.id " +
+            "HAVING COUNT(m.id) >= 3 " +
+            "ORDER BY d")
+    List<Object[]> countDailyActiveCustomersRaw(@Param("merchantId") Long merchantId,
+                                                  @Param("accountIds") List<Long> accountIds,
+                                                  @Param("agentIds") List<Long> agentIds,
+                                                  @Param("start") Instant start,
+                                                  @Param("end") Instant end);
+
+    /** 按商户+账号列表+客服列表+时间范围统计每日发送消息总数 */
+    @Query("SELECT DATE(m.createdAt) as d, COUNT(m) FROM Message m JOIN m.conversation c " +
+            "WHERE c.merchantId = :merchantId " +
+            "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
+            "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
+            "AND m.createdAt >= :start AND m.createdAt < :end " +
+            "GROUP BY DATE(m.createdAt) ORDER BY d")
+    List<Object[]> countDailyMessagesByFilters(@Param("merchantId") Long merchantId,
+                                                  @Param("accountIds") List<Long> accountIds,
+                                                  @Param("agentIds") List<Long> agentIds,
+                                                  @Param("start") Instant start,
+                                                  @Param("end") Instant end);
 }
+

@@ -3,6 +3,7 @@ package com.discordadmin.repository;
 import com.discordadmin.entity.Conversation;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.DiscordUser;
+import com.discordadmin.entity.Message;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -153,4 +154,46 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
                                                              @Param("accountIds") List<Long> accountIds,
                                                              @Param("stage") Conversation.Stage stage,
                                                              @Param("agentId") Long agentId);
+
+    /** 按商户+阶段+账号列表+客服列表+时间范围统计会话数（用于仪表盘） */
+    @Query("SELECT COUNT(c) FROM Conversation c WHERE c.merchantId = :merchantId " +
+            "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
+            "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
+            "AND (:stage IS NULL OR c.stage = :stage) " +
+            "AND (:start IS NULL OR c.createdAt >= :start) " +
+            "AND (:end IS NULL OR c.createdAt < :end)")
+    long countByFilters(@Param("merchantId") Long merchantId,
+                        @Param("accountIds") List<Long> accountIds,
+                        @Param("agentIds") List<Long> agentIds,
+                        @Param("stage") Conversation.Stage stage,
+                        @Param("start") java.time.Instant start,
+                        @Param("end") java.time.Instant end);
+
+    /** 按商户+账号列表+客服列表+时间范围统计每日各阶段的新增会话数 */
+    @Query("SELECT DATE(c.createdAt) as d, c.stage, COUNT(c) FROM Conversation c " +
+            "WHERE c.merchantId = :merchantId " +
+            "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
+            "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
+            "AND c.createdAt >= :start AND c.createdAt < :end " +
+            "GROUP BY DATE(c.createdAt), c.stage ORDER BY d")
+    List<Object[]> countDailyByFilters(@Param("merchantId") Long merchantId,
+                                        @Param("accountIds") List<Long> accountIds,
+                                        @Param("agentIds") List<Long> agentIds,
+                                        @Param("start") java.time.Instant start,
+                                        @Param("end") java.time.Instant end);
+
+    /** 按商户+账号列表+客服列表统计拜访客户数（我方发送过至少一条消息的去重客户数） */
+    @Query("SELECT COUNT(DISTINCT c.discordUser.id) FROM Conversation c " +
+            "JOIN Message m ON m.conversation = c AND m.direction = 'OUTBOUND' " +
+            "WHERE c.merchantId = :merchantId " +
+            "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
+            "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
+            "AND (:start IS NULL OR m.createdAt >= :start) " +
+            "AND (:end IS NULL OR m.createdAt < :end)")
+    long countVisitedCustomers(@Param("merchantId") Long merchantId,
+                                @Param("accountIds") List<Long> accountIds,
+                                @Param("agentIds") List<Long> agentIds,
+                                @Param("start") java.time.Instant start,
+                                @Param("end") java.time.Instant end);
 }
+
