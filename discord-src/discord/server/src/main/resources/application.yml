@@ -88,3 +88,4 @@ app:
   upload:
     path: ${APP_UPLOAD_PATH:${user.home}/.discord-admin/uploads}
   base-url: ${APP_BASE_URL:http://101.47.41.149:8090}
+  mumu-agent-path: ${APP_MUMU_AGENT_PATH:}

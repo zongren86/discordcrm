@@ -1,6 +1,7 @@
 package com.discordadmin.service;
 
 import com.discordadmin.entity.Agent;
+import com.discordadmin.entity.Role;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.Merchant;
 import com.discordadmin.entity.MerchantConfig;
@@ -21,17 +22,20 @@ public class UserService {
     private final AgentRepository agentRepository;
     private final DiscordAccountRepository accountRepository;
     private final MerchantRepository merchantRepository;
+    private final com.discordadmin.repository.RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
     private final GuildService guildService;
 
     public UserService(AgentRepository agentRepository,
                        DiscordAccountRepository accountRepository,
                        MerchantRepository merchantRepository,
+                       com.discordadmin.repository.RoleRepository roleRepository,
                        PasswordEncoder passwordEncoder,
                        GuildService guildService) {
         this.agentRepository = agentRepository;
         this.accountRepository = accountRepository;
         this.merchantRepository = merchantRepository;
+        this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
         this.guildService = guildService;
     }
@@ -168,11 +172,46 @@ public class UserService {
     public Agent setRoles(Long id, java.util.Set<Long> roleIds) {
         Agent agent = agentRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+        
+        if (!SecurityUtils.isPlatformAdmin()) {
+            Long currentMerchantId = SecurityUtils.currentMerchantId();
+            if (currentMerchantId == null || !currentMerchantId.equals(agent.getMerchantId())) {
+                throw new IllegalStateException("不能为其他商户的用户分配角色");
+            }
+        }
+        
+        if (roleIds != null && !roleIds.isEmpty()) {
+            List<Role> roles = roleRepository.findAllById(roleIds);
+            boolean isPlatform = SecurityUtils.isPlatformAdmin();
+            for (Role role : roles) {
+                if (!isRoleApplicableToUser(role, agent, isPlatform)) {
+                    throw new IllegalStateException("角色「" + role.getName() + "」不适用于该用户");
+                }
+            }
+        }
+        
         agent.getRoleIds().clear();
         if (roleIds != null) {
             agent.getRoleIds().addAll(roleIds);
         }
         return agentRepository.save(agent);
+    }
+    
+    private boolean isRoleApplicableToUser(Role role, Agent targetAgent, boolean isPlatform) {
+        if (role.getRoleType() == Role.RoleType.PLATFORM) {
+            return isPlatform && targetAgent.getAccountType() != null && targetAgent.getAccountType() == 0;
+        }
+        Long targetMerchantId = targetAgent.getMerchantId();
+        if (targetMerchantId == null) {
+            return false;
+        }
+        if (role.getMerchantId() != null) {
+            return role.getMerchantId().equals(targetMerchantId);
+        }
+        if (role.getMerchantIds() != null && !role.getMerchantIds().isEmpty()) {
+            return role.getMerchantIds().contains(targetMerchantId);
+        }
+        return true;
     }
 
     @Transactional

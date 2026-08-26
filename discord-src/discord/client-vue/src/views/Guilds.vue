@@ -199,9 +199,10 @@
           <el-form-item label="每次请求数">
             <el-input-number v-model="syncDialog.config.requestCount" :min="10" :max="1000" :step="50" style="width: 100%" />
           </el-form-item>
-          <el-form-item label="下钻深度">
+          <el-form-item label="下钻深度" v-if="false">
             <el-input-number v-model="syncDialog.config.maxDepth" :min="1" :max="20" style="width: 100%" />
           </el-form-item>
+          <!-- 下钻深度已隐藏，默认值5，请求时仍使用 syncDialog.config.maxDepth -->
           <el-form-item label="请求次数">
             <el-input-number v-model="syncDialog.config.maxRequests" :min="1" :max="10000" :step="100" style="width: 100%" />
           </el-form-item>
@@ -357,14 +358,7 @@
             <span class="detail-label">采集状态</span>
             <el-tag type="warning" size="small">采集中</el-tag>
           </div>
-          <div class="detail-item">
-            <span class="detail-label">当前前缀</span>
-            <span class="detail-value mono-text">{{ currentProgressTask.currentPrefix || '-' }}</span>
-          </div>
-          <div class="detail-item">
-            <span class="detail-label">前缀进度</span>
-            <span class="detail-value">{{ currentProgressTask.prefixesDone || 0 }} / {{ currentProgressTask.prefixesTotal || '-' }}</span>
-          </div>
+          <!-- 已隐藏：当前前缀、前缀进度 -->
           <div class="detail-item">
             <span class="detail-label">重连次数</span>
             <span class="detail-value">{{ currentProgressTask.reconnects || 0 }}</span>
@@ -403,11 +397,7 @@
               <div class="result-value">{{ formatMs(currentProgressTask.lastRequestTimeMs || 0) }} / {{ formatMs(currentProgressTask.elapsedMs || 0) }}</div>
               <div class="result-sub">总耗时: {{ formatElapsedTime(currentProgressTask) }}</div>
             </div>
-            <div class="result-item">
-              <div class="result-label">最后请求前缀</div>
-              <div class="result-value mono-text">{{ currentProgressTask.lastPrefix || currentProgressTask.currentPrefix || '-' }}</div>
-              <div class="result-sub">前缀深度: {{ (currentProgressTask.lastPrefix || currentProgressTask.currentPrefix || '').length || 0 }}</div>
-            </div>
+            <!-- 已隐藏：最后请求前缀 -->
             <div class="result-item">
               <div class="result-label">重连次数</div>
               <div class="result-value">{{ currentProgressTask.reconnects || 0 }}</div>

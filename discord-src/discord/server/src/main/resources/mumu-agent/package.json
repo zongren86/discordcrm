@@ -1,0 +1,15 @@
+{
+  "name": "mumu-agent",
+  "version": "2.7.0",
+  "description": "MuMu 模拟器远程管理 Agent",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js",
+    "install-service": "node install-service.js",
+    "uninstall-service": "node uninstall-service.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "uuid": "^9.0.0"
+  }
+}

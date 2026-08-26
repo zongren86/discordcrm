@@ -18,7 +18,6 @@ public class MerchantConfigController {
         this.guildService = guildService;
     }
 
-    /** 获取当前商户的配置 */
     @GetMapping
     public Map<String, Object> getConfig() {
         Long merchantId = SecurityUtils.currentMerchantId();
@@ -29,7 +28,6 @@ public class MerchantConfigController {
         return toMap(config);
     }
 
-    /** 更新商户配置 */
     @PutMapping
     public Map<String, Object> updateConfig(@RequestBody Map<String, Object> payload) {
         Long merchantId = SecurityUtils.currentMerchantId();
@@ -39,7 +37,7 @@ public class MerchantConfigController {
         MerchantConfig config = new MerchantConfig();
         
         if (payload.containsKey("fetchLimit")) {
-            config.setFetchLimit(Integer.valueOf(payload.get("fetchLimit").toString()));
+            config.setFetchLimit(((Number) payload.get("fetchLimit")).intValue());
         }
         if (payload.containsKey("requestInterval")) {
             config.setRequestInterval(Integer.valueOf(payload.get("requestInterval").toString()));
@@ -67,7 +65,6 @@ public class MerchantConfigController {
         return toMap(updated);
     }
 
-    /** 平台管理员获取指定商户的配置 */
     @GetMapping("/{merchantId}")
     public Map<String, Object> getConfigByMerchantId(@PathVariable Long merchantId) {
         if (!SecurityUtils.isPlatformAdmin()) {
@@ -77,7 +74,6 @@ public class MerchantConfigController {
         return toMap(config);
     }
 
-    /** 平台管理员更新指定商户的配置 */
     @PutMapping("/{merchantId}")
     public Map<String, Object> updateConfigByMerchantId(
             @PathVariable Long merchantId,
@@ -88,7 +84,7 @@ public class MerchantConfigController {
         MerchantConfig config = new MerchantConfig();
         
         if (payload.containsKey("fetchLimit")) {
-            config.setFetchLimit(Integer.valueOf(payload.get("fetchLimit").toString()));
+            config.setFetchLimit(((Number) payload.get("fetchLimit")).intValue());
         }
         if (payload.containsKey("requestInterval")) {
             config.setRequestInterval(Integer.valueOf(payload.get("requestInterval").toString()));
@@ -136,7 +132,7 @@ public class MerchantConfigController {
         Map<String, Object> map = new HashMap<>();
         map.put("id", null);
         map.put("merchantId", null);
-        map.put("fetchLimit", 2000000);
+        map.put("fetchLimit", 10000);
         map.put("requestInterval", 3);
         map.put("requestCount", 100);
         map.put("maxDepth", 5);

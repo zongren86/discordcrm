@@ -125,10 +125,9 @@ public class EmuFriendPoolService {
         Map<String, Object> stats = new HashMap<>();
         long total = 0, pending = 0, assigned = 0, success = 0, failed = 0;
         
-        // 查询商户下所有服务器（包括未绑定的）
-        List<GuildServer> servers = guildServerRepository.findByMerchantId(merchantId);
-        for (GuildServer server : servers) {
-            Long serverId = server.getId();
+        List<EmuServerBinding> bindings = serverBindingRepository.findByMerchantId(merchantId);
+        for (EmuServerBinding binding : bindings) {
+            Long serverId = binding.getServerId();
             total += memberRepository.countWithFriendStatusByGuildServerId(serverId);
             pending += memberRepository.countPendingByGuildServerId(serverId);
             
@@ -155,10 +154,9 @@ public class EmuFriendPoolService {
     public List<Map<String, Object>> getFriendPoolStatsByServer(Long merchantId) {
         List<Map<String, Object>> result = new ArrayList<>();
         
-        // 查询商户下所有服务器（包括未绑定的）
-        List<GuildServer> servers = guildServerRepository.findByMerchantId(merchantId);
-        for (GuildServer server : servers) {
-            Long serverId = server.getId();
+        List<EmuServerBinding> bindings = serverBindingRepository.findByMerchantId(merchantId);
+        for (EmuServerBinding binding : bindings) {
+            Long serverId = binding.getServerId();
             Map<String, Object> serverStats = new HashMap<>();
             
             long total = memberRepository.countWithFriendStatusByGuildServerId(serverId);
@@ -168,7 +166,7 @@ public class EmuFriendPoolService {
             long assigned = memberRepository.countByGuildServerIdAndFriendStatus(serverId, STATUS_ASSIGNED) + success + failed;
             
             serverStats.put("serverId", serverId);
-            serverStats.put("serverName", server.getName() != null ? server.getName() : "服务器 #" + serverId);
+            serverStats.put("serverName", binding.getServerName() != null ? binding.getServerName() : "服务器 #" + serverId);
             serverStats.put("total", total);
             serverStats.put("pending", pending);
             serverStats.put("assigned", assigned);

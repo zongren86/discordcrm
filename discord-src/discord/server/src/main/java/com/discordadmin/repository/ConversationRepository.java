@@ -170,12 +170,12 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
                         @Param("end") java.time.Instant end);
 
     /** 按商户+账号列表+客服列表+时间范围统计每日各阶段的新增会话数 */
-    @Query("SELECT DATE(c.createdAt) as d, c.stage, COUNT(c) FROM Conversation c " +
+    @Query("SELECT FUNCTION('DATE', c.createdAt) as d, c.stage, COUNT(c) FROM Conversation c " +
             "WHERE c.merchantId = :merchantId " +
             "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
             "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
             "AND c.createdAt >= :start AND c.createdAt < :end " +
-            "GROUP BY DATE(c.createdAt), c.stage ORDER BY d")
+            "GROUP BY FUNCTION('DATE', c.createdAt), c.stage ORDER BY d")
     List<Object[]> countDailyByFilters(@Param("merchantId") Long merchantId,
                                         @Param("accountIds") List<Long> accountIds,
                                         @Param("agentIds") List<Long> agentIds,

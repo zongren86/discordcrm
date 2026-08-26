@@ -194,6 +194,15 @@ export function getStageDistribution() {
 export function getStatsTrend(days = 7) {
   return http.get('/stats/trend', { params: { days } })
 }
+export function getStatsDashboard(params = {}) {
+  return http.get('/stats/dashboard', { params })
+}
+export function getStatsDashboardTrends(params = {}) {
+  return http.get('/stats/dashboard-trends', { params })
+}
+export function getStatsDashboardFilters() {
+  return http.get('/stats/dashboard-filters')
+}
 
 // === 角色管理 ===
 export function listRoles() {

@@ -310,9 +310,13 @@ function getRoleName(id) {
   return r ? r.name : `角色#${id}`
 }
 
-async function fetchCustomRoles() {
+let currentRoleFilter = null
+
+async function fetchCustomRoles(forMerchantId) {
+  currentRoleFilter = forMerchantId ?? null
   try {
-    const res = await api.get('/roles')
+    const params = forMerchantId != null ? `?forMerchantId=${forMerchantId}` : ""
+    const res = await api.get(`/roles${params}`)
     customRoles.value = Array.isArray(res) ? res : []
   } catch (e) {
     customRoles.value = []
@@ -550,41 +554,30 @@ const assignRolesDialog = reactive({
 })
 
 const availableRoles = computed(() => {
-  const targetAccountType = assignRolesDialog.targetAccountType
-  const targetMerchantId = assignRolesDialog.targetMerchantId
-  
-  return customRoles.value.filter(role => {
-    if (assignRolesDialog.selectedRoleIds.includes(role.id)) return false
-    
-    if (targetAccountType === 0) {
-      return role.roleType === 'PLATFORM'
-    } else {
-      if (role.roleType === 'PLATFORM') return false
-      if (role.roleType === 'MERCHANT') {
-        if (!role.merchantIds || role.merchantIds.length === 0) return true
-        return role.merchantIds.includes(targetMerchantId) || role.merchantId === targetMerchantId
-      }
-      return true
-    }
-  })
+  const selectedIds = assignRolesDialog.selectedRoleIds
+  return customRoles.value.filter(role => !selectedIds.includes(role.id))
 })
+
 
 function openAssignRoles(row) {
   assignRolesDialog.visible = true
   assignRolesDialog.userId = row.id
-  assignRolesDialog.username = row.displayName || row.username || ''
+  assignRolesDialog.username = row.displayName || row.username || ""
   assignRolesDialog.selectedRoleIds = [...(row.roleIds || [])]
   assignRolesDialog.targetAccountType = row.accountType != null ? row.accountType : 1
   assignRolesDialog.targetMerchantId = row.merchantId || null
+  fetchCustomRoles(row.accountType === 1 ? row.merchantId : null)
 }
+
 
 function resetAssignRolesDialog() {
   assignRolesDialog.userId = null
-  assignRolesDialog.username = ''
+  assignRolesDialog.username = ""
   assignRolesDialog.selectedRoleIds = []
   assignRolesDialog.saving = false
   assignRolesDialog.targetAccountType = 1
   assignRolesDialog.targetMerchantId = null
+  currentRoleFilter = null
 }
 
 function addRole(roleId) {

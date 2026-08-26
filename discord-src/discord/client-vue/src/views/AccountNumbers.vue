@@ -388,7 +388,7 @@ async function openBindDialog(row) {
   bindDialog.visible = true
   bindDialog.currentAccount = row.accountName || row.boundAccount
   bindDialog.newAccount = row.boundAccount || row.accountName || ''
-  bindDialog.discordAccountId = row.discordAccountId || null
+  bindDialog.discordAccountId = null
   bindDialog.changeReason = ''
   bindDialog.currentRow = row
 

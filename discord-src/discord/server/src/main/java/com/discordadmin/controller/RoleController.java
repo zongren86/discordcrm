@@ -26,17 +26,53 @@ public class RoleController {
     private final AuditService auditService;
 
     @GetMapping
-    public List<Role> list() {
-        Long merchantId = SecurityUtils.currentMerchantId();
-        if (SecurityUtils.isPlatformAdmin()) {
-            return roleRepository.findAllByOrderByIdDesc();
+    public List<Map<String, Object>> list(@RequestParam(required = false) Long forMerchantId) {
+        Long currentMerchantId = SecurityUtils.currentMerchantId();
+        boolean isPlatform = SecurityUtils.isPlatformAdmin();
+        
+        List<Role> allRoles;
+        if (isPlatform) {
+            allRoles = roleRepository.findAllByOrderByIdDesc();
+        } else {
+            List<Role> owned = roleRepository.findByMerchantIdOrderByIdDesc(currentMerchantId);
+            List<Role> applicable = roleRepository.findMerchantRolesForOwner(currentMerchantId);
+            Set<Role> merged = new LinkedHashSet<>();
+            merged.addAll(owned);
+            merged.addAll(applicable);
+            allRoles = new ArrayList<>(merged);
         }
-        List<Role> owned = roleRepository.findByMerchantIdOrderByIdDesc(merchantId);
-        List<Role> platformRoles = roleRepository.findMerchantRolesForOwner(merchantId);
-        Set<Role> merged = new LinkedHashSet<>();
-        merged.addAll(owned);
-        merged.addAll(platformRoles);
-        return new ArrayList<>(merged);
+        
+        if (forMerchantId != null) {
+            allRoles = allRoles.stream()
+                .filter(r -> isRoleApplicableToMerchant(r, forMerchantId, isPlatform))
+                .collect(Collectors.toList());
+        }
+        
+        return allRoles.stream().map(r -> {
+            Map<String, Object> map = new LinkedHashMap<>();
+            map.put("id", r.getId());
+            map.put("name", r.getName());
+            map.put("code", r.getCode());
+            map.put("roleType", r.getRoleType() != null ? r.getRoleType().name() : null);
+            map.put("merchantId", r.getMerchantId());
+            map.put("merchantIds", new ArrayList<>(r.getMerchantIds() != null ? r.getMerchantIds() : Collections.emptySet()));
+            map.put("builtin", r.getBuiltin());
+            map.put("enabled", r.getEnabled());
+            return map;
+        }).collect(Collectors.toList());
+    }
+    
+    private boolean isRoleApplicableToMerchant(Role role, Long forMerchantId, boolean isPlatform) {
+        if (role.getRoleType() == Role.RoleType.PLATFORM) {
+            return isPlatform;
+        }
+        if (role.getMerchantId() != null) {
+            return role.getMerchantId().equals(forMerchantId);
+        }
+        if (role.getMerchantIds() != null && ! role.getMerchantIds().isEmpty()) {
+            return role.getMerchantIds().contains(forMerchantId);
+        }
+        return true;
     }
 
     @PostMapping

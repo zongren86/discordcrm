@@ -24,3 +24,10 @@ client/pubspec.lock
 # OS
 .DS_Store
 build/
+
+# Temporary test files
+*.tmp
+*.test_write
+*.test
+test.txt
+test_write.txt

@@ -251,6 +251,17 @@ function collectAllCodes(nodes, codes = []) {
   return codes
 }
 
+function getLeafCodes(nodes = catalog.value, codes = []) {
+  for (const node of nodes) {
+    if (node.children && node.children.length > 0) {
+      getLeafCodes(node.children, codes)
+    } else {
+      codes.push(node.code)
+    }
+  }
+  return codes
+}
+
 function getAllFeatureCodes() {
   return collectAllCodes(catalog.value)
 }
@@ -418,20 +429,15 @@ async function openPerm(row) {
   permDialog.keys = []
   permDialog.loading = true
   try {
-    const featureIds = await api.get(`/roles/${row.id}/features`)
-    permDialog.keys = Array.isArray(featureIds) ? featureIds : []
+    const featureCodes = await api.get(`/roles/${row.id}/features`)
+    // 只保留叶子节点的 code，父节点状态由 Element Tree 自动计算
+    const leafCodes = getLeafCodes()
+    const leafFeatureCodes = (Array.isArray(featureCodes) ? featureCodes : []).filter(c => leafCodes.includes(c))
+    permDialog.keys = leafFeatureCodes
     
     await nextTick()
     if (permTreeRef.value) {
-      // 先展开所有节点，再设置勾选，确保正确回显
-      const allKeys = getAllFeatureCodes()
-      for (const key of allKeys) {
-        const node = permTreeRef.value.getNode(key)
-        if (node) node.expanded = true
-      }
-      await nextTick()
-      // 使用 onlyLeafCheckKeys=false 的方式设置，确保父子关联正常
-      permTreeRef.value.setCheckedKeys(permDialog.keys)
+      permTreeRef.value.setCheckedKeys(leafFeatureCodes)
     }
   } catch (e) {
     permDialog.keys = []
@@ -454,18 +460,12 @@ async function savePerm() {
       ElMessage.warning('权限树未就绪')
       return
     }
-    // Element Plus 的 el-tree：
-    // getCheckedKeys(true) 只返回叶子节点（叶子=true, 子树的叶子）
-    // getCheckedKeys() 返回所有选中的（含父节点，若父被勾选也会包含）
-    // getHalfCheckedKeys() 返回半选的父节点
-    // 正确做法：后端需要完整的所有勾选节点（包括半选父节点，因为功能是按 code 来匹配的）
+    // 只保存完全勾选的叶子节点，不保存半选父节点
+    // getCheckedKeys(true) 只返回叶子节点，父节点状态由 Element Tree 自动计算
     const checkedLeafKeys = permTreeRef.value.getCheckedKeys(true) || []
-    const halfCheckedKeys = permTreeRef.value.getHalfCheckedKeys() || []
-    // 合并叶子节点和半选父节点，确保完整保存
-    const allKeysToSave = [...new Set([...checkedLeafKeys, ...halfCheckedKeys])]
     
-    permDialog.keys = allKeysToSave
-    await api.put(`/roles/${permDialog.roleId}/features`, { featureCodes: allKeysToSave })
+    permDialog.keys = checkedLeafKeys
+    await api.put(`/roles/${permDialog.roleId}/features`, { featureCodes: checkedLeafKeys })
     ElMessage.success('权限已更新')
     permDialog.visible = false
   } catch (e) {} finally { permDialog.saving = false }

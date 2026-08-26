@@ -195,12 +195,12 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
                         @Param("end") Instant end);
 
     /** 按商户+账号列表+客服列表+时间范围统计每日各活跃客户数（当天发送消息>=3的客户数） */
-    @Query("SELECT DATE(m.createdAt) as d, COUNT(DISTINCT c.discordUser.id) FROM Message m " +
+    @Query("SELECT FUNCTION('DATE', m.createdAt) as d, COUNT(DISTINCT c.discordUser.id) FROM Message m " +
             "JOIN m.conversation c WHERE c.merchantId = :merchantId " +
             "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
             "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
             "AND m.createdAt >= :start AND m.createdAt < :end " +
-            "GROUP BY DATE(m.createdAt), c.discordUser.id " +
+            "GROUP BY FUNCTION('DATE', m.createdAt), c.discordUser.id " +
             "HAVING COUNT(m.id) >= 3 " +
             "ORDER BY d")
     List<Object[]> countDailyActiveCustomersRaw(@Param("merchantId") Long merchantId,
@@ -210,12 +210,12 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
                                                   @Param("end") Instant end);
 
     /** 按商户+账号列表+客服列表+时间范围统计每日发送消息总数 */
-    @Query("SELECT DATE(m.createdAt) as d, COUNT(m) FROM Message m JOIN m.conversation c " +
+    @Query("SELECT FUNCTION('DATE', m.createdAt) as d, COUNT(m) FROM Message m JOIN m.conversation c " +
             "WHERE c.merchantId = :merchantId " +
             "AND (:accountIds IS NULL OR c.discordAccount.id IN :accountIds) " +
             "AND (:agentIds IS NULL OR c.ownerAgentId IN :agentIds) " +
             "AND m.createdAt >= :start AND m.createdAt < :end " +
-            "GROUP BY DATE(m.createdAt) ORDER BY d")
+            "GROUP BY FUNCTION('DATE', m.createdAt) ORDER BY d")
     List<Object[]> countDailyMessagesByFilters(@Param("merchantId") Long merchantId,
                                                   @Param("accountIds") List<Long> accountIds,
                                                   @Param("agentIds") List<Long> agentIds,

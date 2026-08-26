@@ -81,7 +81,6 @@ public class AuthController {
         java.util.Set<String> featureCodes = new java.util.HashSet<>(permissions);
         java.util.Set<String> menuPaths = new java.util.HashSet<>();
         
-        // 1. 直接匹配：功能码本身有 route_path（菜单级功能，如 chat, customer）
         for (String code : permissions) {
             featureRepository.findByCode(code).ifPresent(f -> {
                 if (f.getRoutePath() != null && !f.getRoutePath().isBlank()) {
@@ -90,7 +89,6 @@ public class AuthController {
             });
         }
         
-        // 2. 推断匹配：按钮级功能（如 chat.view, chat.send）推断菜单级路径
         for (String code : permissions) {
             int dotIdx = code.indexOf('.');
             if (dotIdx > 0) {
@@ -113,7 +111,6 @@ public class AuthController {
     public Map<String, Object> testFeatures() {
         Map<String, Object> result = new HashMap<>();
         
-        // 方法1: 使用 findAllByOrderBySortOrderAsc
         List<SysFeature> allFeatures = featureRepository.findAllByOrderBySortOrderAsc();
         result.put("totalFeatures", allFeatures.size());
         
@@ -130,7 +127,6 @@ public class AuthController {
         }
         result.put("allFeatures", features);
         
-        // 方法2: 直接按 code 查询
         SysFeature merchantFeature = featureRepository.findByCode("merchants").orElse(null);
         if (merchantFeature != null) {
             Map<String, Object> merchantMap = new HashMap<>();
@@ -160,31 +156,59 @@ public class AuthController {
         List<String> permissions = getAgentPermissions(agentEntity);
         Set<String> permissionSet = new HashSet<>(permissions);
         
-        // 获取所有功能
         List<SysFeature> allFeatures = featureRepository.findAllByOrderBySortOrderAsc();
+        Map<Long, SysFeature> featureById = allFeatures.stream()
+            .collect(Collectors.toMap(SysFeature::getId, f -> f, (a, b) -> a));
         
-        // 过滤出用户有权限的功能
+        Set<Long> accessibleLeafIds = new HashSet<>();
+        for (SysFeature f : allFeatures) {
+            if (permissionSet.contains(f.getCode())) {
+                accessibleLeafIds.add(f.getId());
+            }
+        }
+        
+        Set<Long> allIncludedIds = new HashSet<>(accessibleLeafIds);
+        for (Long leafId : accessibleLeafIds) {
+            SysFeature feat = featureById.get(leafId);
+            if (feat != null) {
+                Long parentId = feat.getParentId();
+                while (parentId != null && featureById.containsKey(parentId)) {
+                    allIncludedIds.add(parentId);
+                    SysFeature parent = featureById.get(parentId);
+                    parentId = parent.getParentId();
+                }
+            }
+        }
+        
         List<SysFeature> accessibleFeatures = allFeatures.stream()
-            .filter(f -> permissionSet.contains(f.getCode()))
+            .filter(f -> allIncludedIds.contains(f.getId()))
             .collect(Collectors.toList());
         
-        // 调试：检查 accessibleFeatures 中的内容
-        for (SysFeature f : accessibleFeatures) {
-            if ("merchants".equals(f.getCode())) {
-                System.err.println("DEBUG: 找到 merchants - id=" + f.getId() + ", parentId=" + f.getParentId() + ", type=" + f.getType() + ", routePath=" + f.getRoutePath());
-            }
-        }
-        System.err.println("DEBUG: accessibleFeatures size=" + accessibleFeatures.size());
-        
-        // 构建菜单树（一级菜单）
         List<Map<String, Object>> tree = buildMenuTree(accessibleFeatures, null);
-        System.err.println("DEBUG: tree size=" + tree.size());
+        tree = filterHiddenMenus(tree);
+        tree = removeEmptyParents(tree);
+        return tree;
+    }
+    
+    private List<Map<String, Object>> removeEmptyParents(List<Map<String, Object>> tree) {
+        List<Map<String, Object>> result = new ArrayList<>();
         for (Map<String, Object> node : tree) {
-            if ("system".equals(node.get("code"))) {
-                System.err.println("DEBUG: system children=" + node.get("children"));
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> children = (List<Map<String, Object>>) node.get("children");
+            List<Map<String, Object>> filteredChildren = children != null 
+                ? removeEmptyParents(children) 
+                : Collections.emptyList();
+            
+            String path = (String) node.get("path");
+            boolean hasChildren = !filteredChildren.isEmpty();
+            boolean isLeaf = path != null && !path.isBlank();
+            
+            if (isLeaf || hasChildren) {
+                node.put("children", filteredChildren);
+                result.add(node);
             }
         }
-        return tree;
+        return result;
     }
     
     private List<Map<String, Object>> buildMenuTree(List<SysFeature> features, Long parentId) {
@@ -201,9 +225,7 @@ public class AuthController {
                 node.put("type", f.getType());
                 node.put("sortOrder", f.getSortOrder() != null ? f.getSortOrder() : 0);
                 
-                // 递归构建子菜单
                 List<Map<String, Object>> children = buildMenuTree(features, f.getId());
-                // 过滤掉没有路径的叶子子菜单（这些只是权限标识，不是真正的菜单项）
                 List<Map<String, Object>> validChildren = children.stream()
                     .filter(child -> child.get("path") != null || !child.containsKey("children") || ((List<?>) child.get("children")).size() > 0)
                     .collect(Collectors.toList());
@@ -212,6 +234,26 @@ public class AuthController {
             })
             .sorted((a, b) -> ((Integer) a.get("sortOrder")).compareTo((Integer) b.get("sortOrder")))
             .collect(Collectors.toList());
+    }
+
+
+    private static final Set<String> HIDDEN_MENU_CODES = Set.of("service");
+
+    private List<Map<String, Object>> filterHiddenMenus(List<Map<String, Object>> tree) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> node : tree) {
+            String code = (String) node.get("code");
+            if (HIDDEN_MENU_CODES.contains(code)) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> children = (List<Map<String, Object>>) node.get("children");
+            if (children != null && !children.isEmpty()) {
+                node.put("children", filterHiddenMenus(children));
+            }
+            result.add(node);
+        }
+        return result;
     }
 
     @GetMapping("/me")
@@ -233,7 +275,6 @@ public class AuthController {
             List<String> permissions = getAgentPermissions(agentEntity);
             result.put("permissions", permissions);
             
-            // 获取分配的角色信息
             if (agentEntity.getRoleIds() != null && !agentEntity.getRoleIds().isEmpty()) {
                 List<Map<String, Object>> roles = roleRepository.findAllById(agentEntity.getRoleIds()).stream()
                     .map(r -> {
@@ -253,25 +294,33 @@ public class AuthController {
         return result;
     }
 
-    /**
-     * 获取用户权限列表
-     * 使用自定义角色权限，同时补充默认权限确保完整性
-     */
     private List<String> getAgentPermissions(Agent agent) {
         java.util.Set<String> permissions = new java.util.HashSet<>();
         
-        boolean hasCustomRoles = agent.getRoleIds() != null && !agent.getRoleIds().isEmpty();
+        List<Role> userRoles = Collections.emptyList();
+        if (agent.getRoleIds() != null && !agent.getRoleIds().isEmpty()) {
+            userRoles = roleRepository.findByIdInWithFeatures(agent.getRoleIds());
+        }
         
-        if (hasCustomRoles) {
-            List<Role> customRoles = roleRepository.findByIdInWithFeatures(agent.getRoleIds());
-            for (Role customRole : customRoles) {
-                for (SysFeature feature : customRole.getFeatures()) {
-                    permissions.add(feature.getCode());
+        if (!userRoles.isEmpty()) {
+            for (Role role : userRoles) {
+                if (role.getFeatures() != null) {
+                    for (SysFeature feature : role.getFeatures()) {
+                        permissions.add(feature.getCode());
+                    }
                 }
             }
         }
         
-        // 补充默认权限确保完整性
+        if (permissions.isEmpty()) {
+            permissions.addAll(getDefaultPermissionsByAccountType(agent));
+        }
+        
+        return List.copyOf(permissions);
+    }
+    
+    private java.util.Set<String> getDefaultPermissionsByAccountType(Agent agent) {
+        java.util.Set<String> permissions = new java.util.HashSet<>();
         Integer accountType = agent.getAccountType();
         if (accountType == null) {
             accountType = 1;
@@ -285,8 +334,7 @@ public class AuthController {
         } else {
             permissions.addAll(getSalesPermissions());
         }
-        
-        return List.copyOf(permissions);
+        return permissions;
     }
 
     private java.util.Set<String> getAllFeatureCodes() {

@@ -1,0 +1,92 @@
+server:
+  port: 9090
+  websocket:
+    max-message-size: 67108864  # 64MB WebSocket最大消息大小
+
+spring:
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 500MB
+      max-request-size: 500MB
+  datasource:
+    url: jdbc:mysql://localhost:3306/discordadmin?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8&useUnicode=true&cachePrepStmts=true&prepStmtCacheSize=250&prepStmtCacheSqlLimit=2048&useServerPrepStmts=true&rewriteBatchedStatements=true&useCompression=true&createDatabaseIfNotExist=true
+    username: root
+    password: Len2026!
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 100
+      minimum-idle: 20
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      pool-name: DiscordHikariCP
+      connection-test-query: SELECT 1
+      # 连接泄漏检测：超过 20 秒未归还的连接视为泄漏
+      leak-detection-threshold: 60000
+      # 优化：每个连接的事务超时后自动回滚
+      transaction-isolation: TRANSACTION_REPEATABLE_READ
+      # 优化：获取连接失败时快速重试，不阻塞
+      validation-timeout: 1000
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        jdbc:
+          batch_size: 50
+  sql:
+    init:
+      mode: never
+
+discord:
+  bot-token: ${DISCORD_BOT_TOKEN:}
+  proxy:
+    # 代理开关：true=启用代理，false=直连（服务器部署时设为 false）
+    # 留空或 auto=自动检测代理可用性，不可用时自动回退到直连
+    enabled: ${DISCORD_PROXY_ENABLED:auto}
+    host: ${DISCORD_PROXY_HOST:127.0.0.1}
+    port: ${DISCORD_PROXY_PORT:7890}
+    # 代理健康检查超时（毫秒），用于 auto 模式下检测代理是否可用
+    health-check-timeout: ${DISCORD_PROXY_HEALTH_TIMEOUT:3000}
+    # WebSocket 直连模式：true=WebSocket 连接绕过代理直连 Discord Gateway
+    # HTTP 请求（API调用）仍会使用代理，仅 WebSocket 直连
+    websocket-direct: ${DISCORD_WEBSOCKET_DIRECT:true}
+  emulator:
+    apk-path: /tmp/discord-emulator
+
+# Mumu 配置（本地模式，直接调用 mumutool）
+mumu:
+  mumutool-path: ${MUMU_TOOL_PATH:}
+  adb-path: ${MUMU_ADB_PATH:}
+  vms-base-path: ${MUMU_VMS_PATH:}
+  discord-apk-path: ${user.home}/.discord-admin/discord.apk
+  discord-apk-url: https://discord.com/api/download/stable
+  default-emulator-count: 1
+  max-emulator-count: 10
+
+# 模拟器执行模式
+emulator:
+  # 本地模式（true: 直接调用本地 MumuManager；false: 通过 Agent 远程控制）
+  local-mode: ${EMULATOR_LOCAL_MODE:false}
+
+jwt:
+  secret: ${JWT_SECRET:discord-admin-dev-secret-key-change-me-in-prod-0123456789}
+  expire-hours: 24
+
+logging:
+  level:
+    com.discordadmin: debug
+    net.dv8tion.jda: warn
+
+# 启动性能优化
+spring.main.allow-bean-definition-overriding: false
+
+app:
+  upload:
+    path: ${APP_UPLOAD_PATH:${user.home}/.discord-admin/uploads}
+  base-url: ${APP_BASE_URL:http://101.47.41.149:8090}
+  mumu-agent-path: ${APP_MUMU_AGENT_PATH:}
+  admin-mode: true

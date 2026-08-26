@@ -142,7 +142,7 @@ public class StatsController {
         // 获取每日各阶段新增会话
         List<Object[]> dailyRows = conversationRepository.countDailyByFilters(merchantId, accountIdList, agentIdList, range[0], range[1]);
         for (Object[] row : dailyRows) {
-            LocalDate day = (LocalDate) row[0];
+            LocalDate day = toLocalDate(row[0]);
             Conversation.Stage stage = (Conversation.Stage) row[1];
             long count = row[2] instanceof Number n ? n.longValue() : 0L;
             String d = day.toString();
@@ -212,7 +212,7 @@ public class StatsController {
         List<Object[]> rows = messageRepository.countDailyActiveCustomersRaw(merchantId, accountIds, agentIds, start, end);
         Map<String, Long> dailyCounts = new LinkedHashMap<>();
         for (Object[] row : rows) {
-            LocalDate day = (LocalDate) row[0];
+            LocalDate day = toLocalDate(row[0]);
             Long count = (Long) row[1];
             dailyCounts.merge(day.toString(), count, Long::sum);
         }
@@ -232,12 +232,23 @@ public class StatsController {
         Map<String, Integer> result = new LinkedHashMap<>();
         List<Object[]> rows = messageRepository.countDailyActiveCustomersRaw(merchantId, accountIds, agentIds, start, end);
         for (Object[] row : rows) {
-            LocalDate day = (LocalDate) row[0];
+            LocalDate day = toLocalDate(row[0]);
             Object val = row[1];
             int count = val instanceof Number n ? n.intValue() : 0;
             result.merge(day.toString(), count, Integer::sum);
         }
         return result;
+    }
+
+
+    private LocalDate toLocalDate(Object obj) {
+        if (obj == null) return null;
+        if (obj instanceof LocalDate ld) return ld;
+        if (obj instanceof java.sql.Date sd) return sd.toLocalDate();
+        if (obj instanceof java.util.Date ud) {
+            return ud.toInstant().atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+        }
+        throw new IllegalArgumentException("Cannot convert " + obj.getClass() + " to LocalDate");
     }
 
     /** 解析日期预设为时间范围 */
