@@ -5,6 +5,12 @@ const path = require('path');
 const { execSync, execFileSync, spawn } = require('child_process');
 const NL = String.fromCharCode(10);
 
+function getTimestamp() {
+    const now = new Date();
+    const pad = (n, w=2) => String(n).padStart(w, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${String(now.getMilliseconds()).padStart(3, '0')}`;
+}
+
 // ========== 配置加载 ==========
 const CONFIG_DIR = __dirname;
 let config = {};
@@ -674,67 +680,361 @@ class MuMuController {
         return null;
     }
 
-    async getEmulators() {
-        const emulators = [];
-        try {
-            if (this.mumutoolPath) {
-                console.log(`[MuMu] 使用 mumutool 获取模拟器列表`);
-                const result = await this.execMumutool(['info', 'all']);
-                console.log(`[MuMu] mumutool info all 返回结构: errcode=${result.errcode}, 包含字段: ${Object.keys(result).join(', ')}`);
+    buildEmulatorFromVmConfig(index, vmConfig) {
+        let status = 'STOPPED';
+        let cpuCount = 1;
+        let memoryMB = 1024;
+        let name = `V${String(index + 1).padStart(3, '0')}`;
+        let adbPort = 16384 + index * 32;
 
-                if (result.errcode === 0) {
-                    const emulatorList = this.extractEmulatorList(result);
+        if (vmConfig) {
+            const isRunning = this.isProcessRunning(index);
+            status = isRunning ? 'RUNNING' : 'STOPPED';
 
-                    if (emulatorList && emulatorList.length > 0) {
-                        console.log(`[MuMu] 解析到 ${emulatorList.length} 个模拟器条目`);
-                        for (const item of emulatorList) {
-                            const index = item.index;
-                            if (index === undefined || index === null) {
-                                console.warn(`[MuMu] 跳过无 index 的条目:`, JSON.stringify(item).substring(0, 200));
-                                continue;
-                            }
-                            let status = 'STOPPED';
-                            if (item.state === 'running') {
-                                status = 'RUNNING';
-                                if (item.adb_port) {
-                                    await this.connectAdb(item.adb_port);
-                                }
-                            }
-                            let cpuCount = 1;
-                            let memoryMB = 1024;
-                            let vmConfigOk = false;
-                            try {
-                                const vmConfig = this.readVmConfig(index);
-                                if (vmConfig) {
-                                    if (vmConfig.vmCpuCount > 0) { cpuCount = vmConfig.vmCpuCount; vmConfigOk = true; }
-                                    if (vmConfig.vmMemoryOfMB > 0) { memoryMB = vmConfig.vmMemoryOfMB; vmConfigOk = true; }
-                                }
-                            } catch (e) {
-                                console.warn(`[MuMu] 读取 vm.json 失败 (index=${index}): ${e.message}`);
-                            }
-                            if (!vmConfigOk) {
-                                if (item.vmCpuCount && item.vmCpuCount > 0) cpuCount = item.vmCpuCount;
-                                if (item.vmMemoryOfMB && item.vmMemoryOfMB > 0) memoryMB = item.vmMemoryOfMB;
-                            }
-                            emulators.push({
-                                index,
-                                adbPort: item.adb_port || (16384 + index * 32),
-                                status,
-                                name: item.name || item.vmName || `V${String(index + 1).padStart(3, '0')}`,
-                                cpuCount,
-                                memoryMB
-                            });
-                        }
-                        return emulators;
-                    } else {
-                        console.warn(`[MuMu] mumutool 返回成功但未解析到模拟器列表, 原始返回:`, JSON.stringify(result).substring(0, 300));
-                    }
-                } else {
-                    console.warn(`[MuMu] mumutool 返回错误: errcode=${result.errcode}, message=${result.message || 'N/A'}`);
-                }
+            if (vmConfig.vmCpuCount && vmConfig.vmCpuCount > 0) {
+                cpuCount = vmConfig.vmCpuCount;
+            }
+            if (vmConfig.vmMemoryOfMB && vmConfig.vmMemoryOfMB > 0) {
+                memoryMB = vmConfig.vmMemoryOfMB;
+            }
+            if (vmConfig.vmName) {
+                name = vmConfig.vmName;
+            }
+            if (vmConfig.adb_port && vmConfig.adb_port > 0) {
+                adbPort = vmConfig.adb_port;
             }
 
-            // Fallback: 通过 ADB 检测
+            if (status === 'RUNNING') {
+                try {
+                    this.connectAdb(adbPort);
+                } catch (e) {}
+            }
+        }
+
+        return {
+            index,
+            adbPort,
+            status,
+            name,
+            cpuCount,
+            memoryMB
+        };
+    }
+
+    isProcessRunning(index) {
+        const os = process.platform;
+        try {
+            if (os === 'win32') {
+                const result = execSync(
+                    'tasklist /FI "IMAGENAME eq MuMuNxMain.exe" /NH 2>nul || echo NOT_FOUND',
+                    { encoding: 'utf8', shell: true, timeout: 2000 }
+                );
+                if (result.trim() === 'NOT_FOUND' || result.includes('INFO: No tasks')) {
+                    return false;
+                }
+                return true;
+            } else if (os === 'darwin') {
+                try {
+                    execSync('pgrep -x "MuMuPlayer"', { stdio: 'ignore' });
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            }
+        } catch (e) {
+            return false;
+        }
+        return false;
+    }
+
+    scanVmJsonFiles() {
+        const indices = [];
+        const os = process.platform;
+        
+        let vmsDirs = [];
+        
+        if (os === 'darwin') {
+            const homeDir = process.env.HOME || require('os').homedir();
+            vmsDirs = [
+                path.join(homeDir, 'Library', 'Application Support', 'com.netease.mumu.nemux', 'vms'),
+                path.join(homeDir, 'Library', 'Application Support', 'Netease', 'MuMuPlayer-12.0', 'vms'),
+            ];
+        } else if (os === 'win32') {
+            const userProfile = process.env.USERPROFILE || '';
+            const homeDir = require('os').homedir();
+            const appData = process.env.APPDATA || '';
+            const localAppData = process.env.LOCALAPPDATA || '';
+            
+            vmsDirs = [];
+            
+            if (userProfile) {
+                vmsDirs.push(path.join(userProfile, 'Documents', 'MuMuPlayer', 'vms'));
+                vmsDirs.push(path.join(userProfile, 'Documents', 'MuMuPlayer-12.0', 'vms'));
+                vmsDirs.push(path.join(userProfile, 'Documents', 'MuMu', 'vms'));
+                vmsDirs.push(path.join(userProfile, 'Documents', 'Netease', 'MuMuPlayer', 'vms'));
+                vmsDirs.push(path.join(userProfile, 'Documents', 'Netease', 'MuMuPlayer-12.0', 'vms'));
+            }
+            if (homeDir) {
+                vmsDirs.push(path.join(homeDir, 'Documents', 'MuMuPlayer', 'vms'));
+                vmsDirs.push(path.join(homeDir, 'Documents', 'MuMuPlayer-12.0', 'vms'));
+            }
+            
+            if (appData) {
+                vmsDirs.push(path.join(appData, 'Netease', 'MuMuPlayer', 'vms'));
+                vmsDirs.push(path.join(appData, 'Netease', 'MuMuPlayer-12.0', 'vms'));
+            }
+            if (localAppData) {
+                vmsDirs.push(path.join(localAppData, 'Netease', 'MuMuPlayer', 'vms'));
+                vmsDirs.push(path.join(localAppData, 'Netease', 'MuMuPlayer-12.0', 'vms'));
+            }
+            
+            let mumuPath = this.mumuPath || '';
+            if (mumuPath && fs.existsSync(mumuPath)) {
+                let installDir = mumuPath;
+                if (fs.statSync(mumuPath).isFile()) {
+                    installDir = path.dirname(mumuPath);
+                }
+                if (path.basename(installDir).toLowerCase() === 'nx_main') {
+                    installDir = path.dirname(installDir);
+                }
+                vmsDirs.push(path.join(installDir, 'vms'));
+                vmsDirs.push(path.join(installDir, 'nx_main', 'vms'));
+                const parentDir = path.dirname(installDir);
+                if (parentDir) {
+                    vmsDirs.push(path.join(parentDir, 'MuMuPlayer', 'vms'));
+                    vmsDirs.push(path.join(parentDir, 'MuMuPlayer-12.0', 'vms'));
+                    vmsDirs.push(path.join(parentDir, 'Netease', 'MuMuPlayer', 'vms'));
+                    vmsDirs.push(path.join(parentDir, 'Netease', 'MuMuPlayer-12.0', 'vms'));
+                }
+            }
+            
+            vmsDirs = [...new Set(vmsDirs.filter(d => d && d.length > 0))];
+            
+            console.log(`[MuMu] 搜索 ${vmsDirs.length} 个可能的 vms 目录...`);
+        }
+        
+        for (const vmsDir of vmsDirs) {
+            if (fs.existsSync(vmsDir) && fs.statSync(vmsDir).isDirectory()) {
+                const dirs = fs.readdirSync(vmsDir).filter(d => {
+                    const fullPath = path.join(vmsDir, d);
+                    try {
+                        return fs.statSync(fullPath).isDirectory();
+                    } catch (e) { return false; }
+                });
+                console.log(`[MuMu] 在 ${vmsDir} 找到 ${dirs.length} 个模拟器目录`);
+                
+                for (const dirName of dirs) {
+                    const index = parseInt(dirName);
+                    if (!isNaN(index) && !indices.includes(index)) {
+                        const vmDirPath = path.join(vmsDir, dirName);
+                        
+                        const possiblePaths = [
+                            path.join(vmDirPath, 'vm.json'),
+                            path.join(vmDirPath, 'setting', 'vm.json'),
+                            path.join(vmDirPath, 'config', 'vm.json'),
+                        ];
+                        const hasVmJson = possiblePaths.some(p => fs.existsSync(p));
+                        
+                        if (hasVmJson) {
+                            indices.push(index);
+                            console.log(`[MuMu] 找到模拟器 ${index}: vm.json 存在`);
+                        } else {
+                            try {
+                                const contents = fs.readdirSync(vmDirPath);
+                                if (contents.length > 0) {
+                                    const hasMumuFiles = contents.some(f => 
+                                        f.startsWith('vm_') || 
+                                        f.endsWith('.img') || 
+                                        f === 'setting' ||
+                                        f === 'config' ||
+                                        f.includes('data')
+                                    );
+                                    if (hasMumuFiles || contents.length >= 2) {
+                                        indices.push(index);
+                                        console.log(`[MuMu] 找到模拟器 ${index}: 目录有 ${contents.length} 个内容 (无vm.json)`);
+                                    }
+                                }
+                            } catch (e) {
+                            }
+                        }
+                    }
+                }
+                if (indices.length > 0) break;
+            }
+        }
+        
+        return indices;
+    }
+
+    async getEmulators() {
+        const emulators = [];
+        const os = process.platform;
+        
+        try {
+            if (os === 'win32') {
+                console.log('[MuMu] Windows平台: 使用文件扫描方式获取模拟器列表');
+                const indices = this.scanVmJsonFiles();
+                console.log(`[MuMu] 扫描到 ${indices.length} 个模拟器索引: ${indices.join(',')}`);
+                
+                for (const index of indices) {
+                    try {
+                        const vmConfig = this.readVmConfig(index);
+                        const emulator = this.buildEmulatorFromVmConfig(index, vmConfig);
+                        if (emulator) {
+                            emulators.push(emulator);
+                        }
+                    } catch (e) {
+                        console.warn(`[MuMu] 获取模拟器 ${index} 详情失败: ${e.message}`);
+                    }
+                }
+                
+                if (emulators.length === 0 && this.mumutoolPath) {
+                    console.log('[MuMu] 文件扫描无结果，尝试 mumu-cli 命令...');
+                    try {
+                        const result = await this.execMumutool(['shell'], 3000);
+                        console.log(`[MuMu] shell 命令返回: errcode=${result.errcode}`);
+                    } catch (e) {
+                        console.warn(`[MuMu] mumu-cli 命令失败: ${e.message}`);
+                    }
+                    
+                    if (emulators.length === 0) {
+                        console.log('[MuMu] 尝试遍历 0-31 索引...');
+                        for (let i = 0; i < 32; i++) {
+                            try {
+                                const vmConfig = this.readVmConfig(i);
+                                if (vmConfig) {
+                                    const emulator = this.buildEmulatorFromVmConfig(i, vmConfig);
+                                    if (emulator) {
+                                        emulators.push(emulator);
+                                        console.log(`[MuMu] 通过索引 ${i} 找到模拟器`);
+                                    }
+                                }
+                            } catch (e) {
+                            }
+                        }
+                    }
+                }
+                
+                console.log(`[MuMu] Windows获取到 ${emulators.length} 个模拟器`);
+                return emulators;
+            }
+            
+            if (this.mumutoolPath) {
+                console.log(`[MuMu] 使用 mumutool 获取模拟器列表`);
+                
+                let emulatorIndices = [];
+                let emulatorDetails = {};
+                
+                try {
+                    const listResult = await this.execMumutool(['list']);
+                    console.log(`[MuMu] list 命令返回: errcode=${listResult.errcode}`);
+                    
+                    if (listResult.errcode === 0 && listResult.return) {
+                        let listData = listResult.return;
+                        if (typeof listData === 'string') {
+                            try { listData = JSON.parse(listData); } catch(e) {}
+                        }
+                        
+                        if (Array.isArray(listData)) {
+                            emulatorIndices = listData.map(item => {
+                                if (typeof item === 'object' && item.index !== undefined) return item.index;
+                                return parseInt(item);
+                            }).filter(i => !isNaN(i));
+                        } else if (listData && listData.results && Array.isArray(listData.results)) {
+                            emulatorIndices = listData.results.map(item => item.index).filter(i => i !== undefined && !isNaN(i));
+                        } else if (listData && typeof listData === 'object') {
+                            Object.keys(listData).forEach(key => {
+                                const idx = parseInt(key);
+                                if (!isNaN(idx)) emulatorIndices.push(idx);
+                            });
+                        }
+                    }
+                } catch (listErr) {
+                    console.warn(`[MuMu] list 命令失败: ${listErr.message}, 尝试其他方式`);
+                }
+                
+                if (emulatorIndices.length === 0) {
+                    console.log(`[MuMu] list 命令无结果，尝试扫描 vm.json 文件...`);
+                    emulatorIndices = this.scanVmJsonFiles();
+                    console.log(`[MuMu] 扫描到 ${emulatorIndices.length} 个模拟器索引: ${emulatorIndices.join(',')}`);
+                }
+                
+                if (emulatorIndices.length === 0) {
+                    console.log(`[MuMu] 扫描无结果，尝试遍历 info 命令...`);
+                    for (let i = 0; i < 32; i++) {
+                        try {
+                            const infoResult = await this.execMumutool(['info', String(i)]);
+                            if (infoResult.errcode === 0 && infoResult.return) {
+                                emulatorIndices.push(i);
+                                if (typeof infoResult.return === 'object' && infoResult.return !== null) {
+                                    emulatorDetails[i] = infoResult.return;
+                                }
+                            }
+                        } catch (e) {
+                            break;
+                        }
+                    }
+                    console.log(`[MuMu] 通过 info 命令遍历到 ${emulatorIndices.length} 个模拟器`);
+                }
+                
+                for (const index of emulatorIndices) {
+                    try {
+                        let detail = emulatorDetails[index];
+                        if (!detail) {
+                            const infoResult = await this.execMumutool(['info', String(index)]);
+                            if (infoResult.errcode === 0 && infoResult.return) {
+                                detail = infoResult.return;
+                            }
+                        }
+                        
+                        let status = 'STOPPED';
+                        let cpuCount = 1;
+                        let memoryMB = 1024;
+                        let name = `V${String(index + 1).padStart(3, '0')}`;
+                        let adbPort = 16384 + index * 32;
+                        
+                        if (detail) {
+                            if (detail.state === 'running' || detail.status === 'running') {
+                                status = 'RUNNING';
+                                if (detail.adb_port) {
+                                    adbPort = detail.adb_port;
+                                    try { await this.connectAdb(adbPort); } catch(e) {}
+                                }
+                            }
+                            if (detail.vmName || detail.name) {
+                                name = detail.vmName || detail.name;
+                            }
+                            if (detail.vmCpuCount && detail.vmCpuCount > 0) cpuCount = detail.vmCpuCount;
+                            if (detail.vmMemoryOfMB && detail.vmMemoryOfMB > 0) memoryMB = detail.vmMemoryOfMB;
+                            if (detail.adb_port) adbPort = detail.adb_port;
+                        }
+                        
+                        try {
+                            const vmConfig = this.readVmConfig(index);
+                            if (vmConfig) {
+                                if (vmConfig.vmCpuCount > 0) cpuCount = vmConfig.vmCpuCount;
+                                if (vmConfig.vmMemoryOfMB > 0) memoryMB = vmConfig.vmMemoryOfMB;
+                                if (vmConfig.vmName) name = vmConfig.vmName;
+                            }
+                        } catch (e) {}
+                        
+                        emulators.push({
+                            index,
+                            adbPort,
+                            status,
+                            name,
+                            cpuCount,
+                            memoryMB
+                        });
+                    } catch (e) {
+                        console.warn(`[MuMu] 获取模拟器 ${index} 详情失败: ${e.message}`);
+                    }
+                }
+                
+                console.log(`[MuMu] 获取到 ${emulators.length} 个模拟器`);
+                return emulators;
+            }
+
             const devicesOutput = await this.execAdb(['devices']);
             const lines = devicesOutput.split(NL).slice(1);
             
@@ -776,74 +1076,33 @@ class MuMuController {
             console.warn('[MuMu] 获取模拟器列表失败:', e.message);
         }
         
-        // 最终后备方案：扫描 vms 目录下的 vm.json 文件
         if (emulators.length === 0) {
             try {
                 console.log('[MuMu] 尝试通过扫描 vm.json 文件获取模拟器列表...');
-                const os = process.platform;
-                let vmsDirs = [];
+                const indices = this.scanVmJsonFiles();
                 
-                if (os === 'darwin') {
-                    const homeDir = process.env.HOME || require('os').homedir();
-                    vmsDirs = [
-                        path.join(homeDir, 'Library', 'Application Support', 'com.netease.mumu.nemux', 'vms'),
-                        path.join(homeDir, 'Library', 'Application Support', 'Netease', 'MuMuPlayer-12.0', 'vms'),
-                    ];
-                } else if (os === 'win32') {
-                    let mumuBasePath = this.mumuPath || '';
-                    if (mumuBasePath && fs.existsSync(mumuBasePath) && fs.statSync(mumuBasePath).isFile()) {
-                        mumuBasePath = path.dirname(mumuBasePath);
-                    }
-                    
-                    // Windows 下 MuMu 模拟器数据通常在用户目录下
-                    const userProfile = process.env.USERPROFILE || '';
-                    const homeDir = require('os').homedir();
-                    
-                    vmsDirs = [
-                        // 安装目录下的 vms
-                        path.join(mumuBasePath, 'vms'),
-                        'C:\Program Files\Netease\MuMu\vms',
-                        'C:\Program Files\Netease\MuMuPlayer-12.0\vms',
-                        // 用户目录下的 vms（Windows 下常用）
-                        path.join(homeDir, 'Documents', 'MuMuPlayer', 'vms'),
-                        path.join(homeDir, 'Documents', 'Netease', 'MuMuPlayer-12.0', 'vms'),
-                        path.join(userProfile, 'Documents', 'MuMuPlayer', 'vms'),
-                        path.join(userProfile, 'Documents', 'Netease', 'MuMuPlayer-12.0', 'vms'),
-                    ];
-                }
-                
-                for (const vmsDir of vmsDirs) {
-                    if (fs.existsSync(vmsDir) && fs.statSync(vmsDir).isDirectory()) {
-                        const dirs = fs.readdirSync(vmsDir).filter(d => {
-                            const fullPath = path.join(vmsDir, d);
-                            try {
-                                return fs.statSync(fullPath).isDirectory();
-                            } catch (e) { return false; }
-                        });
-                        console.log(`[MuMu] 在 ${vmsDir} 找到 ${dirs.length} 个模拟器目录`);
-                        
-                        for (const dirName of dirs) {
-                            try {
-                                const vmJsonPath = path.join(vmsDir, dirName, 'vm.json');
-                                if (fs.existsSync(vmJsonPath)) {
-                                    const vmConfig = JSON.parse(fs.readFileSync(vmJsonPath, 'utf8'));
-                                    const index = parseInt(dirName);
-                                    if (!isNaN(index) && !emulators.find(e => e.index === index)) {
-                                        emulators.push({
-                                            index,
-                                            adbPort: 16384 + index * 32,
-                                            status: 'STOPPED',
-                                            name: vmConfig.vmName || `V${String(index + 1).padStart(3, '0')}`,
-                                            cpuCount: vmConfig.vmCpuCount || 1,
-                                            memoryMB: vmConfig.vmMemoryOfMB || 1024
-                                        });
-                                    }
-                                }
-                            } catch (e) {
+                for (const index of indices) {
+                    try {
+                        let cpuCount = 1;
+                        let memoryMB = 1024;
+                        let name = `V${String(index + 1).padStart(3, '0')}`;
+                        try {
+                            const vmConfig = this.readVmConfig(index);
+                            if (vmConfig) {
+                                if (vmConfig.vmCpuCount > 0) cpuCount = vmConfig.vmCpuCount;
+                                if (vmConfig.vmMemoryOfMB > 0) memoryMB = vmConfig.vmMemoryOfMB;
+                                if (vmConfig.vmName) name = vmConfig.vmName;
                             }
-                        }
-                        if (emulators.length > 0) break;
-                    }
+                        } catch (e) {}
+                        emulators.push({
+                            index,
+                            adbPort: 16384 + index * 32,
+                            status: 'STOPPED',
+                            name,
+                            cpuCount,
+                            memoryMB
+                        });
+                    } catch (e) {}
                 }
                 console.log(`[MuMu] 通过vm.json扫描找到 ${emulators.length} 个模拟器`);
             } catch (e) {
@@ -864,10 +1123,26 @@ class MuMuController {
                 // 优先通过 mumutool 检测模拟器
                 if (this.mumutoolPath && fs.existsSync(this.mumutoolPath)) {
                     try {
-                        const result = await this.execMumutool(['info', 'all'], 5000);
-                        if (result.errcode === 0 && result.return && result.return.results && result.return.results.length > 0) {
-                            console.log('[MuMu] 通过mumutool检测到模拟器运行中');
-                            return true;
+                        // Windows 下 info all 不可用，改用 list 命令或检测进程
+                        const result = await this.execMumutool(['list'], 5000);
+                        if (result.errcode === 0 && result.return) {
+                            let listData = result.return;
+                            if (typeof listData === 'string') {
+                                try { listData = JSON.parse(listData); } catch(e) {}
+                            }
+                            if (Array.isArray(listData) && listData.length > 0) {
+                                console.log('[MuMu] 通过mumutool list检测到模拟器');
+                                return true;
+                            }
+                            if (listData && listData.results && Array.isArray(listData.results) && listData.results.length > 0) {
+                                console.log('[MuMu] 通过mumutool list检测到模拟器');
+                                return true;
+                            }
+                            // 如果 list 返回了数据（非空对象），也认为有模拟器
+                            if (listData && typeof listData === 'object' && Object.keys(listData).length > 0) {
+                                console.log('[MuMu] 通过mumutool list检测到模拟器');
+                                return true;
+                            }
                         }
                     } catch (e1) {
                         console.warn('[MuMu] mumutool检测失败:', e1.message);
@@ -975,13 +1250,33 @@ class MuMuController {
             }
 
             if (vmDir) {
-                const configFile = path.join(vmDir, 'setting', 'vm.json');
-                if (fs.existsSync(configFile)) {
-                    const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+                const configPaths = [
+                    path.join(vmDir, 'setting', 'vm.json'),
+                    path.join(vmDir, 'config', 'vm.json'),
+                    path.join(vmDir, 'vm.json'),
+                ];
+                
+                for (const configFile of configPaths) {
+                    if (fs.existsSync(configFile)) {
+                        try {
+                            const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+                            return {
+                                vmCpuCount: config.vmCpuCount || 0,
+                                vmMemoryOfMB: config.vmMemoryOfMB || 0,
+                                vmName: config.vmName || ''
+                            };
+                        } catch (e) {
+                            console.warn(`[MuMu] 读取配置文件失败: ${configFile}, ${e.message}`);
+                        }
+                    }
+                }
+                
+                if (fs.existsSync(vmDir)) {
+                    console.log(`[MuMu] 模拟器 ${index} 无配置文件，使用默认值`);
                     return {
-                        vmCpuCount: config.vmCpuCount || 0,
-                        vmMemoryOfMB: config.vmMemoryOfMB || 0,
-                        vmName: config.vmName || ''
+                        vmCpuCount: 1,
+                        vmMemoryOfMB: 1024,
+                        vmName: `V${String(index + 1).padStart(3, '0')}`
                     };
                 }
             }
@@ -1327,8 +1622,9 @@ function stopHeartbeat() {
 function send(msg) {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify(msg));
+        const ts = getTimestamp();
         if (msg.type === 'TASK_RESULT') {
-            console.log(`[Agent] 发送任务结果: type=${msg.type}, status=${msg.params?.status}, taskId=${msg.taskId}`);
+            console.log(`[${ts}] [Agent] 发送任务结果: type=${msg.type}, status=${msg.params?.status}, taskId=${msg.taskId}`);
         }
     } else {
         console.warn(`[Agent] 发送消息失败: WebSocket 未连接, type=${msg.type}`);
@@ -1546,78 +1842,116 @@ async function handleMessage(msg) {
                         
                         console.log(`[Agent] 使用 mumutool ${createArgs.join(' ')} 创建 ${neededCount} 个模拟器`);
                         const result = await mumu.execMumutool(createArgs);
-                        console.log(`[Agent] mumutool create 结果: errcode=${result.errcode}, message=${result.message}`);
+                        console.log(`[Agent] mumutool create 结果: ${JSON.stringify(result).substring(0, 200)}`);
                         
-                        if (result.errcode === 0 && result.return) {
-                            const createdResults = result.return.results || [];
+                        // 解析创建结果 - 支持多种格式
+                        // 格式1: {"0":{"errcode":0}, "1":{"errcode":0}} (以索引为key的对象)
+                        // 格式2: {errcode: 0, return: {results: [...]}}
+                        // 格式3: {errcode: 0}
+                        let createdIndices = [];
+                        
+                        if (result && typeof result === 'object') {
+                            // 检查是否是 {0: {...}, 1: {...}} 格式
+                            const keys = Object.keys(result);
+                            const hasNumericKeys = keys.length > 0 && keys.every(k => !isNaN(parseInt(k)));
                             
-                            // 减少等待时间 - mumutool create 完成后文件系统已就绪
-                            await new Promise(r => setTimeout(r, 200));
-                            
-                            // 使用 --setting 参数一次性配置（与后端 EmulatorService 保持一致）
-                            const configTasks = createdResults.map(async (item) => {
-                                const vmName = 'V' + String(item.index + 1).padStart(3, '0');
-                                console.log('[Agent] 为模拟器 index=' + item.index + ' 配置: 名称=' + vmName + ', CPU=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
-                                
-                                // 使用 --setting 参数一次性配置
-                                const settingObj = { vmName: vmName };
-                                if (cpuCores > 0) settingObj.vmCpuCount = cpuCores;
-                                if (memoryGb > 0) settingObj.vmMemoryOfMB = memoryGb * 1024;
-                                const settingJson = JSON.stringify(settingObj);
-                                
-                                try {
-                                    const cfgResult = await mumu.execMumutool(['config', String(item.index), '--setting', settingJson]);
-                                    if (cfgResult.errcode === 0) {
-                                        console.log('[Agent] 配置模拟器 ' + vmName + ' 成功: cpu=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
+                            if (hasNumericKeys) {
+                                // 格式1: 以索引为key的对象
+                                console.log('[Agent] 解析 create 结果: 检测到以索引为key的对象格式');
+                                for (const key of keys) {
+                                    const idx = parseInt(key);
+                                    const val = result[key];
+                                    if (val && val.errcode === 0) {
+                                        createdIndices.push(idx);
+                                        console.log(`[Agent] 创建模拟器 index=${idx} 成功`);
                                     } else {
-                                        console.warn('[Agent] 配置模拟器失败: ' + cfgResult.message);
-                                        // 回退：逐字段配置
-                                        try {
-                                            if (cpuCores > 0) {
-                                                await mumu.execMumutool(['config', String(item.index), 'vmCpuCount', String(cpuCores)]);
-                                            }
-                                            if (memoryGb > 0) {
-                                                await mumu.execMumutool(['config', String(item.index), 'vmMemoryOfMB', String(memoryGb * 1024)]);
-                                            }
-                                            await mumu.execMumutool(['config', String(item.index), 'vmName', vmName]);
-                                            console.log('[Agent] 回退配置成功: ' + vmName);
-                                        } catch (fallbackErr) {
-                                            console.warn('[Agent] 回退配置也失败: ' + fallbackErr.message);
-                                        }
+                                        console.warn(`[Agent] 创建模拟器 index=${idx} 失败: ${val ? val.errmsg : '未知错误'}`);
                                     }
-                                } catch (e) {
-                                    console.warn('[Agent] 配置模拟器异常: ' + e.message);
                                 }
-                                
-                                // 验证配置（仅日志，不影响结果）
-                                try {
-                                    const verifyResult = await mumu.execMumutool(['info', String(item.index)]);
-                                    console.log('[Agent] 验证模拟器 index=' + item.index + ': ' + JSON.stringify(verifyResult).substring(0, 200));
-                                } catch (e) {
-                                    console.warn('[Agent] 验证模拟器失败: ' + e.message);
-                                }
-                                
-                                return { index: item.index, success: true, name: vmName, cpuCores, memoryGb };
-                            });
-                            // 并行执行所有配置任务
-                            const configResults = await Promise.allSettled(configTasks);
-                            
-                            // 收集结果
-                            for (const configResult of configResults) {
-                                if (configResult.status === 'fulfilled') {
-                                    const { index, name } = configResult.value;
-                                    successCount++;
-                                    results.push({ index, success: true, message: '创建成功', name });
-                                    console.log(`[Agent] 模拟器 index=${index} 创建完成: ${name}`);
-                                } else {
-                                    failCount++;
-                                    console.warn(`[Agent] 模拟器创建失败: ${configResult.reason}`);
-                                }
+                            } else if (result.errcode === 0 && result.return) {
+                                // 格式2: {errcode: 0, return: {results: [...]}}
+                                console.log('[Agent] 解析 create 结果: 检测到标准格式');
+                                const createdResults = result.return.results || [];
+                                createdIndices = createdResults.map(item => item.index).filter(i => i !== undefined);
+                            } else if (result.errcode === 0) {
+                                // 格式3: 只有 errcode: 0，没有具体信息
+                                console.log('[Agent] 解析 create 结果: 成功但无具体索引信息');
+                                // 需要通过扫描获取新创建的模拟器索引
+                            } else {
+                                console.warn(`[Agent] 创建失败: ${result.message || JSON.stringify(result)}`);
+                                failCount = neededCount;
+                                send({
+                                    type: 'TASK_RESULT',
+                                    taskId: msg.taskId,
+                                    params: { status: 'FAILED' },
+                                    data: { success: false, message: result.message || '创建失败', successCount: 0, failCount: neededCount }
+                                });
+                                break;
                             }
-                        } else {
-                            failCount = neededCount;
-                            results.push({ index: -1, success: false, message: result.message || '创建失败' });
-                            console.log(`[Agent] 模拟器创建失败: ${result.message}`);
+                        }
+                        
+                        // 等待文件系统就绪
+                        await new Promise(r => setTimeout(r, 200));
+                        
+                        // 使用解析出的索引进行配置
+                        const configTasks = createdIndices.map(async (index) => {
+                            const vmName = 'V' + String(index + 1).padStart(3, '0');
+                            console.log('[Agent] 为模拟器 index=' + index + ' 配置: 名称=' + vmName + ', CPU=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
+                            
+                            // 使用 --setting 参数一次性配置
+                            const settingObj = { vmName: vmName };
+                            if (cpuCores > 0) settingObj.vmCpuCount = cpuCores;
+                            if (memoryGb > 0) settingObj.vmMemoryOfMB = memoryGb * 1024;
+                            const settingJson = JSON.stringify(settingObj);
+                            
+                            try {
+                                const cfgResult = await mumu.execMumutool(['config', String(index), '--setting', settingJson]);
+                                if (cfgResult.errcode === 0) {
+                                    console.log('[Agent] 配置模拟器 ' + vmName + ' 成功: cpu=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
+                                } else {
+                                    console.warn('[Agent] 配置模拟器失败: ' + cfgResult.message);
+                                    // 回退：逐字段配置
+                                    try {
+                                        if (cpuCores > 0) {
+                                            await mumu.execMumutool(['config', String(index), 'vmCpuCount', String(cpuCores)]);
+                                        }
+                                        if (memoryGb > 0) {
+                                            await mumu.execMumutool(['config', String(index), 'vmMemoryOfMB', String(memoryGb * 1024)]);
+                                        }
+                                        await mumu.execMumutool(['config', String(index), 'vmName', vmName]);
+                                        console.log('[Agent] 回退配置成功: ' + vmName);
+                                    } catch (fallbackErr) {
+                                        console.warn('[Agent] 回退配置也失败: ' + fallbackErr.message);
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('[Agent] 配置模拟器异常: ' + e.message);
+                            }
+                            
+                            // 验证配置（仅日志，不影响结果）
+                            try {
+                                const verifyResult = await mumu.execMumutool(['info', String(index)]);
+                                console.log('[Agent] 验证模拟器 index=' + index + ': ' + JSON.stringify(verifyResult).substring(0, 200));
+                            } catch (e) {
+                                console.warn('[Agent] 验证模拟器失败: ' + e.message);
+                            }
+                            
+                            return { index, success: true, name: vmName, cpuCores, memoryGb };
+                        });
+                        // 并行执行所有配置任务
+                        const configResults = await Promise.allSettled(configTasks);
+                        
+                        // 收集结果
+                        for (const configResult of configResults) {
+                            if (configResult.status === 'fulfilled') {
+                                const { index, name } = configResult.value;
+                                successCount++;
+                                results.push({ index, success: true, message: '创建成功', name });
+                                console.log(`[Agent] 模拟器 index=${index} 创建完成: ${name}`);
+                            } else {
+                                failCount++;
+                                console.warn(`[Agent] 模拟器创建失败: ${configResult.reason}`);
+                            }
                         }
                     } else {
                         // Fallback: 使用系统命令逐个启动（macOS用open，Windows用start）
@@ -1976,9 +2310,10 @@ function main() {
         // 忽略读取错误
     }
     
-    console.log('========================================');
-    console.log(`  MuMu Agent ${agentVersion}`);
-    console.log('========================================');
+    const ts = getTimestamp();
+    console.log(`[${ts}] ========================================`);
+    console.log(`[${ts}]  MuMu Agent ${agentVersion}`);
+    console.log(`[${ts}] ========================================`);
     if (!loadConfig()) {
         console.error('[Agent] 请创建 config.json 配置文件');
         console.error('[Agent] 模板:');

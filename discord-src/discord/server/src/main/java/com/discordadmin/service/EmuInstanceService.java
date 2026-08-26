@@ -109,10 +109,12 @@ public class EmuInstanceService {
         try {
             List<Map<String, Object>> physicalList = null;
             if (!localMode) {
+                // Agent模式: 必须通过 Agent 获取，不能回退到本地模式
                 physicalList = webSocketService.getEmulatorsFromAgent(userId);
-                // 如果 Agent 不在线或返回为空，回退到本地模式
-                if (physicalList == null || physicalList.isEmpty()) {
-                    physicalList = mumuClientService.getAllEmulators();
+                if (physicalList == null) {
+                    // Agent 离线时，跳过物理状态合并，直接返回数据库数据
+                    log.warn("Agent模式: Agent返回null（可能离线），跳过物理状态合并");
+                    physicalList = new ArrayList<>();
                 }
             } else {
                 physicalList = mumuClientService.getAllEmulators();
@@ -282,10 +284,9 @@ public class EmuInstanceService {
                     .filter(a -> userId.equals(a.getUserId()))
                     .collect(Collectors.toList());
                 log.info("未指定 deviceId, 按用户 {} 过滤 Agent, 匹配 {} 个", userId, targetAgents.size());
-                // 如果没有匹配的 Agent，回退到第一个在线 Agent（兼容单 Agent 场景）
-                if (targetAgents.isEmpty() && !onlineAgents.isEmpty()) {
-                    targetAgents = Collections.singletonList(onlineAgents.get(0));
-                    log.info("未找到用户专属 Agent, 回退到第一个在线 Agent: {}", targetAgents.get(0).getDeviceId());
+                // 不再回退到其他用户的Agent，防止跨商户操作
+                if (targetAgents.isEmpty()) {
+                    log.warn("未找到当前用户的在线 Agent, userId={}", userId);
                 }
             }
             for (AgentRegistration agent : targetAgents) {
@@ -2419,10 +2420,15 @@ public class EmuInstanceService {
             
             List<Map<String, Object>> physicalList = null;
             if (!localMode) {
+                // Agent模式: 必须通过 Agent 获取，不能回退到本地模式
+                // 本地模式获取的是服务器本地的模拟器，会导致跨商户数据混淆
                 physicalList = webSocketService.getEmulatorsFromAgent(userId);
-                if (physicalList == null || physicalList.isEmpty()) {
-                    physicalList = mumuClientService.getAllEmulators();
+                if (physicalList == null) {
+                    log.warn("Agent模式: Agent返回null（可能离线），不回退到本地模式，返回空列表");
+                    // Agent 离线时返回空列表，不显示任何差异
+                    return new ArrayList<>();
                 }
+                log.info("Agent模式: 从Agent获取到 {} 个物理模拟器", physicalList.size());
             } else {
                 physicalList = mumuClientService.getAllEmulators();
             }
@@ -2472,10 +2478,13 @@ public class EmuInstanceService {
         try {
             List<Map<String, Object>> physicalList = null;
             if (!localMode) {
+                // Agent模式: 必须通过 Agent 获取，不能回退到本地模式
                 physicalList = webSocketService.getEmulatorsFromAgent(userId);
-                if (physicalList == null || physicalList.isEmpty()) {
-                    physicalList = mumuClientService.getAllEmulators();
+                if (physicalList == null) {
+                    log.warn("Agent模式: Agent返回null（可能离线），无法创建记录");
+                    return createdList;  // 返回空列表，不创建任何记录
                 }
+                log.info("Agent模式: 从Agent获取到 {} 个物理模拟器", physicalList.size());
             } else {
                 physicalList = mumuClientService.getAllEmulators();
             }
