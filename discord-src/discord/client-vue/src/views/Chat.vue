@@ -1250,14 +1250,16 @@ const originalBelowExpanded = ref({})
 
 const targetLang = ref('zh')  // 目标语言：发送消息时自动翻译成好友的语言
 
-// 目标语言标签（用于翻译预览面板显示）
-const targetLangLabel = computed(() => {
-  const lang = supportedLanguages.find(l => l.code === targetLang.value)
-  return lang ? lang.name : targetLang.value
-})
+const supportedLanguages = ref([])  // AI 翻译模型支持的所有语种
 const readTranslateLang = 'zh'  // 阅读翻译：一键翻译时固定翻译成中文
 const detectedLang = ref('未知')
-const supportedLanguages = ref([])  // AI 翻译模型支持的所有语种
+
+// 目标语言标签（用于翻译预览面板显示）
+const targetLangLabel = computed(() => {
+  if (!Array.isArray(supportedLanguages.value)) return targetLang.value
+  const lang = supportedLanguages.value.find(l => l.code === targetLang.value)
+  return lang ? lang.name : targetLang.value
+})
 let userChangedTargetLang = false  // 标记用户是否手动修改过目标语言
 const languageDetectionMode = ref('first_message')  // 语言检测模式：first_message / every_message
 let firstMessageDetectedLang = null  // 好友首次消息检测到的语言
@@ -1266,9 +1268,13 @@ let firstMessageDetectedLang = null  // 好友首次消息检测到的语言
 async function loadSupportedLanguages() {
   try {
     const res = await getSupportedLanguages()
-    if (res?.data && Array.isArray(res.data)) {
-      supportedLanguages.value = res.data
-    }
+    // 兼容多种返回结构：{data: [...]} / {data: {items: [...]}} / 直接 [...]
+    let arr = null
+    if (Array.isArray(res)) arr = res
+    else if (Array.isArray(res?.data)) arr = res.data
+    else if (Array.isArray(res?.data?.items)) arr = res.data.items
+    else if (Array.isArray(res?.data?.languages)) arr = res.data.languages
+    if (arr) supportedLanguages.value = arr
   } catch (e) {
     console.warn('加载支持语种失败:', e)
   }
@@ -2940,12 +2946,17 @@ async function selectConversation(c) {
   }
   // 重置 lastCount：避免"旧会话 lastCount>0 新会话 currentMessages.length<旧值"导致 watcher 不再触发自动滚动
   lastCount = (conversations.currentMessages || []).length
-  // 连续 3 帧重试：兼容消息条目渲染/异步资源高度变化后仍能滚到真正的底部
-  const forceBottom = () => scrollToBottom({ force: true, retries: 0 })
+  // 切换会话后持续 2 秒反复滚到底部，覆盖消息渲染/图片加载/布局重排等异步高度变化
+  let _retryCount = 0
+  const _keepScrolling = () => {
+    scrollToBottom({ force: true, retries: 0 })
+    _retryCount++
+    if (_retryCount < 20) {
+      setTimeout(_keepScrolling, 100)
+    }
+  }
   await nextTick()
-  forceBottom()
-  setTimeout(forceBottom, 80)
-  setTimeout(forceBottom, 220)
+  _keepScrolling()
 }
 
 async function loadUserProfile(c) {
