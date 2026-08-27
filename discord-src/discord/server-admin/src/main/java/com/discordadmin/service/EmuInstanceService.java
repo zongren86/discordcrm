@@ -1600,80 +1600,120 @@ public class EmuInstanceService {
         try {
             // 1. 获取物理模拟器的 0-based index
             int mumuTargetIndex = index - 1; // 数据库是1-based，物理是0-based
-            boolean physicalExists;
+
+            boolean agentOnline = true;
+            boolean physicalExists = false;
 
             if (localMode) {
-                // 本地模式：直接查找
                 mumuTargetIndex = findMumuIndexByNameOrIndex(instance.getName(), index);
                 physicalExists = mumuTargetIndex >= 0;
             } else {
-                // Agent 模式：通过 Agent 检查是否存在
-                physicalExists = webSocketService.emulatorExistsOnAgent(userId, mumuTargetIndex);
-            }
-
-            log.info("模拟器 #{} 物理状态: {}, mumuTargetIndex(0-based)={}, localMode={}", index, physicalExists ? "存在" : "不存在", mumuTargetIndex, localMode);
-
-            // 2. 先停止（不管 physicalExists，Agent 可能误判，都尝试一下）
-            try {
-                if (localMode) {
-                    mumuClientService.stopEmulator(index);
+                // 先检查 Agent 是否在线
+                java.util.List<?> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
+                agentOnline = onlineAgents != null && !onlineAgents.isEmpty();
+                if (!agentOnline) {
+                    log.warn("模拟器 #{}: Agent 离线，无法检查/删除物理实例", index);
+                    actions.add("Agent 离线");
                 } else {
-                    webSocketService.stopEmulatorOnAgent(userId, mumuTargetIndex);
+                    // Agent 在线，检查物理实例是否存在
+                    physicalExists = webSocketService.emulatorExistsOnAgent(userId, mumuTargetIndex);
                 }
-                log.info("模拟器 #{} 停止命令已发送", index);
-                actions.add("已发送停止命令");
-                Thread.sleep(1500);
-            } catch (Exception e) {
-                log.warn("停止物理模拟器 #{} 失败: {}，继续删除", index, e.getMessage());
-                actions.add("停止失败: " + e.getMessage());
             }
 
-            // 3. 删除物理模拟器（始终尝试，即使 physicalExists=false，防止 Agent 误判）
+            log.info("模拟器 #{} 状态: agentOnline={}, physicalExists={}, mumuTargetIndex(0-based)={}, localMode={}",
+                    index, agentOnline, physicalExists, mumuTargetIndex, localMode);
+
             boolean physicalDeleted = false;
-            try {
-                boolean deleteOk;
-                if (localMode) {
-                    mumuClientService.deleteEmulator(index);
-                    deleteOk = true;
-                } else {
-                    Map<String, Object> deleteResult = webSocketService.deleteEmulatorOnAgent(userId, mumuTargetIndex);
-                    deleteOk = Boolean.TRUE.equals(deleteResult.get("success"));
-                    if (!deleteOk) {
-                        log.error("Agent 返回物理删除失败: {}", deleteResult.getOrDefault("message", "未知错误"));
-                        actions.add("物理删除失败: " + deleteResult.getOrDefault("message", "未知错误"));
-                    }
-                }
 
-                if (deleteOk) {
-                    log.info("物理模拟器 #{} 删除命令已执行 (mumuIndex={})", index, mumuTargetIndex);
-                    actions.add("已发送物理删除命令");
+            if (!agentOnline) {
+                // Agent 离线：无法操作物理实例，保守中止（防止 DB 记录和物理实例不一致）
+                log.error("删除模拟器 #{} 中止: Agent 离线，无法验证物理实例状态", index);
+                result.put("success", false);
+                result.put("message", "Agent 离线，无法执行物理删除。请启动 Agent 后重试，或在模拟器中手动删除后再操作");
+                result.put("actions", actions);
+                return result;
+            }
+
+            if (!physicalExists) {
+                // Agent 在线 + 物理实例不存在（可能用户手动删了或从未存在）→ 直接允许删 DB
+                log.info("模拟器 #{}: 物理实例已不存在，允许清理 DB 记录", index);
+                physicalDeleted = true;
+                actions.add("物理实例已不存在，直接清理");
+            } else {
+                // 物理实例确实存在，必须执行完整的物理删除流程
+                // 2. 先停止模拟器
+                try {
+                    if (localMode) {
+                        mumuClientService.stopEmulator(index);
+                    } else {
+                        webSocketService.stopEmulatorOnAgent(userId, mumuTargetIndex);
+                    }
+                    log.info("模拟器 #{} 停止命令已发送", index);
+                    actions.add("已发送停止命令");
                     Thread.sleep(1500);
-
-                    // 4. 验证物理删除是否成功
-                    try {
-                        boolean stillExists;
-                        if (localMode) {
-                            stillExists = mumuClientService.emulatorExists(index);
-                        } else {
-                            stillExists = webSocketService.emulatorExistsOnAgent(userId, mumuTargetIndex);
-                        }
-                        if (stillExists) {
-                            log.error("物理模拟器 #{} 删除后仍然存在，中止 DB 删除", index);
-                            actions.add("物理实例未删除成功，已中止");
-                        } else {
-                            log.info("物理模拟器 #{} 已确认删除", index);
-                            physicalDeleted = true;
-                            actions.add("已删除物理实例");
-                        }
-                    } catch (Exception verifyEx) {
-                        log.error("验证物理删除状态失败，视为未删除: {}", verifyEx.getMessage());
-                        physicalDeleted = false;
-                        actions.add("物理删除验证失败: " + verifyEx.getMessage());
-                    }
+                } catch (Exception e) {
+                    log.warn("停止物理模拟器 #{} 失败: {}，继续删除", index, e.getMessage());
+                    actions.add("停止失败: " + e.getMessage());
                 }
-            } catch (Exception e) {
-                log.error("删除物理模拟器 #{} 异常: {}", index, e.getMessage());
-                actions.add("物理删除异常: " + e.getMessage());
+
+                // 3. 执行物理删除
+                try {
+                    boolean deleteOk;
+                    if (localMode) {
+                        mumuClientService.deleteEmulator(index);
+                        deleteOk = true;
+                    } else {
+                        Map<String, Object> deleteResult = webSocketService.deleteEmulatorOnAgent(userId, mumuTargetIndex);
+                        deleteOk = Boolean.TRUE.equals(deleteResult.get("success"));
+                        if (!deleteOk) {
+                            log.error("Agent 返回物理删除失败: {}", deleteResult.getOrDefault("message", "未知错误"));
+                            actions.add("物理删除失败: " + deleteResult.getOrDefault("message", "未知错误"));
+                        }
+                    }
+
+                    if (deleteOk) {
+                        log.info("物理模拟器 #{} 删除命令已执行 (mumuIndex={})", index, mumuTargetIndex);
+                        actions.add("已发送物理删除命令");
+                        Thread.sleep(1500);
+
+                        // 4. 验证物理删除（重试一次防抖动）
+                        boolean verifyOk = false;
+                        Exception lastVerifyErr = null;
+                        for (int attempt = 1; attempt <= 2; attempt++) {
+                            try {
+                                boolean stillExists;
+                                if (localMode) {
+                                    stillExists = mumuClientService.emulatorExists(index);
+                                } else {
+                                    stillExists = webSocketService.emulatorExistsOnAgent(userId, mumuTargetIndex);
+                                }
+                                if (stillExists) {
+                                    log.error("物理模拟器 #{} 删除后仍然存在 (第{}次验证)", index, attempt);
+                                    actions.add("物理实例未删除成功(第" + attempt + "次验证)");
+                                } else {
+                                    log.info("物理模拟器 #{} 已确认删除 (第{}次验证)", index, attempt);
+                                    physicalDeleted = true;
+                                    actions.add("已删除物理实例");
+                                    verifyOk = true;
+                                    break;
+                                }
+                            } catch (Exception verifyEx) {
+                                lastVerifyErr = verifyEx;
+                                log.warn("验证物理删除状态异常 (第{}次): {}", attempt, verifyEx.getMessage());
+                                actions.add("验证异常(第" + attempt + "次): " + verifyEx.getMessage());
+                            }
+                            if (attempt == 1) {
+                                Thread.sleep(1000); // 重试前等1秒
+                            }
+                        }
+                        if (!verifyOk && lastVerifyErr != null) {
+                            log.error("两次验证都异常，无法确认物理删除结果，保守中止");
+                        }
+                    }
+                } catch (Exception e) {
+                    log.error("删除物理模拟器 #{} 异常: {}", index, e.getMessage());
+                    actions.add("物理删除异常: " + e.getMessage());
+                }
             }
 
             if (!physicalDeleted) {
