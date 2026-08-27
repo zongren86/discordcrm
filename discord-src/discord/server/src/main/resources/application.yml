@@ -1,5 +1,11 @@
 server:
   port: 8090
+  tomcat:
+    # 通用安全下限，prod/local profile 会覆盖
+    max-threads: 80
+    min-spare-threads: 10
+    accept-count: 100
+    max-connections: 2048
   websocket:
     max-message-size: 67108864  # 64MB WebSocket最大消息大小
 
@@ -18,19 +24,29 @@ spring:
     password: ${DB_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      maximum-pool-size: 100
-      minimum-idle: 5
-      connection-timeout: 10000
+      # 全局安全下限，具体值由 profile 覆盖
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: DiscordHikariCP
+      transaction-isolation: TRANSACTION_READ_COMMITTED
+      connection-test-query: SELECT 1
 
   jpa:
     hibernate:
       ddl-auto: update
     show-sql: false
+    open-in-view: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         jdbc:
           batch_size: 50
+          batch_versioned_data: true
+        order_inserts: true
+        order_updates: true
 
   sql:
     init:
@@ -64,6 +80,9 @@ jwt:
   expire-hours: 24
 
 spring.main.allow-bean-definition-overriding: false
+
+# 全局 JVM 参数提示（由启动脚本或 systemd 注入）
+# -Xms512m -Xmx2048m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/log/discord-admin/ -XX:+UseG1GC -XX:MaxGCPauseMillis=200
 
 app:
   upload:
