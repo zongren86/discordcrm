@@ -39,7 +39,7 @@ public class DiscordMemberService {
     private final Map<String, TaskState> tasks = new ConcurrentHashMap<>();
     // 服务器锁：防止同一服务器并发同步
     private final Map<Long, String> serverLocks = new ConcurrentHashMap<>();
-    // 活跃 fetcher 引用，用于暂停/停止
+    // 活跃 _fetcher[0] 引用，用于暂停/停止
     private final Map<String, GatewayMemberFetcher> activeFetchers = new ConcurrentHashMap<>();
 
     private final GuildMemberRepository guildMemberRepository;
@@ -273,7 +273,7 @@ public class DiscordMemberService {
         FetchProgress progress = fetchProgressRepository.findTopByGuildServerIdOrderByCreatedAtDesc(st.guildServerId)
             .orElse(null);
 
-        GatewayMemberFetcher fetcher = null;
+        final GatewayMemberFetcher[] _fetcher = new GatewayMemberFetcher[1];
         try {
             String guildId = resolveGuildId(req.getLink());
             st.guildId = guildId;
@@ -369,6 +369,10 @@ public class DiscordMemberService {
                         progress.setTotalRespondedMembers(t.totalRespondedMembers);
                         progress.setTotalResponseTimeMs(t.totalResponseTimeMs);
                         progress.setLastPrefix(t.lastPrefix);
+                        if (_fetcher[0] != null) {
+                            progress.setResumeFrontier(toJson(_fetcher[0].getRemainingFrontier()));
+                            progress.setCompletedPrefixes(toJson(new ArrayList<>(_fetcher[0].getCompletedPrefixes())));
+                        }
                         fetchProgressRepository.save(progress);
                     }
                 }
@@ -390,25 +394,25 @@ public class DiscordMemberService {
                 }
             };
 
-            fetcher = new GatewayMemberFetcher(
+            _fetcher[0] = new GatewayMemberFetcher(
                     req.getToken(), guildId, proxyHost, proxyPort,
                     listener, batchListener, req.getMaxRequests(), req.getMaxMembers(), pageDelayMs, websocketDirect);
 
-            // 注册 fetcher 引用，用于后续停止
-            activeFetchers.put(taskId, fetcher);
+            // 注册 _fetcher[0] 引用，用于后续停止
+            activeFetchers.put(taskId, _fetcher[0]);
 
             // 设置前缀树 BFS 最大下钻深度
-            fetcher.setMaxPrefixDepth(req.getMaxDepth());
+            _fetcher[0].setMaxPrefixDepth(req.getMaxDepth());
 
             // 断点续传：设置之前已完成的前缀
             if (!st.completedPrefixes.isEmpty()) {
-                fetcher.setCompletedPrefixes(st.completedPrefixes);
+                _fetcher[0].setCompletedPrefixes(st.completedPrefixes);
                 log.info("断点续传: 设置已完成前缀 {} 个", st.completedPrefixes.size());
             }
 
             // 断点续传：传递剩余待处理的前缀队列
             if (!st.resumeFrontier.isEmpty()) {
-                fetcher.setResumeFrontier(st.resumeFrontier);
+                _fetcher[0].setResumeFrontier(st.resumeFrontier);
                 log.info("断点续传: 设置剩余前缀队列 {} 个", st.resumeFrontier.size());
             }
 
@@ -420,12 +424,12 @@ public class DiscordMemberService {
                     for (GuildMember m : existingMembers) {
                         existingIds.add(m.getUserId());
                     }
-                    fetcher.setExistingMemberIds(existingIds);
+                    _fetcher[0].setExistingMemberIds(existingIds);
                     log.info("断点续传: 加载已存在成员 {} 个", existingIds.size());
                 }
             }
 
-            GatewayMemberFetcher.FetchResult res = fetcher.fetch();
+            GatewayMemberFetcher.FetchResult res = _fetcher[0].fetch();
 
             st.serverName = res.serverName() != null ? res.serverName() : "";
             List<MemberRecord> recs = normalize(res.members(), st.serverName, req.getMaxMembers());
@@ -439,7 +443,7 @@ public class DiscordMemberService {
             st.progressMessage = "完成，有效成员 " + recs.size() + " 条（原始 " + res.members().size() + " 条）";
             st.failureReason = "";  // 成功无失败原因
 
-            Set<String> completedPrefixes = new LinkedHashSet<>(fetcher.getCompletedPrefixes());
+            Set<String> completedPrefixes = new LinkedHashSet<>(_fetcher[0].getCompletedPrefixes());
             st.newlyCompletedPrefixes = new LinkedHashSet<>(completedPrefixes);
             st.completedPrefixes.addAll(completedPrefixes);
 
@@ -471,8 +475,8 @@ public class DiscordMemberService {
                 progress.setTotalRespondedMembers(st.totalRespondedMembers);
                 progress.setTotalResponseTimeMs(st.totalResponseTimeMs);
                 progress.setFailureReason("");
-                progress.setResumeFrontier(toJson(fetcher.getRemainingFrontier()));
-                progress.setCompletedPrefixes(toJson(new ArrayList<>(fetcher.getCompletedPrefixes())));
+                progress.setResumeFrontier(toJson(_fetcher[0].getRemainingFrontier()));
+                progress.setCompletedPrefixes(toJson(new ArrayList<>(_fetcher[0].getCompletedPrefixes())));
                 fetchProgressRepository.save(progress);
             }
 
@@ -495,9 +499,9 @@ public class DiscordMemberService {
                 if (st.currentPrefix != null && !st.currentPrefix.isEmpty()) {
                     progress.setLastBatchId(st.currentPrefix);
                 }
-                if (fetcher != null) {
-                    progress.setResumeFrontier(toJson(fetcher.getRemainingFrontier()));
-                    progress.setCompletedPrefixes(toJson(new ArrayList<>(fetcher.getCompletedPrefixes())));
+                if (_fetcher[0] != null) {
+                    progress.setResumeFrontier(toJson(_fetcher[0].getRemainingFrontier()));
+                    progress.setCompletedPrefixes(toJson(new ArrayList<>(_fetcher[0].getCompletedPrefixes())));
                 }
                 fetchProgressRepository.save(progress);
             }
@@ -527,15 +531,15 @@ public class DiscordMemberService {
                 if (st.currentPrefix != null && !st.currentPrefix.isEmpty()) {
                     progress.setLastBatchId(st.currentPrefix);
                 }
-                if (fetcher != null) {
-                    progress.setResumeFrontier(toJson(fetcher.getRemainingFrontier()));
-                    progress.setCompletedPrefixes(toJson(new ArrayList<>(fetcher.getCompletedPrefixes())));
+                if (_fetcher[0] != null) {
+                    progress.setResumeFrontier(toJson(_fetcher[0].getRemainingFrontier()));
+                    progress.setCompletedPrefixes(toJson(new ArrayList<>(_fetcher[0].getCompletedPrefixes())));
                 }
                 fetchProgressRepository.save(progress);
             }
             log.error("成员抓取异常", e);
         } finally {
-            // 清理 fetcher 引用
+            // 清理 _fetcher[0] 引用
             activeFetchers.remove(taskId);
             
             if (st.guildServerId > 0) {
