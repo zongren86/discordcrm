@@ -66,15 +66,25 @@ public class EmuInstanceService {
     }
 
     private Long resolveMerchantId() {
-        Long id = SecurityUtils.currentMerchantId();
-        if (id == null) throw new RuntimeException("当前用户未绑定商户，无法操作模拟器");
-        return id;
+        return SecurityUtils.currentMerchantId(); // 允许 null（异步线程无 SecurityContext）
     }
 
     private Long resolveUserId() {
+        return SecurityUtils.currentUserId(); // 允许 null（异步线程无 SecurityContext）
+    }
+
+    /** 从 Security 或 instance 补全 merchantId */
+    private Long resolveMerchantId(EmuInstance instance) {
+        Long id = SecurityUtils.currentMerchantId();
+        if (id != null) return id;
+        return instance != null ? instance.getMerchantId() : null;
+    }
+
+    /** 从 Security 或 instance 补全 userId */
+    private Long resolveUserId(EmuInstance instance) {
         Long id = SecurityUtils.currentUserId();
-        if (id == null) throw new RuntimeException("无法获取当前用户ID，请重新登录");
-        return id;
+        if (id != null) return id;
+        return instance != null ? instance.getUserId() : null;
     }
 
     /**
@@ -1085,6 +1095,10 @@ public class EmuInstanceService {
         EmuInstance instance = instanceOpt
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
+        // 从查到的 instance 补全 merchantId/userId（解决异步线程无 SecurityContext 的问题）
+        if (merchantId == null) merchantId = instance.getMerchantId();
+        if (userId == null) userId = instance.getUserId();
+
         boolean useAgent = agent != null;
 
         if (!useAgent && !mumuClientService.emulatorExists(index)) {
@@ -1152,6 +1166,10 @@ public class EmuInstanceService {
 
         EmuInstance instance = instanceOpt
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
+
+        // 从查到的 instance 补全 merchantId/userId（解决异步线程无 SecurityContext 的问题）
+        if (merchantId == null) merchantId = instance.getMerchantId();
+        if (userId == null) userId = instance.getUserId();
 
         boolean useAgent = agent != null;
 
