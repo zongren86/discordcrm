@@ -101,106 +101,101 @@ function getOrCreateDeviceId() {
 // ========== MuMu 模拟器控制 ==========
 class MuMuController {
     constructor() {
-        // 必须使用用户配置的可执行文件完整路径
-        if (!config.mumuPath) {
-            console.error('[MuMu] 错误: config.json 中未配置 mumuPath');
-            console.error('[MuMu] 请设置 MuMu 可执行文件的完整路径');
-            console.error('[MuMu] Windows示例: C:\\Program Files\\Netease\\MuMu\\nx_main\\MuMuNxMain.exe');
-            console.error('[MuMu] macOS示例: /Applications/MuMuPlayer.app');
-            throw new Error('config.json 中未配置 mumuPath, 请检查配置文件');
-        }
-        // 检查路径是否为文件
-        if (!fs.existsSync(config.mumuPath)) {
-            console.error('[MuMu] 错误: mumuPath 路径不存在:', config.mumuPath);
-            throw new Error('mumuPath 路径不存在: ' + config.mumuPath);
-        }
-        this.mumuAppPath = config.mumuPath;
+        this.mumuPath = null;
+        this.mumuAppPath = null;
+        this.adbPath = null;
 
-        try {
-            const stat = fs.statSync(config.mumuPath);
-            if (stat.isDirectory()) {
-                if (config.mumuPath.endsWith('.app')) {
-                    const appName = path.basename(config.mumuPath, '.app');
-                    const macOsDir = path.join(config.mumuPath, 'Contents', 'MacOS');
-                    if (fs.existsSync(macOsDir) && fs.statSync(macOsDir).isDirectory()) {
-                        const files = fs.readdirSync(macOsDir);
-                        const candidates = [
-                            appName,
-                            'mumutool',
-                            'mumu-cli',
-                        ];
-                        let resolved = null;
-                        for (const candidate of candidates) {
-                            const candidatePath = path.join(macOsDir, candidate);
-                            if (fs.existsSync(candidatePath) && fs.statSync(candidatePath).isFile()) {
-                                resolved = candidatePath;
-                                break;
-                            }
-                        }
-                        if (!resolved) {
-                            for (const file of files) {
-                                const filePath = path.join(macOsDir, file);
-                                try {
-                                    if (fs.statSync(filePath).isFile() && (file === appName || file.toLowerCase().includes('mumu'))) {
-                                        resolved = filePath;
+        if (config.mumuPath) {
+            const p = config.mumuPath;
+            if (!fs.existsSync(p)) {
+                console.warn('[MuMu] WARN: mumuPath 不存在，将尝试自动发现:', p);
+            } else {
+                try {
+                    const stat = fs.statSync(p);
+                    if (stat.isDirectory()) {
+                        if (p.endsWith('.app')) {
+                            const appName = path.basename(p, '.app');
+                            const macOsDir = path.join(p, 'Contents', 'MacOS');
+                            if (fs.existsSync(macOsDir) && fs.statSync(macOsDir).isDirectory()) {
+                                const files = fs.readdirSync(macOsDir);
+                                for (const candidate of [appName, 'mumutool', 'mumu-cli']) {
+                                    const cp = path.join(macOsDir, candidate);
+                                    if (fs.existsSync(cp) && fs.statSync(cp).isFile()) {
+                                        console.log('[MuMu] 检测到 macOS .app bundle, 解析可执行文件:', cp);
+                                        this.mumuPath = cp;
                                         break;
                                     }
-                                } catch (_) {}
+                                }
+                                if (!this.mumuPath) {
+                                    for (const file of files) {
+                                        const fp = path.join(macOsDir, file);
+                                        try {
+                                            if (fs.statSync(fp).isFile() && file.toLowerCase().includes('mumu')) {
+                                                this.mumuPath = fp;
+                                                break;
+                                            }
+                                        } catch (_) {}
+                                    }
+                                }
                             }
-                        }
-                        if (resolved) {
-                            console.log('[MuMu] 检测到 macOS .app bundle, 解析可执行文件:', resolved);
-                            this.mumuPath = resolved;
                         } else {
-                            console.error('[MuMu] 错误: 在 .app bundle 的 Contents/MacOS/ 中未找到可执行文件');
-                            throw new Error('mumuPath 是 .app bundle, 但未找到可执行文件');
+                            console.warn('[MuMu] WARN: mumuPath 是目录而非文件，将从中扫描 MuMuManager:', p);
+                            this.mumuPath = p;
                         }
                     } else {
-                        console.error('[MuMu] 错误: .app bundle 中未找到 Contents/MacOS/ 目录');
-                        throw new Error('mumuPath 是 .app bundle, 但结构无效');
+                        this.mumuPath = p;
                     }
-                } else {
-                    console.error('[MuMu] 错误: mumuPath 是目录而非文件:', config.mumuPath);
-                    console.error('[MuMu] 请设置可执行文件的完整路径, 如: C:\\...\\MuMuNxMain.exe');
-                    throw new Error('mumuPath 是目录, 请设置可执行文件完整路径');
+                } catch (e) {
+                    console.warn('[MuMu] WARN: 无法访问 mumuPath，将尝试自动发现:', e.message);
                 }
+            }
+            this.mumuAppPath = config.mumuPath;
+        } else {
+            console.warn('[MuMu] WARN: 未配置 mumuPath，将尝试自动发现');
+        }
+
+        if (this.mumuPath) {
+            console.log('[MuMu] 使用配置中的 mumuPath:', this.mumuPath);
+        }
+
+        if (config.adbPath && fs.existsSync(config.adbPath)) {
+            this.adbPath = config.adbPath;
+            console.log('[MuMu] 使用配置中的 adbPath:', config.adbPath);
+        } else {
+            if (config.adbPath) {
+                console.warn('[MuMu] WARN: adbPath 不存在，将尝试自动发现:', config.adbPath);
             } else {
-                this.mumuPath = config.mumuPath;
+                console.warn('[MuMu] WARN: 未配置 adbPath，将尝试自动发现');
             }
-        } catch (e) {
-            if (e.message.includes('目录') || e.message.includes('.app')) {
-                throw e;
-            }
-            console.error('[MuMu] 错误: 无法访问 mumuPath:', e.message);
-            throw new Error('mumuPath 无效: ' + e.message);
         }
-        console.log('[MuMu] 使用配置中的 mumuPath:', this.mumuPath);
-        
-        if (!config.adbPath) {
-            console.error('[MuMu] 错误: config.json 中未配置 adbPath');
-            console.error('[MuMu] 请设置 adb.exe 的完整路径');
-            throw new Error('config.json 中未配置 adbPath, 请检查配置文件');
-        }
-        if (!fs.existsSync(config.adbPath)) {
-            console.error('[MuMu] 错误: adbPath 路径不存在:', config.adbPath);
-            throw new Error('adbPath 路径不存在: ' + config.adbPath);
-        }
-        console.log('[MuMu] 使用配置中的 adbPath:', config.adbPath);
-        this.adbPath = config.adbPath;
-        
+
         this.mumutoolPath = this.findMumutoolPath();
         this.mumuManagerPath = this.findMumuManagerPath();
-        
-        // 初始化 vmsBasePath - 用于定位模拟器 vm.json 文件
+
+        if (!this.adbPath) {
+            const autoAdb = this.findAdbPath();
+            if (autoAdb) {
+                this.adbPath = autoAdb;
+                console.log('[MuMu] 自动发现 adbPath:', autoAdb);
+            } else {
+                console.warn('[MuMu] 错误: 无法自动发现 adb，ADB 相关功能将不可用');
+            }
+        }
+
         this.vmsBasePath = this.findVmsBasePath();
-        console.log('[MuMu] ADB 路径:', this.adbPath);
-        console.log('[MuMu] MuMu 路径:', this.mumuPath);
+        console.log('[MuMu] ADB 路径:', this.adbPath || '未找到');
+        console.log('[MuMu] MuMu 路径:', this.mumuPath || '未找到');
         console.log('[MuMu] mumutool 路径:', this.mumutoolPath || '未找到');
         console.log('[MuMu] MuMuManager 路径:', this.mumuManagerPath || '未找到');
-        
-        // 诊断：扫描 MuMu 安装目录
+
+        if (!this.mumuManagerPath && !this.mumutoolPath) {
+            console.error('[MuMu] 错误: 未找到 MuMuManager 或 mumutool，请检查 MuMu 是否正确安装');
+            console.error('[MuMu] 建议手动配置 config.json 的 mumuPath 指向 MuMu 安装根目录');
+        }
+
         this.diagnoseInstallation();
     }
+
     
     diagnoseInstallation() {
         const os = process.platform;

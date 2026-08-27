@@ -51,8 +51,8 @@ public class AgentDownloadHelper {
             darwinConfig.put("adbPath", "/Users/worktools/platform-tools/adb");
 
             Map<String, Object> win32Config = new LinkedHashMap<>();
-            win32Config.put("mumuPath", "C:\\Program Files\\Netease\\MuMu\\nx_main\\MuMuNxMain.exe");
-            win32Config.put("adbPath", "C:\\Program Files\\Netease\\MuMu\\nx_main\\adb.exe");
+            win32Config.put("mumuPath", "C:\\Program Files\\Netease\\MuMuPlayer-12.0");
+            win32Config.put("adbPath", "C:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe");
 
             Map<String, Object> linuxConfig = new LinkedHashMap<>();
             linuxConfig.put("mumuPath", "/opt/MuMuPlayer");
@@ -84,11 +84,11 @@ public class AgentDownloadHelper {
                 "config.json 是唯一配置文件，必须正确配置才能使用。\n\n" +
                 "### mumuPath 配置\n" +
                 "必须设置 MuMu 可执行文件的完整路径:\n\n" +
-                "- Windows: C:\\Program Files\\Netease\\MuMu\\nx_main\\MuMuNxMain.exe\n" +
+                "- Windows: C:\\Program Files\\Netease\\MuMuPlayer-12.0\n" +
                 "- macOS: /Applications/MuMuPlayer.app\n\n" +
                 "### adbPath 配置\n" +
                 "必须设置 ADB 可执行文件的完整路径:\n" +
-                "- Windows: C:\\Program Files\\Netease\\MuMu\\nx_main\\adb.exe\n" +
+                "- Windows: C:\\Program Files\\Netease\\MuMuPlayer-12.0\\shell\\adb.exe\n" +
                 "- macOS: /Users/xxx/Library/Android/sdk/platform-tools/adb\n\n" +
                 "### 配置示例 (Windows):\n" +
                 "{\n" +
