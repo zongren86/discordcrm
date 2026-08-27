@@ -916,7 +916,7 @@
           </div>
         </div>
 
-        <div class="profile-section" v-if="canEditStage">
+        <div class="profile-section">
           <div class="profile-section-title">销售阶段</div>
           <div class="status-grid">
             <el-button v-for="s in quickStageOptions" :key="s.value"
@@ -929,7 +929,7 @@
           </div>
         </div>
 
-        <div class="profile-section">
+        <div class="profile-section" v-if="canEditStage">
           <el-button size="default" style="width:100%" @click="onHeaderCommand('transfer')">
             <el-icon><Switch /></el-icon> 转移客户
           </el-button>

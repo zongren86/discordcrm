@@ -25,7 +25,6 @@ spring:
       # 连接泄漏检测：超过 20 秒未归还的连接视为泄漏
       leak-detection-threshold: 30000
       # 优化：每个连接的事务超时后自动回滚
-      transaction-isolation: DEFAULT
       # 优化：获取连接失败时快速重试，不阻塞
       validation-timeout: 1000
   jpa:
