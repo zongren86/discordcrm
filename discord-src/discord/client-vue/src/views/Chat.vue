@@ -916,7 +916,7 @@
           </div>
         </div>
 
-        <div class="profile-section">
+        <div class="profile-section" v-if="auth.hasPermission('chat')">
           <div class="profile-section-title">销售阶段</div>
           <div class="status-grid">
             <el-button v-for="s in quickStageOptions" :key="s.value"

@@ -12,6 +12,17 @@
           <p class="page-desc">管理模拟器实例，配置自动加好友，监控添加状态</p>
         </div>
         <div class="header-actions">
+          <div v-if="agentDetails.agents.length > 0" style="display: inline-flex; align-items: center; margin-right: 12px">
+            <span style="margin-right: 6px; font-size: 13px; color: #606266">代理:</span>
+            <el-select v-model="selectedDeviceId" size="small" style="width: 220px" @change="onAgentChange">
+              <el-option
+                v-for="agent in agentDetails.agents"
+                :key="agent.deviceId"
+                :label="(agent.userId || '-') + ' | ' + (agent.os === 'darwin' ? 'macOS' : agent.os === 'win32' ? 'Windows' : agent.os || '-') + ' | ' + (agent.emulatorCount ?? 0) + '台'"
+                :value="agent.deviceId"
+              />
+            </el-select>
+          </div>
           <el-tag v-if="physicalStatus.agentOnline" type="success" effect="light" style="cursor: pointer" @click="getAgentDetails">
             {{ physicalStatus.message || 'Agent 已连接' }}
             <el-icon style="margin-left: 4px"><InfoFilled /></el-icon>
@@ -966,6 +977,7 @@ const physicalStatus = ref({ available: false, message: '检测中...' })
 // Agent 详情弹窗状态
 const showAgentDetails = ref(false)
 const agentDetails = ref({ agents: [], agentCount: 0 })
+const selectedDeviceId = ref(null)
 
 // Agent 引导弹窗状态
 const showAgentGuide = ref(false)
@@ -1335,9 +1347,11 @@ async function fetchAgentDetailsForInit() {
   try {
     const resp = await emuApi.get('/agent/details')
     agentDetails.value = resp.data
-    // 如果只有一个 Agent，自动设置为默认
-    if (agentDetails.value.agents && agentDetails.value.agents.length === 1) {
-      addEmuDeviceId.value = agentDetails.value.agents[0].deviceId
+    if (agentDetails.value.agents && agentDetails.value.agents.length > 0) {
+      selectedDeviceId.value = agentDetails.value.agents[0].deviceId
+      if (agentDetails.value.agents.length === 1) {
+        addEmuDeviceId.value = agentDetails.value.agents[0].deviceId
+      }
     }
   } catch {}
 }
@@ -1347,8 +1361,9 @@ let refreshTimer = null
 onMounted(async () => {
   // 并行执行所有加载，不等待服务检查，每个任务最多8秒超时
   const LOAD_TIMEOUT = 8000
+  await withTimeout(fetchAgentDetailsForInit(), LOAD_TIMEOUT)
+
   const loadTasks = [
-    withTimeout(fetchAgentDetailsForInit(), LOAD_TIMEOUT),
     withTimeout(fetchEmulators(), LOAD_TIMEOUT),
     withTimeout(loadAddedServers(), LOAD_TIMEOUT),
     withTimeout(loadAvailableServers(), LOAD_TIMEOUT),
@@ -1478,7 +1493,9 @@ function startHealthCheck() {
 
 async function checkPhysicalStatus() {
   try {
-    const resp = await emuApi.get('/emulators/physical-status')
+    const params = {}
+    if (selectedDeviceId.value) params.deviceId = selectedDeviceId.value
+    const resp = await emuApi.get('/emulators/physical-status', { params })
     physicalStatus.value = resp.data
   } catch {
     physicalStatus.value = { available: false, message: '未检测到物理模拟器' }
@@ -1501,6 +1518,13 @@ async function getAgentDetails() {
   } catch (e) {
     ElMessage.error('获取 Agent 详情失败')
   }
+}
+
+async function onAgentChange() {
+  if (selectedDeviceId.value) {
+    addEmuDeviceId.value = selectedDeviceId.value
+  }
+  await Promise.all([fetchEmulators(), checkPhysicalStatus()])
 }
 
 async function disconnectAgentDevice(row) {
@@ -1635,7 +1659,9 @@ async function syncPhysical() {
 
 async function fetchEmulators() {
   try {
-    const resp = await emuApi.get('/emulators')
+    const params = {}
+    if (selectedDeviceId.value) params.deviceId = selectedDeviceId.value
+    const resp = await emuApi.get('/emulators', { params })
     emulators.value = Array.isArray(resp.data) ? resp.data : []
     await checkDiffEmulators()
   } catch { emulators.value = [] }

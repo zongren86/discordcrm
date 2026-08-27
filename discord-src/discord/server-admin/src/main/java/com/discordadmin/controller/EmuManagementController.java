@@ -129,8 +129,8 @@ public class EmuManagementController {
      * 获取当前用户的所有模拟器实例
      */
     @GetMapping("/emulators")
-    public List<Map<String, Object>> getEmulators() {
-        return instanceService.getCurrentUserInstances();
+    public List<Map<String, Object>> getEmulators(@RequestParam(required = false) String deviceId) {
+        return instanceService.getCurrentUserInstances(deviceId);
     }
 
 
@@ -216,8 +216,8 @@ public class EmuManagementController {
      * 检查物理模拟器连接状态
      */
     @GetMapping("/emulators/physical-status")
-    public Map<String, Object> getPhysicalStatus() {
-        return instanceService.getPhysicalStatus();
+    public Map<String, Object> getPhysicalStatus(@RequestParam(required = false) String deviceId) {
+        return instanceService.getPhysicalStatus(deviceId);
     }
 
     /**
@@ -300,7 +300,7 @@ public class EmuManagementController {
      */
     @PostMapping("/discord/installAll")
     public Map<String, Object> installAllDiscord() {
-        var instances = instanceService.getCurrentUserInstances();
+        var instances = instanceService.getCurrentUserInstances(null);
         
         int successCount = 0;
         StringBuilder errors = new StringBuilder();
@@ -942,7 +942,7 @@ public class EmuManagementController {
      */
     @GetMapping("/agent/status")
     public Map<String, Object> getAgentStatus() {
-        return instanceService.getPhysicalStatus();
+        return instanceService.getPhysicalStatus(null);
     }
 
     /**

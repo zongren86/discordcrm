@@ -867,6 +867,52 @@ public class CloudWebSocketService extends TextWebSocketHandler {
      * @param index 模拟器索引 (0-based)
      * @return 是否存在
      */
+    /**
+     * 通过 deviceId 从指定 Agent 获取物理模拟器列表
+     */
+    @SuppressWarnings("unchecked")
+    public List<Map<String, Object>> getEmulatorsFromAgentByDeviceId(String deviceId) {
+        if (deviceId == null || deviceId.isEmpty()) {
+            log.warn("getEmulatorsFromAgentByDeviceId: deviceId 为空");
+            return null;
+        }
+        AgentRegistration agent = onlineAgents.get(deviceId);
+        if (agent == null || !"ONLINE".equals(agent.getStatus())) {
+            log.warn("getEmulatorsFromAgentByDeviceId: Agent 不在线, deviceId={}", deviceId);
+            return null;
+        }
+        try {
+            Map<String, Object> result = sendCommandAndWait(deviceId, "GET_EMULATORS", null)
+                .get(30, TimeUnit.SECONDS);
+            if ("SUCCESS".equals(result.get("status"))) {
+                List<Map<String, Object>> emuList = null;
+                Object emulatorsTop = result.get("emulators");
+                if (emulatorsTop instanceof List) {
+                    emuList = (List<Map<String, Object>>) emulatorsTop;
+                }
+                if (emuList == null) {
+                    Object dataObj = result.get("data");
+                    if (dataObj instanceof Map) {
+                        Object emulatorsNested = ((Map<String, Object>) dataObj).get("emulators");
+                        if (emulatorsNested instanceof List) {
+                            emuList = (List<Map<String, Object>>) emulatorsNested;
+                        }
+                    }
+                }
+                if (emuList != null) {
+                    log.info("从 Agent(deviceId={}) 获取到 {} 个模拟器", deviceId, emuList.size());
+                    return emuList;
+                }
+                return new ArrayList<>();
+            }
+            log.warn("getEmulatorsFromAgentByDeviceId: 命令失败, deviceId={}", deviceId);
+            return null;
+        } catch (Exception e) {
+            log.error("getEmulatorsFromAgentByDeviceId 异常, deviceId={}", deviceId, e);
+            return null;
+        }
+    }
+
     public boolean emulatorExistsOnAgent(Long userId, int index) {
         List<Map<String, Object>> emulators = getEmulatorsFromAgent(userId);
         if (emulators == null) return false;

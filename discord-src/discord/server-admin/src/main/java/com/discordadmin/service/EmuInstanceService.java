@@ -75,15 +75,40 @@ public class EmuInstanceService {
         return id != null ? id : 1L;
     }
 
+    /**
+     * 解析选中的 Agent: 优先按 deviceId 匹配，否则取第一个在线 agent
+     */
+    private AgentRegistration resolveSelectedAgent(String deviceId) {
+        if (deviceId != null && !deviceId.isEmpty()) {
+            AgentRegistration a = webSocketService.getAgentByDeviceId(deviceId);
+            if (a != null && "ONLINE".equals(a.getStatus())) return a;
+        }
+        List<AgentRegistration> agents = webSocketService.getOnlineAgentsByUserId(resolveUserId());
+        if (!agents.isEmpty()) return agents.get(0);
+        return null;
+    }
+
+    private Long resolveEffectiveUserId(String deviceId) {
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
+        if (agent != null && agent.getUserId() != null) return agent.getUserId();
+        return resolveUserId();
+    }
+
+    private Long resolveEffectiveMerchantId(String deviceId) {
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
+        if (agent != null && agent.getMerchantId() != null) return agent.getMerchantId();
+        return resolveMerchantId();
+    }
+
 
     /**
      * 获取当前用户的所有模拟器实例
      * 管理后台以数据库数据为准，始终返回数据库中的记录
      */
-    public List<Map<String, Object>> getCurrentUserInstances() {
-        Long merchantId = resolveMerchantId();
-        Long userId = resolveUserId();
-        log.info("获取模拟器列表: merchantId={}, userId={}", merchantId, userId);
+    public List<Map<String, Object>> getCurrentUserInstances(String deviceId) {
+        Long merchantId = resolveEffectiveMerchantId(deviceId);
+        Long userId = resolveEffectiveUserId(deviceId);
+        log.info("获取模拟器列表: deviceId={}, merchantId={}, userId={}", deviceId, merchantId, userId);
         
         // 1. 直接从数据库查询（管理后台以数据库为准）
         // 商户隔离：必须按 merchantId + userId 查询，确保数据隔离
@@ -106,7 +131,12 @@ public class EmuInstanceService {
             try {
                 List<Map<String, Object>> physicalList = null;
                 if (!localMode) {
-                    physicalList = webSocketService.getEmulatorsFromAgent(userId);
+                    if (deviceId != null && !deviceId.isEmpty()) {
+                        physicalList = webSocketService.getEmulatorsFromAgentByDeviceId(deviceId);
+                    }
+                    if (physicalList == null) {
+                        physicalList = webSocketService.getEmulatorsFromAgent(userId);
+                    }
                 } else {
                     physicalList = mumuClientService.getAllEmulators();
                 }
@@ -165,7 +195,12 @@ public class EmuInstanceService {
             List<Map<String, Object>> physicalList = null;
             if (!localMode) {
                 // Agent模式: 必须通过 Agent 获取，不能回退到本地模式
-                physicalList = webSocketService.getEmulatorsFromAgent(userId);
+                if (deviceId != null && !deviceId.isEmpty()) {
+                    physicalList = webSocketService.getEmulatorsFromAgentByDeviceId(deviceId);
+                }
+                if (physicalList == null) {
+                    physicalList = webSocketService.getEmulatorsFromAgent(userId);
+                }
                 if (physicalList == null) {
                     // Agent 离线时，跳过物理状态合并，直接返回数据库数据
                     log.warn("Agent模式: Agent返回null（可能离线），跳过物理状态合并");
@@ -1967,56 +2002,39 @@ public class EmuInstanceService {
     /**
      * 获取物理模拟器连接状态（供前端轮询检查）
      */
-    public Map<String, Object> getPhysicalStatus() {
+    public Map<String, Object> getPhysicalStatus(String deviceId) {
         Map<String, Object> status = new HashMap<>();
-        Long userId = resolveUserId();
-        Long merchantId = resolveMerchantId();
+        Long userId = resolveEffectiveUserId(deviceId);
+        Long merchantId = resolveEffectiveMerchantId(deviceId);
 
-        // 检查当前商户的 Agent 是否在线（不是全局所有 Agent）
-        List<AgentRegistration> myAgents = webSocketService.getOnlineAgentsByUserId(userId);
-        boolean agentOnline = !myAgents.isEmpty();
+        List<AgentRegistration> allAgents = webSocketService.getOnlineAgentsByUserId(resolveUserId());
+        AgentRegistration selectedAgent = resolveSelectedAgent(deviceId);
+        boolean agentOnline = selectedAgent != null && "ONLINE".equals(selectedAgent.getStatus());
 
-        // 本地（云服务器）检测：仅在 localMode 下才检测本地 MuMu
-        // Agent 模式下，localReachable 不应该依赖服务器本地环境
         boolean localReachable = false;
         if (localMode) {
             localReachable = mumuClientService.isReachable();
         }
 
-        // 可用条件：Agent 在线 或 本地模式下有 MuMu
         boolean available = agentOnline || localReachable;
 
         status.put("available", available);
         status.put("agentOnline", agentOnline);
-        status.put("agentCount", myAgents.size());
+        status.put("agentCount", allAgents.size());
+        status.put("selectedDeviceId", selectedAgent != null ? selectedAgent.getDeviceId() : null);
         status.put("localReachable", localReachable);
         status.put("localMode", localMode);
         status.put("userId", userId);
         status.put("merchantId", merchantId);
 
         if (agentOnline) {
-            // 统计模拟器数量（不再检查 MuMuPlayer 状态）
-            int totalEmulatorCount = 0;
-            int totalRunningCount = 0;
-            for (AgentRegistration agent : myAgents) {
-                if (agent.getEmulatorCount() != null) {
-                    totalEmulatorCount += agent.getEmulatorCount();
-                }
-                if (agent.getRunningEmulatorCount() != null) {
-                    totalRunningCount += agent.getRunningEmulatorCount();
-                }
-            }
-            status.put("mumuPlayerRunning", true);  // 不再检测，默认 true
-            status.put("emulatorCount", totalEmulatorCount);
-            status.put("runningEmulatorCount", totalRunningCount);
-            
-            if (totalEmulatorCount == 0) {
-                status.put("message", "Agent已连接 (" + myAgents.size() + " 台)，暂无模拟器");
-            } else {
-                status.put("message", "Agent已连接 (" + myAgents.size() + " 台)，" + totalEmulatorCount + " 台模拟器就绪");
-            }
+            int emuCount = selectedAgent.getEmulatorCount() != null ? selectedAgent.getEmulatorCount() : 0;
+            int runningCount = selectedAgent.getRunningEmulatorCount() != null ? selectedAgent.getRunningEmulatorCount() : 0;
+            status.put("mumuPlayerRunning", true);
+            status.put("emulatorCount", emuCount);
+            status.put("runningEmulatorCount", runningCount);
+            status.put("message", "Agent已连接，" + emuCount + " 台模拟器就绪");
         } else if (localReachable) {
-            // 本地模式下，检查是否有运行中的模拟器
             int physicalCount = 0;
             try {
                 java.util.List<com.discordadmin.model.EmulatorInfo> emus = emulatorService.getAllEmulators();
@@ -2024,11 +2042,10 @@ public class EmuInstanceService {
             } catch (Exception e) {
                 // 忽略
             }
-            if (physicalCount > 0) {
-                status.put("message", "本地环境已就绪，共 " + physicalCount + " 台模拟器");
-            } else {
-                status.put("message", "本地环境已就绪，但暂无运行中的模拟器");
-            }
+            status.put("emulatorCount", physicalCount);
+            status.put("message", physicalCount > 0
+                ? "本地环境已就绪，共 " + physicalCount + " 台模拟器"
+                : "本地环境已就绪，但暂无运行中的模拟器");
             status.put("physicalCount", physicalCount);
         } else {
             status.put("message", "未检测到在线 Agent，请启动 Agent");
@@ -2051,10 +2068,13 @@ public class EmuInstanceService {
             Map<String, Object> detail = new HashMap<>();
             detail.put("deviceId", agent.getDeviceId());
             detail.put("userId", agent.getUserId());
+            detail.put("merchantId", agent.getMerchantId());
             detail.put("os", agent.getOs());
             detail.put("osVersion", agent.getOsVersion());
             detail.put("muMuPath", agent.getMuMuPath());
             detail.put("status", agent.getStatus());
+            detail.put("emulatorCount", agent.getEmulatorCount());
+            detail.put("runningEmulatorCount", agent.getRunningEmulatorCount());
             detail.put("lastHeartbeatAt", agent.getLastHeartbeatAt());
             detail.put("createdAt", agent.getCreatedAt());
             detail.put("updatedAt", agent.getUpdatedAt());
