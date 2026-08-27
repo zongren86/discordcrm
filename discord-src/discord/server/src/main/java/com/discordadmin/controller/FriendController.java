@@ -14,6 +14,7 @@ import com.discordadmin.repository.FriendRepository;
 import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.RelationshipSyncService;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -25,6 +26,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+@Transactional(readOnly = true)
 @RestController
 @RequestMapping("/api/friends")
 public class FriendController {
@@ -146,6 +148,7 @@ public class FriendController {
     }
 
     /** 接受好友请求：调 Discord PUT，成功后本地状态改为 ACCEPTED */
+@Transactional
     @PostMapping("/accept/{accountId}/{friendUserId}")
     public Map<String, Object> accept(@PathVariable Long accountId,
                                        @PathVariable String friendUserId) throws Exception {
@@ -181,6 +184,7 @@ public class FriendController {
     }
 
     /** 拒绝好友请求或删除好友：调 Discord DELETE，成功后删除本地记录 */
+@Transactional
     @PostMapping("/reject/{accountId}/{friendUserId}")
     public Map<String, Object> reject(@PathVariable Long accountId,
                                        @PathVariable String friendUserId) throws Exception {
@@ -201,6 +205,7 @@ public class FriendController {
     }
 
     /** 手动触发某账号的好友同步（拉远端 -> upsert） */
+@Transactional
     @PostMapping("/sync/{accountId}")
     public Map<String, Object> sync(@PathVariable Long accountId) {
         DiscordAccount acc = accountRepository.findById(accountId)

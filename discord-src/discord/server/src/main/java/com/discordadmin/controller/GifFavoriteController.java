@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -21,6 +22,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+@Transactional(readOnly = true)
 @RestController
 @RequestMapping("/api/gif-favorites")
 public class GifFavoriteController {
@@ -66,6 +68,7 @@ public class GifFavoriteController {
         
         return ResponseEntity.ok(result);
     }
+@Transactional
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> addFavorite(@RequestBody Map<String, String> body) {
@@ -82,6 +85,7 @@ public class GifFavoriteController {
         GifFavorite favorite = gifFavoriteService.addFavorite(accountId, gifUrl, title, type, convertedGifUrl);
         return ResponseEntity.ok(toDto(favorite));
     }
+@Transactional
 
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> removeFavorite(
@@ -107,6 +111,7 @@ public class GifFavoriteController {
         String normalized = gifFavoriteService.normalizeGifUrl(url);
         return ResponseEntity.ok(Map.of("originalUrl", url, "normalizedUrl", normalized));
     }
+@Transactional
 
     @PostMapping("/upload-gif")
     public ResponseEntity<Map<String, String>> uploadGif(@RequestParam("file") MultipartFile file) {

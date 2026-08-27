@@ -5,12 +5,14 @@ import com.discordadmin.entity.Friend;
 import com.discordadmin.repository.DiscordUserRepository;
 import com.discordadmin.repository.FriendRepository;
 import com.discordadmin.security.SecurityUtils;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+@Transactional(readOnly = true)
 @RestController
 @RequestMapping("/api/discord-users")
 public class DiscordUserController {
@@ -43,6 +45,7 @@ public class DiscordUserController {
     }
 
     /** 更新用户备注/标签 */
+@Transactional
     @PutMapping("/{discordUserId}")
     public UserProfileDto updateUser(@PathVariable String discordUserId, @RequestBody UpdateUserRequest request) {
         DiscordUser user = userRepository.findByDiscordUserId(discordUserId)

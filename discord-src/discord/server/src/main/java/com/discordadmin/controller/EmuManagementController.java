@@ -16,6 +16,7 @@ import com.discordadmin.service.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.core.io.Resource;
@@ -30,6 +31,7 @@ import java.util.Map;
  * 模拟器相关API - 账号管理、服务器管理、好友号池、实例管理、APK管理
  */
 @Slf4j
+@Transactional(readOnly = true)
 @RestController
 @RequestMapping("/api/emu")
 public class EmuManagementController {
@@ -103,6 +105,7 @@ public class EmuManagementController {
     /**
      * 上传APK
      */
+@Transactional
     @PostMapping("/discord/upload")
     public Map<String, Object> uploadApk(@RequestParam("file") MultipartFile file) {
         try {
@@ -118,6 +121,7 @@ public class EmuManagementController {
     /**
      * 下载APK（模拟）
      */
+@Transactional
     @PostMapping("/discord/download")
     public Map<String, Object> downloadApk() {
         return apkManagementService.downloadLatestApk();
@@ -138,6 +142,7 @@ public class EmuManagementController {
      * 设置模拟器数量 / 新增模拟器
      * body.mode: 'set'(默认，设置总数量，删除超出旧记录) | 'add'(追加，在现有基础上新增 count 台，保留已有记录)
      */
+@Transactional
     @PostMapping("/emulators/count")
     public List<Map<String, Object>> setEmulatorCount(@RequestBody Map<String, Object> body) {
         int count = Integer.parseInt(body.get("count").toString());
@@ -151,6 +156,7 @@ public class EmuManagementController {
     /**
      * 启动模拟器
      */
+@Transactional
     @PostMapping("/emulators/{index}/start")
     public Map<String, Object> startEmulator(@PathVariable int index) {
         return instanceService.startInstance(index);
@@ -159,6 +165,7 @@ public class EmuManagementController {
     /**
      * 停止模拟器
      */
+@Transactional
     @PostMapping("/emulators/{index}/stop")
     public Map<String, Object> stopEmulator(@PathVariable int index) {
         return instanceService.stopInstance(index);
@@ -167,6 +174,7 @@ public class EmuManagementController {
     /**
      * 重启模拟器
      */
+@Transactional
     @PostMapping("/emulators/{index}/restart")
     public Map<String, Object> restartEmulator(@PathVariable int index) {
         return instanceService.restartInstance(index);
@@ -175,6 +183,7 @@ public class EmuManagementController {
     /**
      * 启动所有模拟器
      */
+@Transactional
     @PostMapping("/emulators/startAll")
     public List<Map<String, Object>> startAllEmulators() {
         return instanceService.startAllInstances();
@@ -183,6 +192,7 @@ public class EmuManagementController {
     /**
      * 停止所有模拟器
      */
+@Transactional
     @PostMapping("/emulators/stopAll")
     public List<Map<String, Object>> stopAllEmulators() {
         return instanceService.stopAllInstances();
@@ -191,6 +201,7 @@ public class EmuManagementController {
     /**
      * 删除模拟器
      */
+@Transactional
     @DeleteMapping("/emulators/{index}")
     public Map<String, Object> deleteEmulator(@PathVariable int index) {
         return instanceService.deleteInstance(index);
@@ -200,6 +211,7 @@ public class EmuManagementController {
      * 更新模拟器绑定的 Discord 账号编号
      * body: { number: 5 }  传 number=null 清除显式绑定（回退到默认instanceIndex对应）
      */
+@Transactional
     @PutMapping("/emulators/{index}/discord-account-number")
     public Map<String, Object> updateDiscordAccountNumber(@PathVariable int index,
                                                           @RequestBody Map<String, Object> body) {
@@ -223,6 +235,7 @@ public class EmuManagementController {
     /**
      * 同步物理模拟器与数据库记录
      */
+@Transactional
     @PostMapping("/emulators/sync")
     public Map<String, Object> syncEmulators() {
         return instanceService.syncPhysicalAndDb();
@@ -252,6 +265,7 @@ public class EmuManagementController {
     /**
      * 确认创建差异模拟器的数据库记录（仅商户账号可用）
      */
+@Transactional
     @PostMapping("/emulators/diff/confirm")
     public ResponseEntity<?> confirmDiffEmulators(@RequestBody Map<String, Object> body) {
         if (!SecurityUtils.isMerchantAdmin()) {
@@ -290,6 +304,7 @@ public class EmuManagementController {
     /**
      * 安装Discord到模拟器
      */
+@Transactional
     @PostMapping("/discord/install/{index}")
     public Map<String, Object> installDiscord(@PathVariable int index) {
         return instanceService.installDiscord(index);
@@ -298,6 +313,7 @@ public class EmuManagementController {
     /**
      * 安装Discord到所有模拟器
      */
+@Transactional
     @PostMapping("/discord/installAll")
     public Map<String, Object> installAllDiscord() {
         var instances = instanceService.getCurrentUserInstances();
@@ -327,6 +343,7 @@ public class EmuManagementController {
     /**
      * 启动Discord
      */
+@Transactional
     @PostMapping("/discord/launch/{index}")
     public Map<String, Object> launchDiscord(@PathVariable int index) {
         return instanceService.launchDiscord(index);
@@ -335,6 +352,7 @@ public class EmuManagementController {
     /**
      * 更新Discord首页状态（由模拟器调用）
      */
+@Transactional
     @PostMapping("/discord/home-status/{index}")
     public Map<String, Object> updateDiscordHomeStatus(@PathVariable int index,
                                                        @RequestBody Map<String, Boolean> body) {
@@ -345,6 +363,7 @@ public class EmuManagementController {
     /**
      * 更新Discord登录状态（由模拟器调用）
      */
+@Transactional
     @PostMapping("/discord/login-status/{index}")
     public Map<String, Object> updateDiscordLoginStatus(@PathVariable int index,
                                                         @RequestBody Map<String, Boolean> body) {
@@ -357,6 +376,7 @@ public class EmuManagementController {
     /**
      * 启动自动加好友
      */
+@Transactional
     @PostMapping("/autoadd/{index}/start")
     public Map<String, Object> startAutoAdd(@PathVariable int index,
                                              @RequestBody(required = false) Map<String, Object> body) {
@@ -370,6 +390,7 @@ public class EmuManagementController {
     /**
      * 停止自动加好友
      */
+@Transactional
     @PostMapping("/autoadd/{index}/stop")
     public Map<String, Object> stopAutoAdd(@PathVariable int index) {
         return instanceService.stopAutoAdd(index);
@@ -378,6 +399,7 @@ public class EmuManagementController {
     /**
      * 全部启动自动加好友（支持时段配置和执行模式）
      */
+@Transactional
     @PostMapping("/autoadd/startAll")
     public Map<String, Object> startAllAutoAdd() {
         return autoAddDispatcher.startAllAutoAddWithMode();
@@ -386,6 +408,7 @@ public class EmuManagementController {
     /**
      * 全部停止自动加好友
      */
+@Transactional
     @PostMapping("/autoadd/stopAll")
     public Map<String, Object> stopAllAutoAdd() {
         autoAddDispatcher.stopAllAutoAddTask();
@@ -406,6 +429,7 @@ public class EmuManagementController {
     /**
      * 保存自动加好友配置
      */
+@Transactional
     @PostMapping("/data/autoconfig")
     public Map<String, Object> saveAutoConfig(@RequestBody Map<String, Object> config) {
         dataStore.updateFullConfig(config);
@@ -474,6 +498,7 @@ public class EmuManagementController {
     /**
      * 添加账号
      */
+@Transactional
     @PostMapping("/accounts/add")
     public Map<String, Object> addAccount(@RequestBody Map<String, Long> body) {
         Long discordAccountId = body.get("discordAccountId");
@@ -491,6 +516,7 @@ public class EmuManagementController {
     /**
      * 移除账号
      */
+@Transactional
     @DeleteMapping("/accounts/{bindingId}")
     public Map<String, Object> removeAccount(@PathVariable Long bindingId) {
         accountBindingService.removeAccount(bindingId);
@@ -527,6 +553,7 @@ public class EmuManagementController {
     /**
      * 添加服务器
      */
+@Transactional
     @PostMapping("/servers/add")
     public Map<String, Object> addServer(@RequestBody Map<String, Object> body) {
         Long serverId = Long.valueOf(body.get("serverId").toString());
@@ -610,6 +637,7 @@ public class EmuManagementController {
     /**
      * 移除服务器
      */
+@Transactional
     @DeleteMapping("/servers/{bindingId}")
     public Map<String, Object> removeServer(@PathVariable Long bindingId) {
         serverBindingService.removeServer(bindingId);
@@ -622,6 +650,7 @@ public class EmuManagementController {
      * 从服务器同步成员到好友号池
      * 如果服务器成员数据为空，自动触发抓取流程
      */
+@Transactional
     @PostMapping("/servers/{serverId}/sync-friends")
     public Map<String, Object> syncFriendsFromServer(@PathVariable Long serverId) {
         Long merchantId = resolveMerchantId();
@@ -883,6 +912,7 @@ public class EmuManagementController {
     /**
      * 分配好友给任务
      */
+@Transactional
     @PostMapping("/friend-pool/assign")
     public Map<String, Object> assignFriendsToTask(@RequestBody Map<String, Object> body) {
         Long serverId = Long.valueOf(body.get("serverId").toString());
@@ -902,6 +932,7 @@ public class EmuManagementController {
     /**
      * 更新好友添加结果
      */
+@Transactional
     @PutMapping("/friend-pool/{memberId}/result")
     public Map<String, Object> updateFriendResult(@PathVariable Long memberId, 
                                                    @RequestBody Map<String, Object> body) {
@@ -926,6 +957,7 @@ public class EmuManagementController {
     /**
      * 重置好友状态
      */
+@Transactional
     @PostMapping("/friend-pool/{memberId}/reset")
     public Map<String, Object> resetFriendStatus(@PathVariable Long memberId) {
         friendPoolService.resetFriendStatus(memberId);
@@ -1122,6 +1154,7 @@ public class EmuManagementController {
     /**
      * 断开指定 Agent 的连接
      */
+@Transactional
     @PostMapping("/agent/disconnect")
     public Map<String, Object> disconnectAgent(@RequestBody Map<String, String> params) {
         String deviceId = params.get("deviceId");
@@ -1137,6 +1170,7 @@ public class EmuManagementController {
     /**
      * 删除指定 Agent 注册记录
      */
+@Transactional
     @PostMapping("/agent/delete")
     public Map<String, Object> deleteAgent(@RequestBody Map<String, String> params) {
         String deviceId = params.get("deviceId");

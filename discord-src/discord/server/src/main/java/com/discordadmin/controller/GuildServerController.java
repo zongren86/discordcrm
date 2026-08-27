@@ -15,11 +15,13 @@ import com.discordadmin.repository.GuildServerRepository;
 import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.GuildService;
 import org.springframework.data.domain.Page;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Transactional(readOnly = true)
 @RestController
 @RequestMapping("/api/guild-servers")
 public class GuildServerController {
@@ -97,6 +99,7 @@ public class GuildServerController {
             .map(server -> toServerMap(server, accountMap))
             .collect(Collectors.toList());
     }
+@Transactional
 
     @PostMapping
     public Map<String, Object> saveServer(@RequestBody Map<String, Object> payload) {
@@ -170,6 +173,7 @@ public class GuildServerController {
         GuildServer saved = guildService.saveGuildServer(server);
         return toServerMap(saved);
     }
+@Transactional
 
     @DeleteMapping("/{id}")
     public Map<String, Object> deleteServer(@PathVariable Long id) {
@@ -211,6 +215,7 @@ public class GuildServerController {
         result.put("count", count);
         return result;
     }
+@Transactional
 
     @PostMapping("/{id}/match-friends")
     public Map<String, Object> matchFriends(@PathVariable Long id) {
@@ -389,6 +394,7 @@ public class GuildServerController {
     /**
      * 清理跨服务器重复成员（保留最早采集的，删除其余）
      */
+@Transactional
     @PostMapping("/duplicates/clean")
     public Map<String, Object> cleanCrossServerDuplicates() {
         return guildService.cleanCrossServerDuplicates();

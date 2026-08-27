@@ -26,12 +26,14 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Transactional(readOnly = true)
 @RestController
 @RequestMapping("/api/guild-members")
 public class GuildMembersController {
