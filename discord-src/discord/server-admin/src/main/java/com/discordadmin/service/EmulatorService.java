@@ -47,6 +47,7 @@ public class EmulatorService {
     private final String configFile = configDir + "/config.json";
     /** 当前运行平台 */
     private final boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+    private final boolean isMac = System.getProperty("os.name", "").toLowerCase().contains("mac");
     /** 运行期可被前端覆盖的路径（初始化时由配置/平台默认值填充） */
     private String resolvedMumutoolPath;
     private String resolvedAdbPath;
@@ -123,6 +124,7 @@ public class EmulatorService {
 
     private String resolveMumuToolPath() {
         if (mumutoolPath != null && !mumutoolPath.isBlank()) return mumutoolPath;
+        if (!isWindows && !isMac) return null;
         if (isWindows) {
             // Windows：MuMu 安装位置由用户选择，无法固定。探测常见位置，失败则提示配置。
             String[] candidates = {
@@ -142,6 +144,7 @@ public class EmulatorService {
 
     private String resolveAdbPath() {
         if (adbPath != null && !adbPath.isBlank()) return adbPath;
+        if (!isWindows && !isMac) return null;
         if (isWindows) {
             String androidHome = System.getenv("ANDROID_HOME");
             if (androidHome != null && !androidHome.isBlank()) {
@@ -167,6 +170,7 @@ public class EmulatorService {
 
     private String resolveVmsBasePath() {
         if (vmsBasePath != null && !vmsBasePath.isBlank()) return vmsBasePath;
+        if (!isWindows && !isMac) return null;
         if (isWindows) {
             String localApp = System.getenv("LOCALAPPDATA");
             if (localApp != null && !localApp.isBlank()) {
@@ -360,6 +364,11 @@ public class EmulatorService {
      * 确保 MuMuPlayer 守护进程运行中（每次都重新探测端口，自动拉起缺失的进程）
      */
     private synchronized void ensureMumuDaemon() {
+        if (!isWindows && !isMac) {
+            log.warn("MuMu 守护进程仅支持 Windows/macOS，当前平台不支持，跳过守护进程拉起");
+            return;
+        }
+
         // 先探测端口，若已就绪直接返回
         if (isDaemonReady()) {
             daemonReady = true;
@@ -367,7 +376,7 @@ public class EmulatorService {
         }
 
         // 守护进程未运行，尝试拉起 MuMuPlayer
-        log.info("MuMu 守护进程未就绪，尝试启动 MuMuPlayer（platform={}）...", isWindows ? "windows" : "mac");
+        log.info("MuMu 守护进程未就绪，尝试启动 MuMuPlayer（platform={}）...", isWindows ? "windows" : (isMac ? "mac" : "linux"));
         try {
             if (isWindows) {
                 // Windows：MuMu 主程序位于用户安装目录，由 mumutool 同级目录推断
@@ -377,7 +386,7 @@ public class EmulatorService {
                 } else {
                     log.warn("未找到 MuMuPlayer 主程序，请确认 mumutool 路径配置正确: {}", resolvedMumutoolPath);
                 }
-            } else {
+            } else if (isMac) {
                 new ProcessBuilder("open", "-a", "MuMuPlayer").start();
             }
         } catch (Exception e) {
