@@ -19,6 +19,9 @@
         <el-table-column label="#" width="60" align="center">
           <template #default="{ $index }">{{ $index + 1 }}</template>
         </el-table-column>
+        <el-table-column prop="id" label="ID" width="70" align="center">
+          <template #default="{ row }">{{ row.id }}</template>
+        </el-table-column>
         <el-table-column prop="displayName" label="姓名" min-width="120">
           <template #default="{ row }">
             <span class="cell-strong">{{ row.displayName || '-' }}</span>
@@ -41,8 +44,13 @@
             <el-tag v-else type="primary" size="small" effect="light">普通账号</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="merchantName" label="所属商户" min-width="140">
-          <template #default="{ row }">{{ row.merchantName || '-' }}</template>
+        <el-table-column prop="merchantName" label="所属商户" min-width="180">
+          <template #default="{ row }">
+            <template v-if="row.merchantName">
+              {{ row.merchantName }}<span v-if="row.merchantId" class="cell-hint">（{{ row.merchantId }}）</span>
+            </template>
+            <span v-else>-</span>
+          </template>
         </el-table-column>
         <el-table-column label="分配角色" min-width="320">
           <template #default="{ row }">
