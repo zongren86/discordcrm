@@ -67,12 +67,14 @@ public class EmuInstanceService {
 
     private Long resolveMerchantId() {
         Long id = SecurityUtils.currentMerchantId();
-        return id != null ? id : 1L;
+        if (id == null) throw new RuntimeException("当前用户未绑定商户，无法操作模拟器");
+        return id;
     }
 
     private Long resolveUserId() {
         Long id = SecurityUtils.currentUserId();
-        return id != null ? id : 1L;
+        if (id == null) throw new RuntimeException("无法获取当前用户ID，请重新登录");
+        return id;
     }
 
     /**
@@ -88,17 +90,7 @@ public class EmuInstanceService {
         return null;
     }
 
-    private Long resolveEffectiveUserId(String deviceId) {
-        AgentRegistration agent = resolveSelectedAgent(deviceId);
-        if (agent != null && agent.getUserId() != null) return agent.getUserId();
-        return resolveUserId();
-    }
 
-    private Long resolveEffectiveMerchantId(String deviceId) {
-        AgentRegistration agent = resolveSelectedAgent(deviceId);
-        if (agent != null && agent.getMerchantId() != null) return agent.getMerchantId();
-        return resolveMerchantId();
-    }
 
 
     /**
@@ -106,8 +98,8 @@ public class EmuInstanceService {
      * 管理后台以数据库数据为准，始终返回数据库中的记录
      */
     public List<Map<String, Object>> getCurrentUserInstances(String deviceId) {
-        Long merchantId = resolveEffectiveMerchantId(deviceId);
-        Long userId = resolveEffectiveUserId(deviceId);
+        Long merchantId = resolveMerchantId();
+        Long userId = resolveUserId();
         log.info("获取模拟器列表: deviceId={}, merchantId={}, userId={}", deviceId, merchantId, userId);
         
         // 1. 直接从数据库查询（管理后台以数据库为准）
@@ -951,38 +943,32 @@ public class EmuInstanceService {
      * 启动后自动打开 Discord（如果已安装）
      */
     @Transactional
-    public Map<String, Object> startInstance(int index) {
+    public Map<String, Object> startInstance(int index, String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
         
-        log.info("startInstance 开始: index={}, merchantId={}, userId={}", index, merchantId, userId);
+        log.info("startInstance 开始: index={}, deviceId={}, merchantId={}, userId={}", index, deviceId, merchantId, userId);
 
         EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%d, userId=%s)", index, merchantId, userId)));
 
-        // 检查是否有在线 Agent
-        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
-        boolean useAgent = !onlineAgents.isEmpty();
-        log.info("startInstance: 在线Agent数量={}, useAgent={}", onlineAgents.size(), useAgent);
+        boolean useAgent = agent != null;
+        log.info("startInstance: deviceId={}, agent={}, useAgent={}", deviceId, agent != null ? agent.getDeviceId() : "null", useAgent);
 
-        // 如果没有在线 Agent，检查本地模拟器是否存在
         if (!useAgent && !mumuClientService.emulatorExists(index)) {
             throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法启动。请先创建模拟器。", index));
         }
-        // 如果有在线 Agent，信任 Agent 端的模拟器状态，跳过本地检查
         if (useAgent) {
-            log.info("Agent 模式: 通过 Agent {} 启动模拟器 #{}", onlineAgents.get(0).getDeviceId(), index);
+            log.info("Agent 模式: 通过 Agent {} 启动模拟器 #{}", agent.getDeviceId(), index);
         }
 
-        // 异步启动，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                // 1. 启动模拟器（优先通过 Agent，否则本地）
                 Map<String, Object> startResult;
-                if (useAgent) {
+                if (agent != null) {
                     Map<String, Object> params = new HashMap<>();
-                    params.put("index", index - 1); // 转为 Mumu 0-based 索引
-                    AgentRegistration agent = onlineAgents.get(0);
+                    params.put("index", index - 1);
                     startResult = webSocketService.sendCommandAndWait(agent.getDeviceId(), "START_EMULATOR", params)
                         .get(60, TimeUnit.SECONDS);
                     log.info("通过 Agent {} 启动模拟器 #{}", agent.getDeviceId(), index);
@@ -991,16 +977,14 @@ public class EmuInstanceService {
                 }
                 log.info("模拟器 #{} 启动指令执行完成, discordInstalled={}", index, startResult.get("discordInstalled"));
 
-                // 2. 等待模拟器完全启动（8秒）
                 Thread.sleep(8000);
 
-                // 3. 从启动结果或物理数据判断是否安装了 Discord
                 boolean discordInstalled = Boolean.TRUE.equals(startResult.get("discordInstalled"));
                 if (!discordInstalled) {
-                    // 从物理模拟器数据再检查一次（Agent模式通过Agent获取，本地模式通过本地获取）
                     List<Map<String, Object>> physList;
-                    if (useAgent) {
-                        physList = webSocketService.getEmulatorsFromAgent(userId);
+                    if (agent != null) {
+                        physList = webSocketService.getEmulatorsFromAgentByDeviceId(agent.getDeviceId());
+                        if (physList == null) physList = webSocketService.getEmulatorsFromAgent(userId);
                     } else {
                         physList = mumuClientService.getAllEmulatorsWithError();
                     }
@@ -1018,33 +1002,27 @@ public class EmuInstanceService {
                     }
                 }
 
-                // 4. 先更新安装状态到数据库
                 EmuInstance inst = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(
-                        resolveMerchantId(), resolveUserId(), index).orElse(null);
+                        merchantId, userId, index).orElse(null);
                 if (inst != null) {
                     inst.setDiscordInstalled(discordInstalled);
                     inst.setUpdatedAt(Instant.now());
                     instanceRepository.save(inst);
                 }
 
-                // 5. 如果已安装 Discord，打开并等待加载后检查登录状态
                 if (discordInstalled) {
                     log.info("模拟器 #{} Discord 已安装，自动打开...", index);
                     try {
                         mumuClientService.launchDiscord(index);
                         log.info("模拟器 #{} Discord 已自动打开", index);
                         updateDiscordOnHome(index, true);
-                        // 等待 Discord 加载完成
                         Thread.sleep(5000);
-                        // 检查并更新所有 Discord 状态
                         checkAndUpdateDiscordStatus(index);
                     } catch (Exception e) {
                         log.warn("模拟器 #{} 自动打开 Discord 失败: {}", index, e.getMessage());
-                        // 即使打开失败也检查一次状态
                         checkAndUpdateDiscordStatus(index);
                     }
                 } else {
-                    // 未安装 Discord，只更新安装状态
                     log.info("模拟器 #{} 未安装 Discord", index);
                 }
             } catch (Exception e) {
@@ -1052,7 +1030,6 @@ public class EmuInstanceService {
             }
         });
 
-        // 先更新状态为运行中，重置自动加好友状态
         instance.setStatus(EmuInstance.EmuStatus.RUNNING);
         instance.setAutoRunning(false);
         instance.setLastError(null);
@@ -1066,22 +1043,20 @@ public class EmuInstanceService {
      * 停止模拟器 — 异步执行，立即返回
      */
     @Transactional
-    public Map<String, Object> stopInstance(int index) {
+    public Map<String, Object> stopInstance(int index, String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
 
-        log.info("stopInstance 开始: index={}, merchantId={}, userId={}", index, merchantId, userId);
+        log.info("stopInstance 开始: index={}, deviceId={}, merchantId={}, userId={}", index, deviceId, merchantId, userId);
 
-        // 先按精确条件查找
         Optional<EmuInstance> instanceOpt = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index);
         
-        // 如果找不到，回退到只按 merchantId + instanceIndex 查找（兼容旧数据）
         if (instanceOpt.isEmpty()) {
             log.warn("按 merchantId+userId+instanceIndex 查找为空，回退到按 merchantId+instanceIndex 查找");
             instanceOpt = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index);
         }
         
-        // 如果还是找不到，再尝试按 merchantId 查找所有记录，手动匹配 index
         if (instanceOpt.isEmpty()) {
             List<EmuInstance> allByMerchant = instanceRepository.findByMerchantId(merchantId);
             for (EmuInstance emu : allByMerchant) {
@@ -1096,22 +1071,17 @@ public class EmuInstanceService {
         EmuInstance instance = instanceOpt
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
-        // 检查是否有在线 Agent
-        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
-        boolean useAgent = !onlineAgents.isEmpty();
+        boolean useAgent = agent != null;
 
-        // 如果没有在线 Agent，检查本地模拟器是否存在
         if (!useAgent && !mumuClientService.emulatorExists(index)) {
             throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法停止", index));
         }
 
-        // 异步停止，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                if (useAgent) {
+                if (agent != null) {
                     Map<String, Object> params = new HashMap<>();
                     params.put("index", index - 1);
-                    AgentRegistration agent = onlineAgents.get(0);
                     webSocketService.sendCommandAndWait(agent.getDeviceId(), "STOP_EMULATOR", params)
                         .get(60, TimeUnit.SECONDS);
                     log.info("通过 Agent {} 停止模拟器 #{}", agent.getDeviceId(), index);
@@ -1124,7 +1094,6 @@ public class EmuInstanceService {
             }
         });
 
-        // 先更新状态为已停止
         instance.setStatus(EmuInstance.EmuStatus.STOPPED);
         instance.setAutoRunning(false);
         instance.setUpdatedAt(Instant.now());
@@ -1137,22 +1106,20 @@ public class EmuInstanceService {
      * 重启模拟器 — 异步执行，立即返回
      */
     @Transactional
-    public Map<String, Object> restartInstance(int index) {
+    public Map<String, Object> restartInstance(int index, String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
 
-        log.info("restartInstance 开始: index={}, merchantId={}, userId={}", index, merchantId, userId);
+        log.info("restartInstance 开始: index={}, deviceId={}, merchantId={}, userId={}", index, deviceId, merchantId, userId);
 
-        // 先按精确条件查找
         Optional<EmuInstance> instanceOpt = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index);
         
-        // 如果找不到，回退到只按 merchantId + instanceIndex 查找（兼容旧数据）
         if (instanceOpt.isEmpty()) {
             log.warn("按 merchantId+userId+instanceIndex 查找为空，回退到按 merchantId+instanceIndex 查找");
             instanceOpt = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index);
         }
         
-        // 如果还是找不到，再尝试按 merchantId 查找所有记录，手动匹配 index
         if (instanceOpt.isEmpty()) {
             List<EmuInstance> allByMerchant = instanceRepository.findByMerchantId(merchantId);
             for (EmuInstance emu : allByMerchant) {
@@ -1167,23 +1134,17 @@ public class EmuInstanceService {
         EmuInstance instance = instanceOpt
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
-        // 检查是否有在线 Agent
-        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
-        boolean useAgent = !onlineAgents.isEmpty();
+        boolean useAgent = agent != null;
 
-        // 如果没有在线 Agent，检查本地模拟器是否存在
         if (!useAgent && !mumuClientService.emulatorExists(index)) {
             throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法重启", index));
         }
 
-        // 异步重启，不等待完成
         CompletableFuture.runAsync(() -> {
             try {
-                if (useAgent) {
+                if (agent != null) {
                     Map<String, Object> params = new HashMap<>();
                     params.put("index", index - 1);
-                    AgentRegistration agent = onlineAgents.get(0);
-                    // 先停止再启动
                     webSocketService.sendCommandAndWait(agent.getDeviceId(), "STOP_EMULATOR", params)
                         .get(30, TimeUnit.SECONDS);
                     Thread.sleep(3000);
@@ -1199,7 +1160,6 @@ public class EmuInstanceService {
             }
         });
 
-        // 先更新状态为运行中，重置自动加好友状态
         instance.setStatus(EmuInstance.EmuStatus.RUNNING);
         instance.setAutoRunning(false);
         instance.setLastError(null);
@@ -1214,19 +1174,17 @@ public class EmuInstanceService {
      * 串行启动每台模拟器，避免 MuMu 并发启动导致进程异常退出
      */
     @Transactional
-    public List<Map<String, Object>> startAllInstances() {
+    public List<Map<String, Object>> startAllInstances(String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
 
-        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
-        if (!onlineAgents.isEmpty()) {
-            for (AgentRegistration agent : onlineAgents) {
-                try {
-                    webSocketService.sendCommandAndWait(agent.getDeviceId(), "BATCH_START", new HashMap<>())
-                        .get(180, TimeUnit.SECONDS);
-                } catch (Exception e) {
-                    log.warn("Agent {} 启动失败: {}", agent.getDeviceId(), e.getMessage());
-                }
+        if (agent != null) {
+            try {
+                webSocketService.sendCommandAndWait(agent.getDeviceId(), "BATCH_START", new HashMap<>())
+                    .get(180, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("Agent {} 启动失败: {}", agent.getDeviceId(), e.getMessage());
             }
         } else if (localMode) {
             // 获取目标模拟器列表
@@ -1329,19 +1287,17 @@ public class EmuInstanceService {
      * 停止所有模拟器
      */
     @Transactional
-    public List<Map<String, Object>> stopAllInstances() {
+    public List<Map<String, Object>> stopAllInstances(String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
 
-        List<AgentRegistration> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
-        if (!onlineAgents.isEmpty()) {
-            for (AgentRegistration agent : onlineAgents) {
-                try {
-                    webSocketService.sendCommandAndWait(agent.getDeviceId(), "BATCH_STOP", new HashMap<>())
-                        .get(180, TimeUnit.SECONDS);
-                } catch (Exception e) {
-                    log.warn("Agent {} 停止失败: {}", agent.getDeviceId(), e.getMessage());
-                }
+        if (agent != null) {
+            try {
+                webSocketService.sendCommandAndWait(agent.getDeviceId(), "BATCH_STOP", new HashMap<>())
+                    .get(180, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("Agent {} 停止失败: {}", agent.getDeviceId(), e.getMessage());
             }
         } else if (localMode) {
             mumuClientService.stopAllEmulators();
@@ -1597,23 +1553,20 @@ public class EmuInstanceService {
      * index 是 1-based（数据库 instanceIndex，V001=1）
      * 注意：不在此方法上使用 @Transactional，因为物理操作耗时较长会导致连接泄漏
      */
-    public Map<String, Object> deleteInstance(int index) {
+    public Map<String, Object> deleteInstance(int index, String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
 
-        // 添加权限校验日志
-        log.info("删除模拟器请求: merchantId={}, userId={}, index={}, localMode={}", merchantId, userId, index, localMode);
+        log.info("删除模拟器请求: index={}, deviceId={}, merchantId={}, userId={}, localMode={}", index, deviceId, merchantId, userId, localMode);
 
-        // 先按精确条件查找
         Optional<EmuInstance> instanceOpt = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index);
         
-        // 如果找不到，回退到只按 merchantId + instanceIndex 查找（兼容旧数据）
         if (instanceOpt.isEmpty()) {
             log.warn("按 merchantId+userId+instanceIndex 查找为空，回退到按 merchantId+instanceIndex 查找");
             instanceOpt = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index);
         }
         
-        // 如果还是找不到，再尝试按 merchantId 查找所有记录，手动匹配 index
         if (instanceOpt.isEmpty()) {
             List<EmuInstance> allByMerchant = instanceRepository.findByMerchantId(merchantId);
             for (EmuInstance emu : allByMerchant) {
@@ -1633,25 +1586,20 @@ public class EmuInstanceService {
         List<String> actions = new ArrayList<>();
 
         try {
-            // 1. 获取物理模拟器的 0-based index
-            int mumuTargetIndex = index - 1; // 数据库是1-based，物理是0-based
+            int mumuTargetIndex = index - 1;
 
-            boolean agentOnline = true;
+            boolean agentOnline = agent != null;
             boolean physicalExists = false;
 
             if (localMode) {
                 mumuTargetIndex = findMumuIndexByNameOrIndex(instance.getName(), index);
                 physicalExists = mumuTargetIndex >= 0;
             } else {
-                // 先检查 Agent 是否在线
-                java.util.List<?> onlineAgents = webSocketService.getOnlineAgentsByUserId(userId);
-                agentOnline = onlineAgents != null && !onlineAgents.isEmpty();
                 if (!agentOnline) {
                     log.warn("模拟器 #{}: Agent 离线，无法检查/删除物理实例", index);
                     actions.add("Agent 离线");
                 } else {
-                    // Agent 在线，检查物理实例是否存在
-                    physicalExists = webSocketService.emulatorExistsOnAgent(userId, mumuTargetIndex);
+                    physicalExists = webSocketService.emulatorExistsOnAgentByDeviceId(agent.getDeviceId(), mumuTargetIndex);
                 }
             }
 
@@ -1681,7 +1629,7 @@ public class EmuInstanceService {
                     if (localMode) {
                         mumuClientService.stopEmulator(index);
                     } else {
-                        webSocketService.stopEmulatorOnAgent(userId, mumuTargetIndex);
+                        webSocketService.stopEmulatorOnAgentByDeviceId(agent.getDeviceId(), mumuTargetIndex);
                     }
                     log.info("模拟器 #{} 停止命令已发送", index);
                     actions.add("已发送停止命令");
@@ -1698,7 +1646,7 @@ public class EmuInstanceService {
                         mumuClientService.deleteEmulator(index);
                         deleteOk = true;
                     } else {
-                        Map<String, Object> deleteResult = webSocketService.deleteEmulatorOnAgent(userId, mumuTargetIndex);
+                        Map<String, Object> deleteResult = webSocketService.deleteEmulatorOnAgentByDeviceId(agent.getDeviceId(), mumuTargetIndex);
                         deleteOk = Boolean.TRUE.equals(deleteResult.get("success"));
                         if (!deleteOk) {
                             log.error("Agent 返回物理删除失败: {}", deleteResult.getOrDefault("message", "未知错误"));
@@ -1720,7 +1668,7 @@ public class EmuInstanceService {
                                 if (localMode) {
                                     stillExists = mumuClientService.emulatorExists(index);
                                 } else {
-                                    stillExists = webSocketService.emulatorExistsOnAgent(userId, mumuTargetIndex);
+                                    stillExists = webSocketService.emulatorExistsOnAgentByDeviceId(agent.getDeviceId(), mumuTargetIndex);
                                 }
                                 if (stillExists) {
                                     log.error("物理模拟器 #{} 删除后仍然存在 (第{}次验证)", index, attempt);
@@ -1776,7 +1724,8 @@ public class EmuInstanceService {
                 if (localMode) {
                     remainingPhysical = mumuClientService.getAllEmulators();
                 } else {
-                    remainingPhysical = webSocketService.getEmulatorsFromAgent(userId);
+                    remainingPhysical = agent != null ? webSocketService.getEmulatorsFromAgentByDeviceId(agent.getDeviceId()) : null;
+                    if (remainingPhysical == null) remainingPhysical = webSocketService.getEmulatorsFromAgent(userId);
                 }
                 self.rebuildIndicesInTransaction(merchantId, userId, remainingPhysical);
                 actions.add("已重建剩余记录的索引");
@@ -2004,8 +1953,8 @@ public class EmuInstanceService {
      */
     public Map<String, Object> getPhysicalStatus(String deviceId) {
         Map<String, Object> status = new HashMap<>();
-        Long userId = resolveEffectiveUserId(deviceId);
-        Long merchantId = resolveEffectiveMerchantId(deviceId);
+        Long userId = resolveUserId();
+        Long merchantId = resolveMerchantId();
 
         List<AgentRegistration> allAgents = webSocketService.getOnlineAgentsByUserId(resolveUserId());
         AgentRegistration selectedAgent = resolveSelectedAgent(deviceId);

@@ -1,0 +1,16 @@
+# ==========================================
+# Local 开发环境
+# ==========================================
+
+logging:
+  level:
+    root: INFO
+    com.discordadmin: DEBUG
+
+spring:
+  jpa:
+    show-sql: true
+
+app:
+  upload:
+    path: ${user.home}/.discord-admin/uploads

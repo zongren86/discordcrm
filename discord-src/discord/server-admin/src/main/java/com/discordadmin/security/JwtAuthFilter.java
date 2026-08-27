@@ -16,7 +16,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.List;
+import java.util.*;
 
 @Component
 public class JwtAuthFilter extends OncePerRequestFilter {
@@ -46,8 +46,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 Long merchantId = claims.get("merchantId", Long.class);
                 Long userId = claims.get("userId", Long.class);
 
+                Set<Long> roleIdsSet = new HashSet<>();
+                List<?> roleIdsList = claims.get("roleIds", List.class);
+                if (roleIdsList != null) {
+                    for (Object o : roleIdsList) {
+                        if (o instanceof Number) roleIdsSet.add(((Number) o).longValue());
+                    }
+                }
+
                 var authToken = new UsernamePasswordAuthenticationToken(
-                        new AuthenticatedAgent(agentId, userId, username, accountType, merchantId),
+                        new AuthenticatedAgent(agentId, userId, username, accountType, merchantId, roleIdsSet),
                         null,
                         List.of(new SimpleGrantedAuthority("ROLE_" + (accountType == 0 ? "ADMIN" : "USER")))
                 );
@@ -63,6 +71,6 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
-    public record AuthenticatedAgent(Long agentId, Long userId, String username, Integer accountType, Long merchantId) {
+    public record AuthenticatedAgent(Long agentId, Long userId, String username, Integer accountType, Long merchantId, Set<Long> roleIds) {
     }
 }

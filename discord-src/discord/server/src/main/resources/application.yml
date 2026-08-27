@@ -76,10 +76,7 @@ jwt:
   secret: ${JWT_SECRET:discord-admin-dev-secret-key-change-me-in-prod-0123456789}
   expire-hours: 24
 
-logging:
-  level:
-    com.discordadmin: debug
-    net.dv8tion.jda: warn
+# logback-spring.xml 统一管理日志级别，此处不单独配置
 
 # 启动性能优化
 spring.main.allow-bean-definition-overriding: false

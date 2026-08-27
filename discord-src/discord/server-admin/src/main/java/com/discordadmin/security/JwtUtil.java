@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
-import java.util.Date;
+import java.util.*;
 
 @Component
 public class JwtUtil {
@@ -22,7 +22,7 @@ public class JwtUtil {
         this.expireMillis = expireHours * 3600 * 1000;
     }
 
-    public String generateToken(Long agentId, Long userId, String username, Integer accountType, Long merchantId) {
+    public String generateToken(Long agentId, Long userId, String username, Integer accountType, Long merchantId, Set<Long> roleIds) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + expireMillis);
         var builder = Jwts.builder()
@@ -35,6 +35,9 @@ public class JwtUtil {
                 .signWith(key);
         if (merchantId != null) {
             builder.claim("merchantId", merchantId);
+        }
+        if (roleIds != null && !roleIds.isEmpty()) {
+            builder.claim("roleIds", new ArrayList<>(roleIds));
         }
         return builder.compact();
     }

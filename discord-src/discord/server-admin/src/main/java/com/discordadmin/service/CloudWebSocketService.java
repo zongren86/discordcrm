@@ -926,6 +926,68 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         return false;
     }
 
+
+    public boolean emulatorExistsOnAgentByDeviceId(String deviceId, int index) {
+        List<Map<String, Object>> emulators = getEmulatorsFromAgentByDeviceId(deviceId);
+        if (emulators == null) emulators = getEmulatorsFromAgent(null);
+        if (emulators == null) return false;
+        for (Map<String, Object> emu : emulators) {
+            Object idx = emu.get("index");
+            if (idx instanceof Number && ((Number) idx).intValue() == index) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public Map<String, Object> stopEmulatorOnAgentByDeviceId(String deviceId, int index) {
+        Map<String, Object> result = new HashMap<>();
+        if (deviceId == null) {
+            result.put("success", false);
+            result.put("message", "deviceId 为空");
+            return result;
+        }
+        Map<String, Object> params = new HashMap<>();
+        params.put("index", index);
+        try {
+            Map<String, Object> r = sendCommandAndWait(deviceId, "STOP_EMULATOR", params).get(30, TimeUnit.SECONDS);
+            if ("SUCCESS".equals(r.get("status"))) {
+                result.put("success", true);
+            } else {
+                result.put("success", false);
+                result.put("message", r.getOrDefault("message", "停止失败"));
+            }
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    public Map<String, Object> deleteEmulatorOnAgentByDeviceId(String deviceId, int index) {
+        Map<String, Object> result = new HashMap<>();
+        if (deviceId == null) {
+            result.put("success", false);
+            result.put("message", "deviceId 为空");
+            return result;
+        }
+        Map<String, Object> params = new HashMap<>();
+        params.put("index", index);
+        try {
+            Map<String, Object> r = sendCommandAndWait(deviceId, "DELETE_EMULATOR", params).get(30, TimeUnit.SECONDS);
+            if ("SUCCESS".equals(r.get("status"))) {
+                result.put("success", true);
+            } else {
+                result.put("success", false);
+                result.put("message", r.getOrDefault("message", "删除失败"));
+            }
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
     /**
      * 断开指定 Agent 的连接
      */

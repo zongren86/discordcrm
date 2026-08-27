@@ -31,4 +31,7 @@ public interface AgentRepository extends JpaRepository<Agent, Long> {
      */
     @Query("SELECT a FROM Agent a JOIN a.discordAccounts da WHERE da.id IN :accountIds")
     List<Agent> findAllAgentsByDiscordAccountIds(@Param("accountIds") Set<Long> accountIds);
+
+    @Query("SELECT a FROM Agent a LEFT JOIN FETCH a.roleIds WHERE a.id = :id")
+    Optional<Agent> findByIdWithRoleIds(@Param("id") Long id);
 }

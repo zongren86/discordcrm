@@ -31,4 +31,10 @@ public interface RoleRepository extends JpaRepository<Role, Long> {
 
     @Query("SELECT DISTINCT r FROM Role r LEFT JOIN FETCH r.features WHERE r.id IN :ids")
     List<Role> findByIdInWithFeatures(@Param("ids") Collection<Long> ids);
+
+    /**
+     * 原生SQL直接查角色关联的feature code，绕过Hibernate ManyToMany映射问题
+     */
+    @Query(value = "SELECT f.code FROM role_feature rf JOIN sys_features f ON rf.feature_id = f.id WHERE rf.role_id IN (:roleIds)", nativeQuery = true)
+    List<String> findFeatureCodesByRoleIds(@Param("roleIds") Collection<Long> roleIds);
 }

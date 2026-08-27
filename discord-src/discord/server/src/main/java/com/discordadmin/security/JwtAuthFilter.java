@@ -13,6 +13,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
+import com.discordadmin.config.MdcTraceFilter;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -52,6 +53,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                         List.of(new SimpleGrantedAuthority("ROLE_" + (accountType == 0 ? "ADMIN" : "USER")))
                 );
                 SecurityContextHolder.getContext().setAuthentication(authToken);
+                MdcTraceFilter.setUserContext(userId, merchantId);
                 log.debug("JWT 验证成功: 用户={}, URI={}", username, uri);
             } catch (JwtException | IllegalArgumentException e) {
                 log.warn("JWT 验证失败: URI={}, 原因={}", uri, e.getMessage());

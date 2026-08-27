@@ -1282,13 +1282,13 @@ async function batchAction(action) {
         let resp
         switch (actionConfig.method) {
           case 'start':
-            resp = await emuApi.post(`/emulators/${index}/start`)
+            resp = await emuApi.post(`/emulators/${index}/start`, null, { params: { deviceId: selectedDeviceId.value } })
             break
           case 'stop':
-            resp = await emuApi.post(`/emulators/${index}/stop`)
+            resp = await emuApi.post(`/emulators/${index}/stop`, null, { params: { deviceId: selectedDeviceId.value } })
             break
           case 'restart':
-            resp = await emuApi.post(`/emulators/${index}/restart`)
+            resp = await emuApi.post(`/emulators/${index}/restart`, null, { params: { deviceId: selectedDeviceId.value } })
             break
           case 'install':
             resp = await friendApi.post(`/discord/${index}/install`)
@@ -1300,7 +1300,7 @@ async function batchAction(action) {
             resp = await friendApi.post(`/autoadd/${index}/stop`)
             break
           case 'delete':
-            resp = await emuApi.delete(`/emulators/${index}`)
+            resp = await emuApi.delete(`/emulators/${index}`, { params: { deviceId: selectedDeviceId.value } })
             break
         }
         results.push({ index, success: true })
@@ -2385,7 +2385,7 @@ async function startAll() {
     await ElMessageBox.confirm('确定要启动所有模拟器吗？', '确认', { type: 'warning' })
     emuLoading.value = true
     showLoading('全部启动中...')
-    const resp = await emuApi.post('/emulators/startAll', null, { params: { count: targetCount.value } })
+    const resp = await emuApi.post('/emulators/startAll', null, { params: { count: targetCount.value, deviceId: selectedDeviceId.value } })
     emulators.value = Array.isArray(resp.data) ? resp.data : []
     ElMessage.success('启动指令已发送')
   } catch (e) {
@@ -2401,7 +2401,7 @@ async function stopAll() {
     await ElMessageBox.confirm('确定要停止所有模拟器吗？', '确认', { type: 'warning' })
     emuLoading.value = true
     showLoading('全部停止中...')
-    const resp = await emuApi.post('/emulators/stopAll')
+    const resp = await emuApi.post('/emulators/stopAll', null, { params: { deviceId: selectedDeviceId.value } })
     emulators.value = Array.isArray(resp.data) ? resp.data : []
     ElMessage.success('停止指令已发送')
   } catch (e) {
@@ -2418,7 +2418,7 @@ async function restartAll() {
     emuLoading.value = true
     showLoading('全部重启中...')
     for (const emu of emulators.value.filter(e => e.status === 'RUNNING')) {
-      try { await emuApi.post(`/emulators/${emu.index}/restart`) } catch {}
+      try { await emuApi.post(`/emulators/${emu.index}/restart`, null, { params: { deviceId: selectedDeviceId.value } }) } catch {}
     }
     ElMessage.success('重启指令已发送')
     await fetchEmulators()
@@ -2442,7 +2442,7 @@ async function startEmulator(index) {
   operatingEmulators.value.add(index)
   showLoading(`模拟器 #${index} 启动中...`)
   try {
-    const resp = await emuApi.post(`/emulators/${index}/start`)
+    const resp = await emuApi.post(`/emulators/${index}/start`, null, { params: { deviceId: selectedDeviceId.value } })
     ElMessage.success(`模拟器 #${index} 启动指令已发送`)
     emulators.value = emulators.value.map(e => e.index === index ? resp.data : e)
     setTimeout(() => fetchEmulators(), 3000)
@@ -2458,7 +2458,7 @@ async function stopEmulator(index) {
   operatingEmulators.value.add(index)
   showLoading(`模拟器 #${index} 停止中...`)
   try {
-    const resp = await emuApi.post(`/emulators/${index}/stop`)
+    const resp = await emuApi.post(`/emulators/${index}/stop`, null, { params: { deviceId: selectedDeviceId.value } })
     ElMessage.success(`模拟器 #${index} 停止指令已发送`)
     emulators.value = emulators.value.map(e => e.index === index ? resp.data : e)
     setTimeout(() => fetchEmulators(), 3000)
@@ -2474,7 +2474,7 @@ async function restartEmulator(index) {
   operatingEmulators.value.add(index)
   showLoading(`模拟器 #${index} 重启中...`)
   try {
-    const resp = await emuApi.post(`/emulators/${index}/restart`)
+    const resp = await emuApi.post(`/emulators/${index}/restart`, null, { params: { deviceId: selectedDeviceId.value } })
     ElMessage.success(`模拟器 #${index} 重启指令已发送`)
     emulators.value = emulators.value.map(e => e.index === index ? resp.data : e)
     setTimeout(() => fetchEmulators(), 3000)
@@ -2509,7 +2509,7 @@ async function deleteEmulator(index) {
   try {
     await ElMessageBox.confirm(`确定要删除模拟器 #${index} 吗？`, '确认', { type: 'warning' })
     showLoading(`模拟器 #${index} 删除中...`)
-    const resp = await emuApi.delete(`/emulators/${index}`)
+    const resp = await emuApi.delete(`/emulators/${index}`, { params: { deviceId: selectedDeviceId.value } })
     if (resp.data?.success) {
       ElMessage.success('删除成功')
       await fetchEmulators()

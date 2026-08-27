@@ -1,0 +1,26 @@
+# ==========================================
+# Production 环境配置（101.47.41.149）
+# 激活方式: --spring.profiles.active=prod
+# ==========================================
+
+# 日志级别（logback-spring.xml 已处理大部分，这里兜底）
+logging:
+  level:
+    root: INFO
+    com.discordadmin: INFO
+    net.dv8tion.jda: WARN
+
+# 生产服务器日志路径（systemd unit 设置 LOG_PATH=/var/log/discord-admin）
+# logback-spring.xml 通过 ${LOG_PATH:-${user.home}/.discord-admin/logs} 读取
+
+# JPA 生产关掉 SQL 打印
+spring:
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: none
+
+# 上传路径
+app:
+  upload:
+    path: /opt/discord-admin/uploads

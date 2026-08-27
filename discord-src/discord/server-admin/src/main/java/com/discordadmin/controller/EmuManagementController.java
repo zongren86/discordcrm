@@ -152,48 +152,52 @@ public class EmuManagementController {
      * 启动模拟器
      */
     @PostMapping("/emulators/{index}/start")
-    public Map<String, Object> startEmulator(@PathVariable int index) {
-        return instanceService.startInstance(index);
+    public Map<String, Object> startEmulator(@PathVariable int index,
+                                             @RequestParam(required = false) String deviceId) {
+        return instanceService.startInstance(index, deviceId);
     }
 
     /**
      * 停止模拟器
      */
     @PostMapping("/emulators/{index}/stop")
-    public Map<String, Object> stopEmulator(@PathVariable int index) {
-        return instanceService.stopInstance(index);
+    public Map<String, Object> stopEmulator(@PathVariable int index,
+                                            @RequestParam(required = false) String deviceId) {
+        return instanceService.stopInstance(index, deviceId);
     }
 
     /**
      * 重启模拟器
      */
     @PostMapping("/emulators/{index}/restart")
-    public Map<String, Object> restartEmulator(@PathVariable int index) {
-        return instanceService.restartInstance(index);
+    public Map<String, Object> restartEmulator(@PathVariable int index,
+                                               @RequestParam(required = false) String deviceId) {
+        return instanceService.restartInstance(index, deviceId);
     }
 
     /**
      * 启动所有模拟器
      */
     @PostMapping("/emulators/startAll")
-    public List<Map<String, Object>> startAllEmulators() {
-        return instanceService.startAllInstances();
+    public List<Map<String, Object>> startAllEmulators(@RequestParam(required = false) String deviceId) {
+        return instanceService.startAllInstances(deviceId);
     }
 
     /**
      * 停止所有模拟器
      */
     @PostMapping("/emulators/stopAll")
-    public List<Map<String, Object>> stopAllEmulators() {
-        return instanceService.stopAllInstances();
+    public List<Map<String, Object>> stopAllEmulators(@RequestParam(required = false) String deviceId) {
+        return instanceService.stopAllInstances(deviceId);
     }
 
     /**
      * 删除模拟器
      */
     @DeleteMapping("/emulators/{index}")
-    public Map<String, Object> deleteEmulator(@PathVariable int index) {
-        return instanceService.deleteInstance(index);
+    public Map<String, Object> deleteEmulator(@PathVariable int index,
+                                              @RequestParam(required = false) String deviceId) {
+        return instanceService.deleteInstance(index, deviceId);
     }
 
     /**

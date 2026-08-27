@@ -11,6 +11,8 @@ import com.discordadmin.repository.MerchantRepository;
 import com.discordadmin.security.JwtAuthFilter;
 import com.discordadmin.security.JwtUtil;
 import com.discordadmin.security.SecurityUtils;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -32,6 +34,9 @@ public class AuthController {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     public record LoginRequest(String username, String password) {}
     public record LoginResponse(String token, Long agentId, String username,
                                 String displayName, Integer accountType,
@@ -52,7 +57,7 @@ public class AuthController {
         }
 
         String token = jwtUtil.generateToken(agent.getId(), agent.getId(), agent.getUsername(),
-                agent.getAccountType(), agent.getMerchantId());
+                agent.getAccountType(), agent.getMerchantId(), agent.getRoleIds());
 
         String merchantName = null;
         if (agent.getMerchantId() != null) {
@@ -73,7 +78,7 @@ public class AuthController {
         if (agent == null) {
             throw new IllegalArgumentException("未登录");
         }
-        Agent agentEntity = agentRepository.findById(agent.agentId()).orElse(null);
+        Agent agentEntity = agentRepository.findByIdWithRoleIds(agent.agentId()).orElse(null);
         if (agentEntity == null) {
             throw new IllegalArgumentException("用户不存在");
         }
@@ -148,7 +153,7 @@ public class AuthController {
         if (agent == null) {
             throw new IllegalArgumentException("未登录");
         }
-        Agent agentEntity = agentRepository.findById(agent.agentId()).orElse(null);
+        Agent agentEntity = agentRepository.findByIdWithRoleIds(agent.agentId()).orElse(null);
         if (agentEntity == null) {
             throw new IllegalArgumentException("用户不存在");
         }
@@ -236,7 +241,7 @@ public class AuthController {
         result.put("accountType", agent.accountType());
         result.put("merchantId", agent.merchantId());
 
-        Agent agentEntity = agentRepository.findById(agent.agentId()).orElse(null);
+        Agent agentEntity = agentRepository.findByIdWithRoleIds(agent.agentId()).orElse(null);
         if (agentEntity != null) {
             result.put("displayName", agentEntity.getDisplayName());
             List<String> permissions = getAgentPermissions(agentEntity);
@@ -265,14 +270,36 @@ public class AuthController {
         java.util.Set<String> permissions = new java.util.HashSet<>();
         
         boolean hasCustomRoles = agent.getRoleIds() != null && !agent.getRoleIds().isEmpty();
+        log.info("【DEBUG】getAgentPermissions: userId={}, roleIds={}, hasCustomRoles={}", agent.getId(), agent.getRoleIds(), hasCustomRoles);
         
         if (hasCustomRoles) {
-            List<Role> customRoles = roleRepository.findByIdInWithFeatures(agent.getRoleIds());
-            for (Role customRole : customRoles) {
-                for (SysFeature feature : customRole.getFeatures()) {
-                    permissions.add(feature.getCode());
-                }
-            }
+            // 诊断：直接查 role_feature 表的 COUNT 和所有 role_id=1 的行
+            List<Object[]> rawRows = entityManager.createNativeQuery("SELECT role_id, feature_id FROM role_feature WHERE role_id = 1").getResultList();
+            log.info("【DEBUG】  直接查role_feature WHERE role_id=1: rows={}", rawRows);
+            
+            // 诊断：查 sys_features 总数
+            Long featureCount = (Long) entityManager.createNativeQuery("SELECT COUNT(*) FROM sys_features").getSingleResult();
+            log.info("【DEBUG】  sys_features 总数: {}", featureCount);
+            
+            // 诊断：查 role_feature 总数
+            Long rfCount = (Long) entityManager.createNativeQuery("SELECT COUNT(*) FROM role_feature").getSingleResult();
+            log.info("【DEBUG】  role_feature 总数: {}", rfCount);
+            
+            // 诊断：查 sys_features 表中的 feature id 189 对应的 code
+            List<Object[]> check = entityManager.createNativeQuery("SELECT id, code FROM sys_features WHERE id = 189").getResultList();
+            log.info("【DEBUG】  sys_features WHERE id=189: {}", check);
+            
+            // 诊断：查 role_feature 表中的 feature_id 189
+            List<Object[]> rf189 = entityManager.createNativeQuery("SELECT role_id, feature_id FROM role_feature WHERE feature_id = 189").getResultList();
+            log.info("【DEBUG】  role_feature WHERE feature_id=189: {}", rf189);
+            
+            // 真正的查询
+            List<String> featureCodes = entityManager.createNativeQuery(
+                "SELECT f.code FROM role_feature rf JOIN sys_features f ON rf.feature_id = f.id WHERE rf.role_id = 1"
+            ).getResultList();
+            log.info("【DEBUG】  JOIN查询结果: {} (count={})", featureCodes, featureCodes.size());
+            
+            permissions.addAll(featureCodes);
         } else {
             Integer accountType = agent.getAccountType();
             if (accountType == null) {
@@ -316,6 +343,7 @@ public class AuthController {
             }
         }
         
+        log.info("【DEBUG】  最终权限: {}", permissions);
         return List.copyOf(permissions);
     }
 
@@ -363,4 +391,3 @@ public class AuthController {
         );
     }
 }
-
