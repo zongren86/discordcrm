@@ -152,16 +152,8 @@ public class AgentDownloadHelper {
         String userDir = System.getProperty("user.dir");
         log.info("downloadAgentPackage user.dir: {}", userDir);
 
-        // 优先找 ./mumu-agent（server-admin 子项目自带）
-        File localDir = new File(userDir, "mumu-agent");
-        log.info("Trying ./mumu-agent (优先): {}, exists: {}, isDir: {}", localDir, localDir.exists(), localDir.isDirectory());
-        if (localDir.isDirectory()) {
-            return localDir;
-        }
-
-        // 再找 ../mumu-agent（根目录兄弟）
         File siblingDir = new File(userDir, "../mumu-agent");
-        log.info("Trying ../mumu-agent (fallback): {}, exists: {}, isDir: {}", siblingDir, siblingDir.exists(), siblingDir.isDirectory());
+        log.info("Trying ../mumu-agent (唯一源码目录): {}, exists: {}, isDir: {}", siblingDir, siblingDir.exists(), siblingDir.isDirectory());
         if (siblingDir.isDirectory()) {
             return siblingDir;
         }
