@@ -1671,11 +1671,14 @@ class MuMuController {
     }
 
     async deleteEmulator(index) {
+        let deletedOk = false;
+        let lastError = '';
+
         try {
             // 先尝试停止模拟器再删除
             try {
                 await this.stopEmulator(index);
-                await new Promise(resolve => setTimeout(resolve, 1500));
+                await new Promise(resolve => setTimeout(resolve, 1000));
             } catch (e) {
                 console.warn(`[MuMu] 删除前停止模拟器${index}失败: ${e.message}`);
             }
@@ -1688,30 +1691,97 @@ class MuMuController {
                 if (cliPath) {
                     try {
                         const result = spawnSync(cliPath, ['delete', String(index)], { timeout: 15000, encoding: 'utf8', cwd: path.dirname(cliPath) });
-                        if (result.error) throw result.error;
-                        console.log(`[MuMu] mumu-cli delete 模拟器${index} 成功`);
-                        return { success: true, message: '删除成功' };
+                        if (result.error) {
+                            throw new Error(result.error.message);
+                        }
+                        if (result.status !== 0) {
+                            const errMsg = (result.stderr || result.stdout || '').trim();
+                            console.warn(`[MuMu] mumu-cli delete 退出码=${result.status}, stderr=${errMsg}`);
+                            lastError = `mumu-cli退出码${result.status}: ${errMsg}`;
+                        } else {
+                            console.log(`[MuMu] mumu-cli delete 模拟器${index} 执行成功(退出码=0)`);
+                            deletedOk = true;
+                        }
                     } catch (e) {
-                        console.warn(`[MuMu] mumu-cli delete 失败: ${e.message}, 尝试 mumutool 和手动删除`);
+                        console.warn(`[MuMu] mumu-cli delete 异常: ${e.message}, 尝试 mumutool 和手动删除`);
+                        lastError = e.message;
                     }
+                } else {
+                    console.warn(`[MuMu] 未找到 mumu-cli.exe, 尝试 mumutool`);
                 }
             }
 
+            // 后验证：通过 getEmulators 确认物理模拟器是否真的没了
+            if (deletedOk) {
+                await new Promise(r => setTimeout(r, 1500));
+                try {
+                    const afterList = await this.getEmulators();
+                    const stillExists = afterList.some(e => e.index === index);
+                    if (stillExists) {
+                        console.error(`[MuMu] ❌ mumu-cli delete 后模拟器${index}仍然存在！`);
+                        deletedOk = false;
+                        lastError = 'mumu-cli删除执行成功但模拟器仍存在';
+                    } else {
+                        console.log(`[MuMu] ✅ mumu-cli delete 后确认模拟器${index}已不存在`);
+                        return { success: true, message: '删除成功' };
+                    }
+                } catch (ve) {
+                    console.warn(`[MuMu] 后验证异常: ${ve.message}, 继续尝试其他方式`);
+                }
+            }
+
+            // 尝试 mumutool delete
             if (this.mumutoolPath) {
-                const result = await this.execMumutool(['delete', String(index)]);
-                if (result.errcode === 0) {
-                    return { success: true, message: '删除成功' };
-                } else {
-                    console.warn(`[MuMu] mumutool 删除模拟器失败: ${result.message}, 尝试手动删除`);
+                try {
+                    const result = await this.execMumutool(['delete', String(index)]);
+                    if (result.errcode === 0) {
+                        deletedOk = true;
+                        console.log(`[MuMu] mumutool delete 模拟器${index} 成功(errcode=0)`);
+                        // 后验证
+                        await new Promise(r => setTimeout(r, 1500));
+                        try {
+                            const afterList = await this.getEmulators();
+                            const stillExists = afterList.some(e => e.index === index);
+                            if (stillExists) {
+                                console.error(`[MuMu] ❌ mumutool delete 后模拟器${index}仍然存在！`);
+                                deletedOk = false;
+                                lastError = 'mumutool删除执行成功但模拟器仍存在';
+                            } else {
+                                console.log(`[MuMu] ✅ mumutool delete 后确认模拟器${index}已不存在`);
+                                return { success: true, message: '删除成功' };
+                            }
+                        } catch (ve) {
+                            console.warn(`[MuMu] mumutool后验证异常: ${ve.message}`);
+                        }
+                    } else {
+                        lastError = `mumutool errcode=${result.errcode}: ${result.message || ''}`;
+                        console.warn(`[MuMu] mumutool 删除模拟器失败: ${result.message}`);
+                    }
+                } catch (e) {
+                    console.warn(`[MuMu] mumutool delete 异常: ${e.message}`);
+                    lastError = e.message;
                 }
             }
 
             // Fallback: 手动删除模拟器数据目录
             const deleteResult = await this.deleteEmulatorData(index);
             if (deleteResult.success) {
-                return { success: true, message: '删除成功(手动清理)' };
+                await new Promise(r => setTimeout(r, 1000));
+                try {
+                    const afterList = await this.getEmulators();
+                    const stillExists = afterList.some(e => e.index === index);
+                    if (stillExists) {
+                        console.error(`[MuMu] ❌ 手动删除后模拟器${index}仍然存在！`);
+                        return { success: false, message: '手动删除成功但模拟器仍存在' };
+                    }
+                    console.log(`[MuMu] ✅ 手动删除后确认模拟器${index}已不存在`);
+                    return { success: true, message: '删除成功(手动清理)' };
+                } catch (ve) {
+                    console.error(`[MuMu] 手动删除后验证异常: ${ve.message}, 视为删除失败`);
+                    return { success: false, message: '手动删除后验证异常: ' + ve.message };
+                }
             }
-            return deleteResult;
+            return { success: false, message: lastError || deleteResult.message || '删除失败' };
         } catch (e) {
             return { success: false, message: e.message };
         }

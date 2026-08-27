@@ -2486,7 +2486,7 @@ async function deleteEmulator(index) {
     const resp = await emuApi.delete(`/emulators/${index}`)
     if (resp.data?.success) {
       ElMessage.success('删除成功')
-      setTimeout(() => fetchEmulators(), 2000)
+      await fetchEmulators()
     }
   } catch (e) {
     if (e !== 'cancel') ElMessage.error('删除失败: ' + (e.response?.data?.message || e.message))

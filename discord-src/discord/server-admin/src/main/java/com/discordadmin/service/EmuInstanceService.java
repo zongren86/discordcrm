@@ -1666,9 +1666,9 @@ public class EmuInstanceService {
                             actions.add("已删除物理实例");
                         }
                     } catch (Exception verifyEx) {
-                        log.warn("验证物理删除状态失败，假设已删除: {}", verifyEx.getMessage());
-                        physicalDeleted = true;
-                        actions.add("物理删除验证异常，假设成功");
+                        log.error("验证物理删除状态失败，视为未删除: {}", verifyEx.getMessage());
+                        physicalDeleted = false;
+                        actions.add("物理删除验证失败: " + verifyEx.getMessage());
                     }
                 }
             } catch (Exception e) {
