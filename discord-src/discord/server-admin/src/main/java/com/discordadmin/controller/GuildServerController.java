@@ -98,6 +98,45 @@ public class GuildServerController {
             .collect(Collectors.toList());
     }
 
+    /**
+     * 账号下拉选项列表（用于筛选条件和新增服务器时选择账号）。
+     * 独立于服务器数据，保证尚未关联服务器的账号也能被选择。
+     */
+    @GetMapping("/discord-accounts")
+    public List<Map<String, Object>> listAccountOptions() {
+        List<DiscordAccount> accounts;
+
+        Long merchantId = SecurityUtils.currentMerchantId();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
+        if (SecurityUtils.isPlatformAdmin()) {
+            // 平台管理员：所有账号
+            accounts = accountRepository.findAll();
+        } else if (!SecurityUtils.isMerchantAdmin() && currentAgentId != null) {
+            // 普通用户：仅自己被分配的账号
+            Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
+            accounts = assignedAccountIds.isEmpty()
+                    ? List.of()
+                    : accountRepository.findByIdIn(new ArrayList<>(assignedAccountIds));
+        } else if (merchantId != null) {
+            // 商户管理员：本商户账号 + 未分配商户的账号
+            accounts = accountRepository.findByMerchantIdOrNull(merchantId);
+        } else {
+            accounts = accountRepository.findByMerchantIdIsNull();
+        }
+
+        return accounts.stream().map(this::toAccountOptionMap).collect(Collectors.toList());
+    }
+
+    private Map<String, Object> toAccountOptionMap(DiscordAccount acc) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", acc.getId());
+        map.put("name", acc.getName());
+        map.put("discordName", acc.getDiscordName());
+        map.put("discordId", acc.getDiscordId());
+        return map;
+    }
+
     @PostMapping
     public Map<String, Object> saveServer(@RequestBody Map<String, Object> payload) {
         Long merchantId = SecurityUtils.currentMerchantId();

@@ -678,6 +678,16 @@ const accountOptions = ref([])
 
 async function fetchAccountOptions() {
   try {
+    // 优先调用独立的账号下拉API（含尚未关联服务器的账号）
+    const accounts = await api.get('/guild-servers/discord-accounts')
+    if (Array.isArray(accounts) && accounts.length > 0) {
+      accountOptions.value = accounts.map(a => ({
+        id: a.id,
+        name: a.name || a.discordName || a.discordId || ('账号' + a.id)
+      }))
+      return
+    }
+    // 兜底：从服务器列表数据中提取（旧逻辑）
     const servers = await api.get('/guild-servers')
     if (Array.isArray(servers)) {
       const accountMap = new Map()
