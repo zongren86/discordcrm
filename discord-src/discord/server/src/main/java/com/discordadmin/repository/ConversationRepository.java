@@ -30,6 +30,10 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
 
     List<Conversation> findByDiscordAccountAndType(DiscordAccount discordAccount, Conversation.ConversationType type);
 
+    /** 排除流失和归档客户，只取活跃会话（PROSPECT / NEW / CONVERTED） */
+    List<Conversation> findByDiscordAccountAndTypeAndStageNotIn(
+            DiscordAccount discordAccount, Conversation.ConversationType type, List<Conversation.Stage> excludeStages);
+
     /** 删除该账号下的所有会话（删账号前调用以避免 FK 违规） */
     List<Conversation> findByDiscordAccount(DiscordAccount discordAccount);
 

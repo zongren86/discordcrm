@@ -137,7 +137,8 @@ public class UserMessagePoller {
      *    例如 322 会话 / 30 * 1s ≈ 10.7s 轮询一次
      * 4. 单会话 HTTP 超时 8s + 重试，任务超时 10s
      */
-    @Scheduled(fixedRate = 1000, initialDelay = 5000)
+    /** 每 5 秒触发一次，分批轮询所有 USER 账号的 DM 会话 */
+    @Scheduled(fixedRate = 5000, initialDelay = 5000)
     public void pollNewMessages() {
         long cycleStart = System.currentTimeMillis();
         long now = System.currentTimeMillis();
@@ -200,7 +201,9 @@ public class UserMessagePoller {
         for (DiscordAccount account : validAccounts) {
             try {
                 List<Conversation> conversations = conversationRepository
-                        .findByDiscordAccountAndType(account, Conversation.ConversationType.DM);
+                        .findByDiscordAccountAndTypeAndStageNotIn(
+                                account, Conversation.ConversationType.DM,
+                                List.of(Conversation.Stage.ARCHIVED, Conversation.Stage.CHURNED));
                 for (Conversation conv : conversations) {
                     allConversations.add(conv);
                     convAccountMap.put(conv.getId(), account);
@@ -1021,8 +1024,9 @@ public class UserMessagePoller {
      * 翻译补偿任务：每30秒扫描最近7天内未翻译的INBOUND消息，触发异步翻译。
      * 解决消息首次入库时翻译可能未触发的问题。
      */
-    @Scheduled(fixedRate = 30000, initialDelay = 15000)
+    // @Scheduled(fixedRate = 30000, initialDelay = 15000)
     public void compensateUntranslatedMessages() {
+        if (true) return;
         try {
             // 查找最近1小时内未翻译的消息（缩小范围提高效率）
             Instant since = Instant.now().minusSeconds(3600);

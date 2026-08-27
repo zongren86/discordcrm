@@ -647,10 +647,25 @@ public class DiscordUserClient {
     public static class DiscordUserApiException extends RuntimeException {
         public final int statusCode;
         public final String rawBody;
+        public final boolean captchaRequired;
         public DiscordUserApiException(int statusCode, String rawBody) {
-            super("Discord API " + statusCode + ": " + truncate(rawBody, 300));
+            super(buildMessage(statusCode, rawBody));
             this.statusCode = statusCode;
             this.rawBody = rawBody;
+            this.captchaRequired = detectCaptcha(rawBody);
+        }
+        public static boolean detectCaptcha(String body) {
+            if (body == null) return false;
+            return body.contains("captcha-required")
+                || body.contains("captcha_key")
+                || body.contains("hcaptcha")
+                || body.contains("captcha_sitekey");
+        }
+        public static String buildMessage(int code, String body) {
+            if (detectCaptcha(body)) {
+                return "Discord API " + code + ": 账号已触发人机验证（hCaptcha），请使用 Discord 客户端登录该账号完成验证后再重试";
+            }
+            return "Discord API " + code + ": " + truncate(body, 300);
         }
         private static String truncate(String s, int n) {
             if (s == null) return "";

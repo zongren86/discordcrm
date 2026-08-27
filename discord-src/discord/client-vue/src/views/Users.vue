@@ -296,7 +296,7 @@ import { api, getUserAccountNumbers, batchLinkAccountNumbers, unlinkAccountNumbe
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
-const isMerchantUser = computed(() => auth.agent?.accountType !== 0)
+const isMerchantUser = computed(() => auth.agent?.accountType !== 0 || auth.agent?.merchantId != null)
 
 const list = ref([])
 const loading = ref(false)
@@ -355,7 +355,7 @@ const createDialog = reactive({
     email: '',
     notes: '',
     accountType: 1,
-    merchantId: null
+    merchantId: isMerchantUser.value ? auth.agent?.merchantId ?? null : null
   }
 })
 

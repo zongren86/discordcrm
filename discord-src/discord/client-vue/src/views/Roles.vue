@@ -33,7 +33,7 @@
             <el-tag v-else type="primary" size="small" effect="light">商户</el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="hasMerchantRole" label="适用商户" min-width="180">
+        <el-table-column v-if="isPlatform" label="适用商户" min-width="180">
           <template #default="{ row }">
             <span v-if="row.roleType !== 'PLATFORM' && row.merchantIds && row.merchantIds.length > 0" class="merchant-tags">
               <el-tag v-for="id in row.merchantIds.slice(0, 3)" :key="id" size="small" effect="light" style="margin:2px 4px 2px 0">
@@ -61,7 +61,7 @@
               <el-button size="small" type="primary" link @click="openEdit(row)">
                 <el-icon><Edit /></el-icon> 编辑
               </el-button>
-              <el-button v-if="row.roleType !== 'PLATFORM'" size="small" type="primary" link @click="openMerchants(row)">
+              <el-button v-if="isPlatform && row.roleType !== 'PLATFORM'" size="small" type="primary" link @click="openMerchants(row)">
                 <el-icon><OfficeBuilding /></el-icon> 适用商户
               </el-button>
               <el-button size="small" type="primary" link @click="openPerm(row)">
@@ -86,7 +86,7 @@
           <el-input v-model="formDialog.form.code" placeholder="英文/下划线，如 custom_sales" :disabled="!!formDialog.editId" />
         </el-form-item>
         <el-form-item label="身份" required>
-          <el-select v-model="formDialog.form.roleType" placeholder="选择身份" style="width:100%">
+          <el-select v-model="formDialog.form.roleType" placeholder="选择身份" style="width:100%" :disabled="!isPlatform">
             <el-option label="商户" value="MERCHANT" />
             <el-option label="平台" value="PLATFORM" />
           </el-select>
@@ -197,7 +197,10 @@ import { ref, reactive, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, Delete, Refresh, Lock, OfficeBuilding } from '@element-plus/icons-vue'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 
+const auth = useAuthStore()
+const isPlatform = computed(() => auth.agent?.accountType === 0 && auth.agent?.merchantId == null)
 const list = ref([])
 const loading = ref(false)
 const catalog = ref([])
