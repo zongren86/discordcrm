@@ -15,17 +15,17 @@ spring:
     password: Dsdb2026!
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      maximum-pool-size: 100
-      minimum-idle: 20
+      maximum-pool-size: 30
+      minimum-idle: 5
       connection-timeout: 30000
       idle-timeout: 300000
       max-lifetime: 1800000
       pool-name: DiscordHikariCP
       connection-test-query: SELECT 1
       # 连接泄漏检测：超过 20 秒未归还的连接视为泄漏
-      leak-detection-threshold: 60000
+      leak-detection-threshold: 30000
       # 优化：每个连接的事务超时后自动回滚
-      transaction-isolation: TRANSACTION_REPEATABLE_READ
+      transaction-isolation: TRANSACTION_READ_COMMITTED
       # 优化：获取连接失败时快速重试，不阻塞
       validation-timeout: 1000
   jpa:

@@ -581,21 +581,31 @@ public class CloudWebSocketService extends TextWebSocketHandler {
      * 优先从内存 Map 获取，如果内存为空则从数据库回退查询
      */
     public List<AgentRegistration> getOnlineAgentsByUserId(Long userId) {
+        // 1) 精确按 userId 匹配
         List<AgentRegistration> result = onlineAgents.values().stream()
             .filter(a -> "ONLINE".equals(a.getStatus()))
             .filter(a -> userId == null || userId.equals(a.getUserId()))
             .collect(java.util.stream.Collectors.toList());
 
+        // 2) 兜底：有任何在线 agent 就返回（默认选中第一个，兼容 agent 配的 userId 和登录账号不一致的场景）
+        if (result.isEmpty()) {
+            result = onlineAgents.values().stream()
+                .filter(a -> "ONLINE".equals(a.getStatus()))
+                .collect(java.util.stream.Collectors.toList());
+            if (!result.isEmpty()) {
+                log.info("userId={} 无精确匹配, 兜底返回全部在线 agent ({} 个)", userId, result.size());
+            }
+        }
+
         if (!result.isEmpty()) {
             return result;
         }
 
-        // 回退：从数据库查询最近 2 分钟内心跳过的 Agent
+        // 3) 最后回退：从数据库查询最近 2 分钟内心跳过的 Agent
         Instant threshold = Instant.now().minusSeconds(120);
-        return agentRepository.findAll().stream()
+        List<AgentRegistration> dbResult = agentRepository.findAll().stream()
             .filter(a -> "ONLINE".equals(a.getStatus()))
             .filter(a -> a.getLastHeartbeatAt() != null && a.getLastHeartbeatAt().isAfter(threshold))
-            .filter(a -> userId == null || userId.equals(a.getUserId()))
             .peek(a -> {
                 if (!onlineAgents.containsKey(a.getDeviceId())) {
                     onlineAgents.put(a.getDeviceId(), a);
@@ -603,6 +613,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 }
             })
             .collect(java.util.stream.Collectors.toList());
+        return dbResult;
     }
     
     public boolean isAgentOnline(String deviceId) {
