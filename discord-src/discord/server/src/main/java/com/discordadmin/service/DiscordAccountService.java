@@ -592,6 +592,9 @@ public class DiscordAccountService {
             account.setLastError(validationMsg);
         }
 
+        account.setTokenValid(tokenValid);
+        if (tokenValid) account.setLastError(null);
+
         account = accountRepository.save(account);
         botManager.startAccount(account.getId());
         // USER 账号：首次同步好友关系和 DM 频道，确保消息轮询能立即工作
