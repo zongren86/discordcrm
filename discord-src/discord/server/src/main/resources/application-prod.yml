@@ -1,26 +1,37 @@
 # ==========================================
-# Production 环境配置（101.47.41.149）
-# 激活方式: --spring.profiles.active=prod
+# Production 环境 — 连生产 MySQL
+# 激活: --spring.profiles.active=prod
+# 数据库密码从环境变量 DB_PASSWORD 读取，绝不硬编码
 # ==========================================
 
-# 日志级别（logback-spring.xml 已处理大部分，这里兜底）
+spring:
+  datasource:
+    url: jdbc:mysql://${DB_HOST:}:${DB_PORT:3306}/${DB_NAME:discordadmin}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC&characterEncoding=UTF-8&useUnicode=true&cachePrepStmts=true&useCompression=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 10
+      connection-timeout: 30000
+      idle-timeout: 300000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+
+  jpa:
+    show-sql: false
+    hibernate:
+      ddl-auto: none
+
 logging:
   level:
     root: INFO
     com.discordadmin: INFO
     net.dv8tion.jda: WARN
 
-# 生产服务器日志路径（systemd unit 设置 LOG_PATH=/var/log/discord-admin）
-# logback-spring.xml 通过 ${LOG_PATH:-${user.home}/.discord-admin/logs} 读取
-
-# JPA 生产关掉 SQL 打印
-spring:
-  jpa:
-    show-sql: false
-    hibernate:
-      ddl-auto: none
-
-# 上传路径
 app:
   upload:
     path: /opt/discord-admin/uploads
+  base-url: ${APP_BASE_URL:http://101.47.41.149:8090}
+
+jwt:
+  secret: ${JWT_SECRET:}  # 生产必须设环境变量，不能用默认值

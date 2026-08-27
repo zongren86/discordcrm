@@ -1,7 +1,6 @@
 package com.discordadmin.controller;
 
 import com.discordadmin.entity.Agent;
-import com.discordadmin.entity.Role;
 import com.discordadmin.entity.SysFeature;
 import com.discordadmin.entity.Merchant;
 import com.discordadmin.repository.AgentRepository;
@@ -109,41 +108,6 @@ public class AuthController {
         Map<String, Object> result = new HashMap<>();
         result.put("featureCodes", featureCodes);
         result.put("menuPaths", menuPaths);
-        return result;
-    }
-
-    @GetMapping("/test-features")
-    public Map<String, Object> testFeatures() {
-        Map<String, Object> result = new HashMap<>();
-        
-        List<SysFeature> allFeatures = featureRepository.findAllByOrderBySortOrderAsc();
-        result.put("totalFeatures", allFeatures.size());
-        
-        List<Map<String, Object>> features = new ArrayList<>();
-        for (SysFeature f : allFeatures) {
-            Map<String, Object> map = new HashMap<>();
-            map.put("id", f.getId());
-            map.put("code", f.getCode());
-            map.put("parentId", f.getParentId());
-            map.put("type", f.getType());
-            map.put("routePath", f.getRoutePath());
-            map.put("sortOrder", f.getSortOrder());
-            features.add(map);
-        }
-        result.put("allFeatures", features);
-        
-        SysFeature merchantFeature = featureRepository.findByCode("merchants").orElse(null);
-        if (merchantFeature != null) {
-            Map<String, Object> merchantMap = new HashMap<>();
-            merchantMap.put("id", merchantFeature.getId());
-            merchantMap.put("code", merchantFeature.getCode());
-            merchantMap.put("parentId", merchantFeature.getParentId());
-            merchantMap.put("type", merchantFeature.getType());
-            result.put("merchantByCode", merchantMap);
-        } else {
-            result.put("merchantByCode", null);
-        }
-        
         return result;
     }
 
@@ -266,39 +230,24 @@ public class AuthController {
         return result;
     }
 
+    /**
+     * 获取用户权限列表
+     * 有自定义角色(roleIds非空)时，直接查数据库role_feature表获取角色分配的权限
+     * 无自定义角色时，按账号类型返回默认权限
+     */
     private List<String> getAgentPermissions(Agent agent) {
         java.util.Set<String> permissions = new java.util.HashSet<>();
         
         boolean hasCustomRoles = agent.getRoleIds() != null && !agent.getRoleIds().isEmpty();
-        log.info("【DEBUG】getAgentPermissions: userId={}, roleIds={}, hasCustomRoles={}", agent.getId(), agent.getRoleIds(), hasCustomRoles);
         
         if (hasCustomRoles) {
-            // 诊断：直接查 role_feature 表的 COUNT 和所有 role_id=1 的行
-            List<Object[]> rawRows = entityManager.createNativeQuery("SELECT role_id, feature_id FROM role_feature WHERE role_id = 1").getResultList();
-            log.info("【DEBUG】  直接查role_feature WHERE role_id=1: rows={}", rawRows);
-            
-            // 诊断：查 sys_features 总数
-            Long featureCount = (Long) entityManager.createNativeQuery("SELECT COUNT(*) FROM sys_features").getSingleResult();
-            log.info("【DEBUG】  sys_features 总数: {}", featureCount);
-            
-            // 诊断：查 role_feature 总数
-            Long rfCount = (Long) entityManager.createNativeQuery("SELECT COUNT(*) FROM role_feature").getSingleResult();
-            log.info("【DEBUG】  role_feature 总数: {}", rfCount);
-            
-            // 诊断：查 sys_features 表中的 feature id 189 对应的 code
-            List<Object[]> check = entityManager.createNativeQuery("SELECT id, code FROM sys_features WHERE id = 189").getResultList();
-            log.info("【DEBUG】  sys_features WHERE id=189: {}", check);
-            
-            // 诊断：查 role_feature 表中的 feature_id 189
-            List<Object[]> rf189 = entityManager.createNativeQuery("SELECT role_id, feature_id FROM role_feature WHERE feature_id = 189").getResultList();
-            log.info("【DEBUG】  role_feature WHERE feature_id=189: {}", rf189);
-            
-            // 真正的查询
+            // 直接查数据库role_feature表，绕过Hibernate ManyToMany关联问题
+            String placeholders = agent.getRoleIds().stream()
+                .map(String::valueOf)
+                .collect(Collectors.joining(","));
             List<String> featureCodes = entityManager.createNativeQuery(
-                "SELECT f.code FROM role_feature rf JOIN sys_features f ON rf.feature_id = f.id WHERE rf.role_id = 1"
+                "SELECT f.code FROM role_feature rf JOIN sys_features f ON rf.feature_id = f.id WHERE rf.role_id IN (" + placeholders + ")"
             ).getResultList();
-            log.info("【DEBUG】  JOIN查询结果: {} (count={})", featureCodes, featureCodes.size());
-            
             permissions.addAll(featureCodes);
         } else {
             Integer accountType = agent.getAccountType();
@@ -343,14 +292,7 @@ public class AuthController {
             }
         }
         
-        log.info("【DEBUG】  最终权限: {}", permissions);
         return List.copyOf(permissions);
-    }
-
-    private java.util.Set<String> getAllFeatureCodes() {
-        return featureRepository.findAllByOrderBySortOrderAsc().stream()
-            .map(SysFeature::getCode)
-            .collect(Collectors.toSet());
     }
 
     private List<String> getPlatformAdminPermissions() {
