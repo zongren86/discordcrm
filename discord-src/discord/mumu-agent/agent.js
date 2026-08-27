@@ -2143,9 +2143,21 @@ async function handleMessage(msg) {
                                 const createdResults = result.return.results || [];
                                 createdIndices = createdResults.map(item => item.index).filter(i => i !== undefined);
                             } else if (result.errcode === 0) {
-                                // 格式3: 只有 errcode: 0，没有具体信息
-                                console.log('[Agent] 解析 create 结果: 成功但无具体索引信息');
-                                // 需要通过扫描获取新创建的模拟器索引
+                                // 格式3: 只有 errcode: 0，没有具体信息 → 扫描物理列表找出新增索引
+                                console.log('[Agent] 解析 create 结果: 成功但无具体索引信息，等待文件系统就绪后扫描');
+                                await new Promise(r => setTimeout(r, 2000));
+                                try {
+                                    const allAfter = await mumu.getEmulators();
+                                    for (const emu of allAfter) {
+                                        if (!existingIndices.has(emu.index)) {
+                                            createdIndices.push(emu.index);
+                                            console.log(`[Agent] 扫描发现新模拟器 index=${emu.index}, name=${emu.name}`);
+                                        }
+                                    }
+                                    console.log(`[Agent] 格式3扫描完成，新增索引: ${createdIndices.join(', ')}`);
+                                } catch (scanErr) {
+                                    console.warn('[Agent] 扫描新创建模拟器失败: ' + scanErr.message);
+                                }
                             } else {
                                 console.warn(`[Agent] 创建失败: ${result.message || JSON.stringify(result)}`);
                                 failCount = neededCount;
@@ -2159,24 +2171,47 @@ async function handleMessage(msg) {
                             }
                         }
                         
-                        // 等待文件系统就绪
-                        await new Promise(r => setTimeout(r, 200));
+                        // 等待文件系统就绪（Mumu创建后需要时间初始化vm.json等文件）
+                        await new Promise(r => setTimeout(r, 2000));
                         
                         // 使用解析出的索引进行配置
+                        // 配置前先停掉可能自动启动的新模拟器（vm.json 配置要停止后修改才生效）
+                        for (const idx of createdIndices) {
+                            try {
+                                const emuInfo = await mumu.getEmulators();
+                                const emu = emuInfo.find(e => e.index === idx);
+                                if (emu && emu.status === 'RUNNING') {
+                                    console.log(`[Agent] 配置前先停止运行中的模拟器 index=${idx}`);
+                                    await mumu.stopEmulator(idx);
+                                    await new Promise(r => setTimeout(r, 1500));
+                                }
+                            } catch (e) {
+                                console.warn(`[Agent] 配置前检查/停止模拟器 ${idx} 失败: ${e.message}`);
+                            }
+                        }
+
                         const configTasks = createdIndices.map(async (index) => {
                             const vmName = 'V' + String(index + 1).padStart(3, '0');
                             console.log('[Agent] 为模拟器 index=' + index + ' 配置: 名称=' + vmName + ', CPU=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
                             
-                            // 优先使用直接编辑 vm.json 方式配置
+                            // 优先使用直接编辑 vm.json 方式配置（带循环重试）
                             let configSuccess = false;
                             try {
-                                const vmResult = mumu.updateVmJsonConfig(index, cpuCores, memoryGb, vmName);
-                                console.log(`[Agent] vm.json 配置参数: index=${index}, cpuCores=${cpuCores}, memoryGb=${memoryGb}, vmName=${vmName}`);
-                                if (vmResult.success) {
-                                    console.log('[Agent] 通过 vm.json 配置模拟器 ' + vmName + ' 成功');
-                                    configSuccess = true;
-                                } else {
-                                    console.warn('[Agent] vm.json 配置失败: ' + vmResult.message + ', 尝试 mumu-cli');
+                                let vmResult = null;
+                                for (let attempt = 1; attempt <= 5; attempt++) {
+                                    vmResult = mumu.updateVmJsonConfig(index, cpuCores, memoryGb, vmName);
+                                    if (vmResult.success) {
+                                        console.log(`[Agent] vm.json 配置成功 (第${attempt}次): index=${index}, cpuCores=${cpuCores}, memoryGb=${memoryGb}, vmName=${vmName}`);
+                                        configSuccess = true;
+                                        break;
+                                    }
+                                    if (attempt < 5) {
+                                        console.warn(`[Agent] vm.json 配置失败 (第${attempt}次): ${vmResult.message}, 400ms后重试...`);
+                                        await new Promise(r => setTimeout(r, 400));
+                                    }
+                                }
+                                if (!configSuccess && vmResult) {
+                                    console.warn('[Agent] vm.json 5次重试都失败: ' + vmResult.message + ', 尝试 mumu-cli');
                                 }
                             } catch (vmErr) {
                                 console.warn('[Agent] vm.json 配置异常: ' + vmErr.message + ', 尝试 mumu-cli');

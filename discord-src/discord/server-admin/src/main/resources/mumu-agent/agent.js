@@ -1745,11 +1745,37 @@ class MuMuController {
                 }
             } else if (os === 'win32') {
                 const candidates = [
-                    path.join(this.mumuPath, 'vms', String(index)),
-                    path.join(process.env.PUBLIC || 'C:\\Users\\Public', 'Documents', 'MuMu', 'vms', `v${index}`)
-                ];
+                    // mumuPath 下的 vms 目录（如 MuMu\vms\0）
+                    path.join(this.mumuPath || '', 'vms', String(index)),
+                    // mumuPath 下的 vms\v{index} 格式
+                    path.join(this.mumuPath || '', 'vms', `v${index}`),
+                    // 公共文档下的 MuMu 数据
+                    path.join(process.env.PUBLIC || 'C:\\Users\\Public', 'Documents', 'MuMu', 'vms', `v${index}`),
+                    path.join(process.env.PUBLIC || 'C:\\Users\\Public', 'Documents', 'MuMuPlayer', 'vms', `v${index}`),
+                    // 用户文档目录
+                    path.join(process.env.USERPROFILE || 'C:\\Users\\Administrator', 'Documents', 'MuMu', 'vms', `v${index}`),
+                    path.join(process.env.USERPROFILE || 'C:\\Users\\Administrator', 'Documents', 'Netease', 'MuMu', 'vms', `v${index}`),
+                    // AppData Local
+                    path.join(process.env.LOCALAPPDATA || '', 'Netease', 'MuMu', 'vms', `v${index}`),
+                    path.join(process.env.LOCALAPPDATA || '', 'NetEase', 'MuMuPlayer', 'vms', `v${index}`)
+                ].filter(p => p && !p.includes('undefined') && !p.includes('null'));
+                console.log(`[MuMu] 搜索模拟器${index}数据目录, candidates=${candidates.length}`);
                 for (const p of candidates) {
-                    if (fs.existsSync(p)) { vmDir = p; break; }
+                    if (fs.existsSync(p)) {
+                        vmDir = p;
+                        console.log(`[MuMu] 找到模拟器数据目录: ${p}`);
+                        break;
+                    }
+                }
+                // 打印 vms 父目录帮助调试
+                if (!vmDir && this.mumuPath) {
+                    const vmsParent = path.join(this.mumuPath, 'vms');
+                    if (fs.existsSync(vmsParent)) {
+                        try {
+                            const entries = fs.readdirSync(vmsParent);
+                            console.log(`[MuMu] mumuPath/vms 目录内容: ${entries.join(', ')}`);
+                        } catch {}
+                    }
                 }
             }
 
