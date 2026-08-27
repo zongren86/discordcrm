@@ -94,14 +94,17 @@ public class EmuServerBindingService {
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
 
-        // 获取所有服务器
+        // 获取服务器（按角色/商户过滤，防止跨商户）
         List<GuildServer> servers;
         if (accountId != null) {
             // 如果指定了账号ID，只获取该账号的服务器
             servers = serverRepository.findByDiscordAccountId(accountId);
-        } else {
-            // 否则获取所有服务器
+        } else if ("PLATFORM_ADMIN".equals(role)) {
+            // 平台管理员：可看全部
             servers = serverRepository.findAll();
+        } else {
+            // 商户管理员/普通用户：只看本商户下的服务器（按 merchantId 或 该商户 DiscordAccount 关联的）
+            servers = serverRepository.findByMerchantId(merchantId);
         }
 
         // 获取可用的Discord账号ID列表（用于显示账号信息）

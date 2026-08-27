@@ -103,11 +103,15 @@ public class EmuAccountBindingService {
         // 获取被占用的账号ID
         Set<Long> occupiedAccountIds = occupancyCheckService.getOccupiedDiscordAccountIds();
 
-        // 根据角色获取账号列表
+        // 根据角色获取账号列表（使用原始 merchantId，不依赖 controller 的 fallback 1L）
+        Long realMerchantId = SecurityUtils.currentMerchantId();
         List<DiscordAccount> accounts;
-        if ("MERCHANT_ADMIN".equals(role)) {
+        if ("PLATFORM_ADMIN".equals(role)) {
+            // 平台管理员：获取全部账号
+            accounts = accountRepository.findAll();
+        } else if ("MERCHANT_ADMIN".equals(role)) {
             // 商户管理员：获取商户所有账号
-            accounts = accountRepository.findByMerchantId(merchantId);
+            accounts = accountRepository.findByMerchantId(realMerchantId != null ? realMerchantId : merchantId);
         } else {
             // 普通用户：获取其关联的账号
             Long agentId = userId;

@@ -13,7 +13,7 @@
 
     <groupId>com.discordadmin</groupId>
     <artifactId>discord-admin-server-admin</artifactId>
-    <version>0.1.2</version>
+    <version>0.1.3</version>
     <name>discord-admin-server-admin</name>
     <description>Discord Bot 聚合客服后台</description>
 
