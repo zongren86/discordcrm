@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "============================================"
-echo "  MuMu Agent (macOS) v2.7.0"
+echo "  MuMu Agent (macOS) v2.13.0"
 echo "============================================"
 echo ""
 

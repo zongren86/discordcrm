@@ -2960,7 +2960,7 @@ async function handleMessage(msg) {
 // ========== 主程序入口 ==========
 function main() {
     // 先尝试读取 config.json 中的版本号（即使 loadConfig 失败也能显示）
-    let agentVersion = 'v2.7.0';
+    let agentVersion = 'v2.13.0';
     try {
         const configPath = path.join(__dirname, 'config.json');
         if (fs.existsSync(configPath)) {
