@@ -2185,88 +2185,109 @@ async function handleMessage(msg) {
                             }
                         }
                         
-                        // 等待文件系统就绪
-                        await new Promise(r => setTimeout(r, 200));
+                        // 等待文件系统就绪 + 模拟器首次启动生成 vm.json
+                        // Windows 上 MuMu 创建后首次启动才生成 vm.json，所以等 2 秒让文件系统稳定
+                        await new Promise(r => setTimeout(r, 2000));
                         
-                        // 使用解析出的索引进行配置
-                        const configTasks = createdIndices.map(async (index) => {
+                        // 串行配置每个模拟器（不能并行，避免多个模拟器同时启动冲突）
+                        const results = [];
+                        for (const index of createdIndices) {
                             const vmName = 'V' + String(index + 1).padStart(3, '0');
-                            console.log('[Agent] 为模拟器 index=' + index + ' 配置: 名称=' + vmName + ', CPU=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
+                            console.log('[Agent] === 模拟器 index=' + index + ' 配置开始 ===');
+                            console.log('[Agent] 目标配置: 名称=' + vmName + ', CPU=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
                             
-                            // 优先使用直接编辑 vm.json 方式配置
+                            // 步骤 A: 启动模拟器触发 vm.json 生成（Windows 上 MuMu 创建后首次启动才生成 vm.json）
+                            let vmFileExisted = false;
+                            try {
+                                const preCheck = mumu.updateVmJsonConfig(index, 0, 0, null);
+                                if (preCheck.success) {
+                                    vmFileExisted = true;
+                                    console.log('[Agent] vm.json 已存在，跳过启动触发');
+                                } else {
+                                    console.log('[Agent] vm.json 不存在，启动模拟器触发生成...');
+                                    try {
+                                        await mumu.startEmulator(index);
+                                        console.log('[Agent] 模拟器 ' + index + ' 已启动，等待 vm.json 生成 (5秒)...');
+                                        await new Promise(r => setTimeout(r, 5000));
+                                        await mumu.stopEmulator(index);
+                                        console.log('[Agent] 模拟器 ' + index + ' 已停止');
+                                        await new Promise(r => setTimeout(r, 2000));
+                                    } catch (startErr) {
+                                        console.warn('[Agent] 启动/停止模拟器触发 vm.json 失败: ' + startErr.message);
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('[Agent] 检查 vm.json 时异常: ' + e.message);
+                            }
+                            
+                            // 步骤 B: 配置 vm.json
                             let configSuccess = false;
                             try {
                                 const vmResult = mumu.updateVmJsonConfig(index, cpuCores, memoryGb, vmName);
-                                console.log(`[Agent] vm.json 配置参数: index=${index}, cpuCores=${cpuCores}, memoryGb=${memoryGb}, vmName=${vmName}`);
+                                console.log('[Agent] vm.json 写入结果: ' + JSON.stringify(vmResult));
                                 if (vmResult.success) {
-                                    console.log('[Agent] 通过 vm.json 配置模拟器 ' + vmName + ' 成功');
+                                    console.log('[Agent] ✅ vm.json 配置成功: ' + vmName + ', cpu=' + cpuCores + ', mem=' + memoryGb + 'GB');
                                     configSuccess = true;
                                 } else {
-                                    console.warn('[Agent] vm.json 配置失败: ' + vmResult.message + ', 尝试 mumu-cli');
+                                    console.warn('[Agent] ❌ vm.json 配置失败: ' + vmResult.message);
                                 }
                             } catch (vmErr) {
-                                console.warn('[Agent] vm.json 配置异常: ' + vmErr.message + ', 尝试 mumu-cli');
+                                console.warn('[Agent] vm.json 配置异常: ' + vmErr.message);
                             }
                             
-                            // 如果 vm.json 失败或未执行，回退到 mumu-cli
+                            // 步骤 C: 回退到 mumu-cli config
                             if (!configSuccess && mumu.mumutoolPath) {
-                                const settingObj = { vmName: vmName };
-                                if (cpuCores > 0) settingObj.vmCpuCount = cpuCores;
-                                if (memoryGb > 0) settingObj.vmMemoryOfMB = memoryGb * 1024;
-                                const settingJson = JSON.stringify(settingObj);
-                                console.log(`[Agent] mumu-cli 配置参数: index=${index}, settingJson=${settingJson}`);
-                                
+                                console.log('[Agent] 回退到 mumutool config...');
                                 try {
-                                    const cfgResult = await mumu.execMumutool(['config', String(index), '--setting', settingJson]);
+                                    const settingObj = { vmName: vmName };
+                                    if (cpuCores > 0) settingObj.vmCpuCount = cpuCores;
+                                    if (memoryGb > 0) settingObj.vmMemoryOfMB = memoryGb * 1024;
+                                    const cfgResult = await mumu.execMumutool(['config', String(index), '--setting', JSON.stringify(settingObj)]);
                                     if (cfgResult.errcode === 0) {
-                                        console.log('[Agent] 通过 mumu-cli 配置模拟器 ' + vmName + ' 成功: cpu=' + cpuCores + '核, 内存=' + memoryGb + 'GB');
+                                        console.log('[Agent] ✅ mumutool config 成功');
                                         configSuccess = true;
                                     } else {
-                                        console.warn('[Agent] mumu-cli 配置模拟器失败: ' + cfgResult.message);
-                                        // 回退：逐字段配置
+                                        console.warn('[Agent] mumutool config 失败: ' + cfgResult.message + ', 尝试逐字段');
                                         try {
-                                            console.log(`[Agent] 逐字段配置参数: index=${index}, vmCpuCount=${cpuCores}, vmMemoryOfMB=${memoryGb * 1024}, vmName=${vmName}`);
-                                            if (cpuCores > 0) {
-                                                await mumu.execMumutool(['config', String(index), 'vmCpuCount', String(cpuCores)]);
-                                            }
-                                            if (memoryGb > 0) {
-                                                await mumu.execMumutool(['config', String(index), 'vmMemoryOfMB', String(memoryGb * 1024)]);
-                                            }
+                                            if (cpuCores > 0) await mumu.execMumutool(['config', String(index), 'vmCpuCount', String(cpuCores)]);
+                                            if (memoryGb > 0) await mumu.execMumutool(['config', String(index), 'vmMemoryOfMB', String(memoryGb * 1024)]);
                                             await mumu.execMumutool(['config', String(index), 'vmName', vmName]);
-                                            console.log('[Agent] mumu-cli 逐字段配置成功: ' + vmName);
+                                            console.log('[Agent] ✅ mumutool 逐字段配置成功');
                                             configSuccess = true;
                                         } catch (fallbackErr) {
-                                            console.warn('[Agent] mumu-cli 逐字段配置也失败: ' + fallbackErr.message);
+                                            console.warn('[Agent] mumutool 逐字段也失败: ' + fallbackErr.message);
                                         }
                                     }
                                 } catch (e) {
-                                    console.warn('[Agent] mumu-cli 配置模拟器异常: ' + e.message);
+                                    console.warn('[Agent] mumutool 配置异常: ' + e.message);
                                 }
                             }
                             
-                            // 验证配置（仅日志，不影响结果）
-                            try {
-                                const verifyResult = await mumu.execMumutool(['info', String(index)]);
-                                console.log('[Agent] 验证模拟器 index=' + index + ': ' + JSON.stringify(verifyResult).substring(0, 200));
-                            } catch (e) {
-                                console.warn('[Agent] 验证模拟器失败: ' + e.message);
+                            // 步骤 D: 配置后强制重启模拟器让 MuMu 重新读配置生效
+                            if (configSuccess) {
+                                try {
+                                    console.log('[Agent] 配置成功，重启模拟器让配置生效...');
+                                    await mumu.startEmulator(index);
+                                    await new Promise(r => setTimeout(r, 3000));
+                                    await mumu.stopEmulator(index);
+                                    await new Promise(r => setTimeout(r, 2000));
+                                    console.log('[Agent] ✅ 模拟器 ' + vmName + ' 重启完成，配置应已生效');
+                                } catch (restartErr) {
+                                    console.warn('[Agent] 重启模拟器失败（配置可能未完全生效）: ' + restartErr.message);
+                                }
                             }
                             
-                            return { index, success: true, name: vmName, cpuCores, memoryGb };
-                        });
-                        // 并行执行所有配置任务
-                        const configResults = await Promise.allSettled(configTasks);
-                        
-                        // 收集结果
-                        for (const configResult of configResults) {
-                            if (configResult.status === 'fulfilled') {
-                                const { index, name } = configResult.value;
+                            results.push({ index, success: true, name: vmName, cpuCores, memoryGb, vmFileExisted, configSuccess });
+                            console.log('[Agent] === 模拟器 index=' + index + ' 配置结束 ===');
+                        }
+                        // 基于串行配置结果计数
+                        for (const r of results) {
+                            if (r.success) {
                                 successCount++;
-                                results.push({ index, success: true, message: '创建成功', name });
-                                console.log(`[Agent] 模拟器 index=${index} 创建完成: ${name}`);
+                                console.log(`[Agent] 模拟器 index=${r.index} (${r.name}) 创建完成, vmFileExisted=${r.vmFileExisted}, configSuccess=${r.configSuccess}`);
                             } else {
                                 failCount++;
-                                console.warn(`[Agent] 模拟器创建失败: ${configResult.reason}`);
+                                console.warn(`[Agent] 模拟器创建失败: ${r.message || '未知'}`);
                             }
                         }
                     } else {
