@@ -13,7 +13,7 @@ import java.time.Instant;
 @Table(name = "friend_exclusion_users", indexes = {
     @Index(name = "idx_excl_merchant_user", columnList = "merchant_id, user_id"),
     @Index(name = "idx_excl_username", columnList = "username")
-})
+}, uniqueConstraints = @UniqueConstraint(name = "uk_excl_merchant_user_username", columnNames = {"merchant_id", "user_id", "username"}))
 @Getter
 @Setter
 public class FriendExclusionUser {

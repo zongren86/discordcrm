@@ -40,6 +40,28 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     private static final int REQUEST_TIMEOUT_SECONDS = 180;
     private static final int HEARTBEAT_TIMEOUT_SECONDS = 90; // 心跳超时时间（秒）
     private static final long HEARTBEAT_DB_SAVE_THROTTLE_MS = 60000L; // 心跳DB保存降频
+    private static final long EMULATORS_CACHE_TTL_MS = 30000L; // GET_EMULATORS 防抖缓存 30 秒
+    private static final Map<String, EmulatorsCache> emulatorsCache = new ConcurrentHashMap<>();
+
+    /** GET_EMULATORS 防抖缓存条目 */
+    private static class EmulatorsCache {
+        final List<Map<String, Object>> data;
+        final long cachedAtMs;
+        EmulatorsCache(List<Map<String, Object>> data, long cachedAtMs) {
+            this.data = data;
+            this.cachedAtMs = cachedAtMs;
+        }
+        boolean isExpired() {
+            return System.currentTimeMillis() - cachedAtMs > EMULATORS_CACHE_TTL_MS;
+        }
+    }
+
+    /** 主动清除指定 deviceId 的 GET_EMULATORS 缓存 —— 在 start/stop/restart/delete/create 后调用 */
+    public void invalidateEmulatorsCache(String deviceId) {
+        if (deviceId != null) {
+            emulatorsCache.remove(deviceId);
+        }
+    }
     
     public CloudWebSocketService(AgentRegistrationRepository agentRepository, 
                                   AgentRepository agentEntityRepository,
@@ -519,6 +541,19 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         message.put("params", params != null ? params : new HashMap<>());
         
         sendMessage(session, message);
+
+        // 写操作命令 —— 执行后自动失效该 deviceId 的 GET_EMULATORS 缓存
+        Set<String> WRITE_COMMANDS = Set.of(
+            "CREATE_EMULATOR", "START_EMULATOR", "STOP_EMULATOR",
+            "RESTART_EMULATOR", "DELETE_EMULATOR",
+            "BATCH_START", "BATCH_STOP"
+        );
+        if (WRITE_COMMANDS.contains(commandType)) {
+            future.thenAccept(r -> {
+                log.debug("写操作 {} 完成，失效 deviceId={} 的 GET_EMULATORS 缓存", commandType, deviceId);
+                emulatorsCache.remove(deviceId);
+            });
+        }
         
         // 返回带有超时的 future，而不是原始 future
         return future.orTimeout(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -728,8 +763,18 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         }
 
         AgentRegistration agent = agents.get(0);
+        String deviceId = agent.getDeviceId();
+
+        // 防抖缓存 —— 30s 内直接返回缓存，避免高频轮询穿透到 Agent
+        EmulatorsCache cached = emulatorsCache.get(deviceId);
+        if (cached != null && !cached.isExpired()) {
+            log.debug("GET_EMULATORS 命中缓存: deviceId={}, 缓存剩余 {}ms", deviceId,
+                      EMULATORS_CACHE_TTL_MS - (System.currentTimeMillis() - cached.cachedAtMs));
+            return cached.data;
+        }
+
         try {
-            Map<String, Object> result = sendCommandAndWait(agent.getDeviceId(), "GET_EMULATORS", null)
+            Map<String, Object> result = sendCommandAndWait(deviceId, "GET_EMULATORS", null)
                 .get(30, TimeUnit.SECONDS);
 
             if ("SUCCESS".equals(result.get("status"))) {
@@ -761,6 +806,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 
                 if (emuList != null) {
                     log.info("从 Agent 获取到 {} 个模拟器", emuList.size());
+                    emulatorsCache.put(deviceId, new EmulatorsCache(emuList, System.currentTimeMillis()));
                     return emuList;
                 }
                 log.warn("获取模拟器列表: emulators 列表为空或不存在, result keys={}", result.keySet());
@@ -891,6 +937,15 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             log.warn("getEmulatorsFromAgentByDeviceId: Agent 不在线, deviceId={}", deviceId);
             return null;
         }
+
+        // 防抖缓存
+        EmulatorsCache cached = emulatorsCache.get(deviceId);
+        if (cached != null && !cached.isExpired()) {
+            log.debug("GET_EMULATORS 命中缓存: deviceId={}, 缓存剩余 {}ms", deviceId,
+                      EMULATORS_CACHE_TTL_MS - (System.currentTimeMillis() - cached.cachedAtMs));
+            return cached.data;
+        }
+
         try {
             Map<String, Object> result = sendCommandAndWait(deviceId, "GET_EMULATORS", null)
                 .get(30, TimeUnit.SECONDS);
@@ -911,6 +966,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 }
                 if (emuList != null) {
                     log.info("从 Agent(deviceId={}) 获取到 {} 个模拟器", deviceId, emuList.size());
+                    emulatorsCache.put(deviceId, new EmulatorsCache(emuList, System.currentTimeMillis()));
                     return emuList;
                 }
                 return new ArrayList<>();

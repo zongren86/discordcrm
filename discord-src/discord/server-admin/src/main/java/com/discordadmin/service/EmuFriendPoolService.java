@@ -174,6 +174,8 @@ public class EmuFriendPoolService {
             serverStats.put("assigned", assigned);
             serverStats.put("success", success);
             serverStats.put("failed", failed);
+            long excluded = memberRepository.countByGuildServerIdAndFriendStatus(serverId, 4);
+            serverStats.put("excluded", excluded);
             
             result.add(serverStats);
         }

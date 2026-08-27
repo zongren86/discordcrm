@@ -33,10 +33,10 @@ spring:
       pool-name: DiscordHikariCP-Prod
       connection-test-query: SELECT 1
       leak-detection-threshold: 20000    # 20s 借出去没还 → WARN 日志 (生产调试神器)
-      validation-timeout: 300            # 连接有效性检测 300ms (快速)
+      validation-timeout: 1000           # 连接有效性检测 1s (DB 有压力时 300ms 太短会误判)
       # 以下为 HikariCP 内部调优 (默认值已不错, 显式列出便于理解)
       initialization-fail-timeout: -1     # 启动时连不上 DB 不崩, 持续重试
-      keepalive-time: 0                   # 保持连接由 max-lifetime 管理, 不用额外 keepalive
+      keepalive-time: 60000               # 每 60s 发 SELECT 1 检测空闲连接存活, 防止 wait_timeout / 网络断连
   jpa:
     open-in-view: false                  # 关键! HTTP 请求结束立即释放连接
     hibernate:

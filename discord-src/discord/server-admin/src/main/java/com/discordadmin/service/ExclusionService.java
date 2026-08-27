@@ -114,7 +114,7 @@ public class ExclusionService {
 
     @Transactional
     public int addUsernames(Long merchantId, Long userId, List<String> rawNames, String source) {
-        // 清洗 + 去重
+        // 清洗 + 内存去重
         Set<String> cleaned = rawNames.stream()
                 .map(s -> s == null ? "" : s.trim())
                 .filter(s -> !s.isEmpty())
@@ -123,17 +123,24 @@ public class ExclusionService {
                 .collect(Collectors.toSet());
         if (cleaned.isEmpty()) return 0;
 
-        int added = 0;
+        // DB 级去重：排除已存在的用户名
+        List<String> existing = userRepo.findUsernamesByMerchantAndUser(merchantId, userId);
+        Set<String> existingSet = new HashSet<>(existing);
+        cleaned.removeAll(existingSet);
+        if (cleaned.isEmpty()) return 0;
+
+        // 批量插入
+        List<FriendExclusionUser> toSave = new ArrayList<>();
         for (String name : cleaned) {
             FriendExclusionUser u = new FriendExclusionUser();
             u.setMerchantId(merchantId);
             u.setUserId(userId);
             u.setUsername(name);
             u.setSource(source);
-            userRepo.save(u);
-            added++;
+            toSave.add(u);
         }
-        return added;
+        userRepo.saveAll(toSave);
+        return toSave.size();
     }
 
     @Transactional

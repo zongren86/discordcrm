@@ -1,0 +1,69 @@
+[Unit]
+Description=Discord Admin Server (server-admin 子项目)
+After=network.target mysql.service
+Documentation=https://github.com/zongren86/discordcrm
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/discord-admin/backend
+Restart=on-failure
+RestartSec=10
+SuccessExitStatus=143
+
+# ==== 环境变量 ====
+# Profile
+Environment=SPRING_PROFILES_ACTIVE=prod
+
+# 数据库 (DB 在 101.47.41.155 共用)
+Environment=DB_HOST=101.47.41.155
+Environment=DB_USER=discordadmin
+Environment=DB_PASSWORD=CHANGE_ME
+Environment=DB_PORT=3306
+Environment=DB_NAME=discordadmin
+
+# JWT (生产必须用随机串 ≥ 32 字节)
+Environment=JWT_SECRET=CHANGE_ME_WITH_RANDOM_32PLUS_CHARS
+
+# 日志路径
+Environment=LOG_PATH=/var/log/discord-admin
+
+# 上传/Agent 路径
+Environment=APP_UPLOAD_PATH=/opt/discord-admin/backend/uploads
+Environment=APP_BASE_URL=http://101.47.41.149:9090
+
+# ==== JVM 参数 ====
+# 4C/8G 服务器: OS 占 ~1G, 堆给 4G, metaspace+direct buffer+线程栈剩余 ~3G
+Environment="JAVA_OPTS=\
+-Xms2g -Xmx4g \
+-XX:+UseG1GC \
+-XX:MaxGCPauseMillis=200 \
+-XX:+HeapDumpOnOutOfMemoryError \
+-XX:+ExitOnOutOfMemoryError \
+-XX:HeapDumpPath=/var/log/discord-admin/ \
+-Duser.timezone=UTC \
+-Dfile.encoding=UTF-8 \
+-Djava.awt.headless=true"
+
+# ==== 启动 ====
+# 部署步骤:
+#   cp server-admin/target/discord-admin-server-admin-0.1.0.jar /opt/discord-admin/backend/
+#   systemctl daemon-reload
+#   systemctl enable --now discord-admin
+#
+# 查看日志:
+#   tail -f /var/log/discord-admin/discord-admin.log
+#   journalctl -u discord-admin -f
+
+ExecStart=/usr/bin/java $JAVA_OPTS -jar discord-admin-server-admin-0.1.0.jar
+StandardOutput=journal
+StandardError=journal
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/discord-admin/backend/uploads /var/log/discord-admin
+
+[Install]
+WantedBy=multi-user.target

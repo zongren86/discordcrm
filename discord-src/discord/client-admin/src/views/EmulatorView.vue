@@ -312,11 +312,25 @@
                           <div class="server-name-text" :title="srv.serverName || srv.name || '-'">
                             {{ srv.serverName || srv.name || '-' }}
                           </div>
-                          <el-tag v-if="selectedServerId === srv.serverId" type="primary" size="small" style="margin-top: 2px">当前</el-tag>
+
                         </div>
                         <div class="stat-item">
                           <div class="stat-value">{{ getFriendPoolStatsForServer(srv.serverId)?.total || 0 }}</div>
                           <div class="stat-label">总数</div>
+                        </div>
+                        <div class="stat-item stat-excluded">
+                          <div class="stat-value-row">
+                            <span class="stat-value">{{ getFriendPoolStatsForServer(srv.serverId)?.excluded || 0 }}</span>
+                            <span class="stat-pct">{{ getRatioForServer(srv.serverId, 'excluded') }}%</span>
+                          </div>
+                          <el-progress
+                            :percentage="getRatioNumForServer(srv.serverId, 'excluded')"
+                            :stroke-width="4"
+                            :show-text="false"
+                            color="#909399"
+                            style="width: 100%"
+                          />
+                          <div class="stat-label">已排除</div>
                         </div>
                         <div class="stat-item stat-pending">
                           <div class="stat-value-row">
@@ -375,12 +389,13 @@
                           <div class="stat-label">失败</div>
                         </div>
                         <div class="stat-item stat-delete">
-                          <el-button 
-                            type="danger" 
-                            size="small" 
-                            link 
+                          <el-button
+                            :icon="Delete"
+                            type="danger"
+                            link
                             @click.stop="removeServer(srv.id)"
-                          >删除</el-button>
+                            title="删除服务器"
+                          />
                         </div>
                       </div>
                     </div>
@@ -835,28 +850,6 @@
               </div>
             </div>
           </el-card>
-
-          <!-- 排除用户清单预览 -->
-          <el-card v-if="exclusionConfig.useCustomList" class="panel" shadow="hover" style="max-width: 700px; margin-top: 16px">
-            <template #header>
-              <div class="panel-header">
-                <el-icon><User /></el-icon>
-                <span>排除用户清单预览（{{ exclusionUsers.length }} 条）</span>
-              </div>
-            </template>
-            <div v-if="exclusionUsers.length > 0" style="max-height: 300px; overflow-y: auto">
-              <el-table :data="exclusionUsers" size="small">
-                <el-table-column prop="username" label="用户名" />
-                <el-table-column prop="source" label="来源" width="100" />
-                <el-table-column label="操作" width="60">
-                  <template #default="{ row }">
-                    <el-button size="small" link type="danger" @click="deleteExclusionUser(row.id)">删除</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </div>
-            <el-empty v-else description="暂无排除用户，点击上方「上传名单」添加" :image-size="60" />
-          </el-card>
         </el-tab-pane>
 
       </el-tabs>
@@ -1024,7 +1017,7 @@
 import {
   Loading, WarningFilled, VideoPlay, VideoPause, Refresh,
   ChatDotRound, Setting, Key, Promotion, CircleCheck, User, Avatar,
-  Edit, Check, Close, Flag, CopyDocument, Download, Guide, InfoFilled, Monitor
+  Delete, Edit, Check, Close, Flag, CopyDocument, Download, Guide, InfoFilled, Monitor
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox, ElDialog, ElSteps, ElStep } from 'element-plus'
 import axios from 'axios'
@@ -1500,7 +1493,7 @@ onMounted(async () => {
   
   // 定时刷新模拟器列表（autoadd运行时每2秒，平时10秒）
   function scheduleRefresh() {
-    const interval = autoAddTaskRunning.value ? 5000 : 15000
+    const interval = autoAddTaskRunning.value ? 10000 : 30000
     refreshTimer = setTimeout(async () => {
       if (!emuLoading.value) {
         await fetchEmulators()
@@ -1587,7 +1580,7 @@ function startHealthCheck() {
     }
     // 同时检查物理状态
     await checkPhysicalStatus()
-  }, 15000) // 每 15s 健康检查一次，autoAdd 运行时由 autoAddStatusPollTimer 负责
+  }, 30000) // 每 30s 健康检查一次，autoAdd 运行时由 autoAddStatusPollTimer 负责
 }
 
 async function checkPhysicalStatus() {
@@ -1885,7 +1878,7 @@ async function installAllDiscord() {
 async function loadExclusionConfig() {
   try {
     const resp = await friendApi.get('/exclusion/config')
-    exclusionConfig.value = resp.data?.config || exclusionConfig.value
+    exclusionConfig.value = resp.data?.data || exclusionConfig.value
   } catch {}
 }
 
@@ -1904,8 +1897,8 @@ async function saveExclusionConfig() {
 async function loadExclusionUsers() {
   try {
     const resp = await friendApi.get('/exclusion/users', { params: { page: 0, size: 100 } })
-    exclusionUsers.value = resp.data?.list || []
-    exclusionUserCount.value = resp.data?.total || 0
+    exclusionUsers.value = resp.data?.content || []
+    exclusionUserCount.value = resp.data?.totalElements || 0
   } catch {}
 }
 
@@ -2239,7 +2232,7 @@ function startFriendPoolPolling() {
   friendPoolPollTimer = setInterval(() => {
     loadFriendPoolStats(true)
     loadAllServerFriendPoolStats()
-  }, 10000) // 从 5s 降为 10s
+  }, 15000) // 好友池轮询 15s（之前 10s）
 }
 
 function stopFriendPoolPolling() {
@@ -2478,7 +2471,7 @@ function startAutoAddStatusPolling() {
   // 每2秒轮询一次
   autoAddStatusPollTimer = setInterval(() => {
     fetchAutoAddStatus()
-  }, 5000) // 从 2s 降为 5s，减少请求风暴
+  }, 10000) // autoAdd 状态轮询 10s（之前 5s），减少请求风暴
 }
 
 // 停止轮询任务状态
@@ -3386,9 +3379,9 @@ function formatCountdown(timestamp) {
 .server-card-stats .stat-item {
   flex: 1;
   text-align: center;
-  padding: 8px 6px;
+  padding: 4px 4px;
   background: var(--color-bg-2);
-  border-radius: 6px;
+  border-radius: 4px;
   min-width: 0;
 }
 
@@ -3431,6 +3424,7 @@ function formatCountdown(timestamp) {
 .server-card-stats .stat-assigned .stat-value { color: #409eff; }
 .server-card-stats .stat-success .stat-value { color: #67c23a; }
 .server-card-stats .stat-failed .stat-value { color: #f56c6c; }
+.server-card-stats .stat-excluded .stat-value { color: #909399; }
 
 .server-card-stats .stat-value-row {
   display: flex;

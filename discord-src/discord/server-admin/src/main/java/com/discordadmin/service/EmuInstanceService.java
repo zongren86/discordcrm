@@ -32,6 +32,9 @@ public class EmuInstanceService {
     private final EmuInstanceRepository instanceRepository;
     private final MumuClientService mumuClientService;
     private final CloudWebSocketService webSocketService;
+    
+    /** 自动同步防抖时间戳 — 避免 DB 为空时每次 getCurrentUserInstances 都发 GET_EMULATORS */
+    private static final java.util.concurrent.atomic.AtomicLong LAST_AUTO_SYNC_MS = new java.util.concurrent.atomic.AtomicLong(0);
     private final ApkManagementService apkManagementService;
     private final DiscordAccountRepository discordAccountRepository;
     private final DiscordService discordService;
@@ -128,62 +131,70 @@ public class EmuInstanceService {
         log.info("数据库中有 {} 条模拟器记录", instances.size());
 
         // 3. 如果 DB 为空，尝试从 Agent 物理列表自动同步创建 DB 记录
+        //    防抖：30秒内只自动同步一次，避免前端轮询每次都发 GET_EMULATORS 命令
         if (instances.isEmpty()) {
-            log.warn("DB 中无模拟器记录，尝试从 Agent 物理列表自动同步");
-            try {
-                List<Map<String, Object>> physicalList = null;
-                if (!localMode) {
-                    if (deviceId != null && !deviceId.isEmpty()) {
-                        physicalList = webSocketService.getEmulatorsFromAgentByDeviceId(deviceId);
-                    }
-                    if (physicalList == null) {
-                        physicalList = webSocketService.getEmulatorsFromAgent(userId);
-                    }
-                } else {
-                    physicalList = mumuClientService.getAllEmulators();
-                }
-                if (physicalList != null && !physicalList.isEmpty()) {
-                    log.info("Agent 返回 {} 个物理模拟器，自动创建 DB 记录", physicalList.size());
-                    for (Map<String, Object> phys : physicalList) {
-                        int physIdx = phys.get("index") instanceof Number ? ((Number) phys.get("index")).intValue() : -1;
-                        if (physIdx < 0) continue;
-                        int dbIndex = physIdx + 1;
-
-                        Optional<EmuInstance> existing = instanceRepository
-                                .findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, dbIndex);
-                        if (existing.isPresent()) continue;
-
-                        String physName = phys.get("name") != null ? phys.get("name").toString() : "V" + String.format("%03d", dbIndex);
-                        int cpuCores = phys.get("cpuCount") instanceof Number ? ((Number) phys.get("cpuCount")).intValue() : 1;
-                        int memoryMB = phys.get("memoryMB") instanceof Number ? ((Number) phys.get("memoryMB")).intValue() : 1024;
-                        int memoryGb = memoryMB / 1024 > 0 ? memoryMB / 1024 : 1;
-
-                        EmuInstance inst = new EmuInstance();
-                        inst.setMerchantId(merchantId);
-                        inst.setUserId(userId);
-                        inst.setName(physName);
-                        inst.setInstanceIndex(dbIndex);
-                        inst.setStatus(mapMumuStatus(phys.get("status") != null ? phys.get("status").toString() : "STOPPED"));
-                        inst.setCpuCores(cpuCores);
-                        inst.setMemoryGb(memoryGb);
-                        inst.setResolution("720x1280");
-                        if (phys.get("adbPort") instanceof Number) {
-                            inst.setAdbPort(((Number) phys.get("adbPort")).intValue());
+            long nowMs = System.currentTimeMillis();
+            long lastSyncMs = LAST_AUTO_SYNC_MS.get();
+            if (nowMs - lastSyncMs >= 30000) {
+                LAST_AUTO_SYNC_MS.set(nowMs);
+                log.warn("DB 中无模拟器记录，尝试从 Agent 物理列表自动同步");
+                try {
+                    List<Map<String, Object>> physicalList = null;
+                    if (!localMode) {
+                        if (deviceId != null && !deviceId.isEmpty()) {
+                            physicalList = webSocketService.getEmulatorsFromAgentByDeviceId(deviceId);
                         }
-                        inst.setDiscordInstalled(false);
-                        inst.setDiscordLoggedIn(false);
-                        inst.setAutoRunning(false);
-                        inst.setAddedCount(0);
-                        inst.setCreatedAt(Instant.now());
-                        inst.setUpdatedAt(Instant.now());
-                        instanceRepository.save(inst);
-                        log.info("自动创建 DB 记录: {} (index={})", physName, dbIndex);
+                        if (physicalList == null) {
+                            physicalList = webSocketService.getEmulatorsFromAgent(userId);
+                        }
+                    } else {
+                        physicalList = mumuClientService.getAllEmulators();
                     }
-                    instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
-                    log.info("自动同步完成，DB 现在有 {} 条记录", instances.size());
+                    if (physicalList != null && !physicalList.isEmpty()) {
+                        log.info("Agent 返回 {} 个物理模拟器，自动创建 DB 记录", physicalList.size());
+                        for (Map<String, Object> phys : physicalList) {
+                            int physIdx = phys.get("index") instanceof Number ? ((Number) phys.get("index")).intValue() : -1;
+                            if (physIdx < 0) continue;
+                            int dbIndex = physIdx + 1;
+
+                            Optional<EmuInstance> existing = instanceRepository
+                                    .findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, dbIndex);
+                            if (existing.isPresent()) continue;
+
+                            String physName = phys.get("name") != null ? phys.get("name").toString() : "V" + String.format("%03d", dbIndex);
+                            int cpuCores = phys.get("cpuCount") instanceof Number ? ((Number) phys.get("cpuCount")).intValue() : 1;
+                            int memoryMB = phys.get("memoryMB") instanceof Number ? ((Number) phys.get("memoryMB")).intValue() : 1024;
+                            int memoryGb = memoryMB / 1024 > 0 ? memoryMB / 1024 : 1;
+
+                            EmuInstance inst = new EmuInstance();
+                            inst.setMerchantId(merchantId);
+                            inst.setUserId(userId);
+                            inst.setName(physName);
+                            inst.setInstanceIndex(dbIndex);
+                            inst.setStatus(mapMumuStatus(phys.get("status") != null ? phys.get("status").toString() : "STOPPED"));
+                            inst.setCpuCores(cpuCores);
+                            inst.setMemoryGb(memoryGb);
+                            inst.setResolution("720x1280");
+                            if (phys.get("adbPort") instanceof Number) {
+                                inst.setAdbPort(((Number) phys.get("adbPort")).intValue());
+                            }
+                            inst.setDiscordInstalled(false);
+                            inst.setDiscordLoggedIn(false);
+                            inst.setAutoRunning(false);
+                            inst.setAddedCount(0);
+                            inst.setCreatedAt(Instant.now());
+                            inst.setUpdatedAt(Instant.now());
+                            instanceRepository.save(inst);
+                            log.info("自动创建 DB 记录: {} (index={})", physName, dbIndex);
+                        }
+                        instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
+                        log.info("自动同步完成，DB 现在有 {} 条记录", instances.size());
+                    }
+                } catch (Exception e) {
+                    log.warn("从 Agent 自动同步 DB 记录失败: {}", e.getMessage());
                 }
-            } catch (Exception e) {
-                log.warn("从 Agent 自动同步 DB 记录失败: {}", e.getMessage());
+            } else {
+                log.debug("DB 为空但 30s 内已自动同步过，跳过本次");
             }
         }
 
@@ -192,66 +203,9 @@ public class EmuInstanceService {
             .map(this::convertToMap)
             .collect(Collectors.toList());
         
-        // 5. 尝试获取物理状态进行合并（仅用于显示状态，不影响数据返回）
-        try {
-            List<Map<String, Object>> physicalList = null;
-            if (!localMode) {
-                // Agent模式: 必须通过 Agent 获取，不能回退到本地模式
-                if (deviceId != null && !deviceId.isEmpty()) {
-                    physicalList = webSocketService.getEmulatorsFromAgentByDeviceId(deviceId);
-                }
-                if (physicalList == null) {
-                    physicalList = webSocketService.getEmulatorsFromAgent(userId);
-                }
-                if (physicalList == null) {
-                    // Agent 离线时，跳过物理状态合并，直接返回数据库数据
-                    log.warn("Agent模式: Agent返回null（可能离线），跳过物理状态合并");
-                    physicalList = new ArrayList<>();
-                }
-            } else {
-                physicalList = mumuClientService.getAllEmulators();
-            }
-            
-            if (physicalList != null && !physicalList.isEmpty()) {
-                log.info("获取到 {} 个物理模拟器，合并状态到返回结果", physicalList.size());
-                
-                for (Map<String, Object> emu : result) {
-                    int dbIndex = ((Number) emu.get("index")).intValue();
-                    int mumuIndex = dbIndex - 1;
-                    
-                    for (Map<String, Object> phys : physicalList) {
-                        int physIdx = -1;
-                        Object idx = phys.get("index");
-                        if (idx instanceof Number) {
-                            physIdx = ((Number) idx).intValue();
-                        }
-                        
-                        if (physIdx == mumuIndex) {
-                            Object status = phys.get("status");
-                            if (status != null) {
-                                emu.put("status", status.toString());
-                            }
-                            Object physName = phys.get("name");
-                            if (physName != null) {
-                                emu.put("name", physName.toString());
-                            }
-                            Object discordInstalled = phys.get("discordInstalled");
-                            if (discordInstalled != null) {
-                                emu.put("discordInstalled", discordInstalled);
-                            }
-                            Object discordLoggedIn = phys.get("discordLoggedIn");
-                            if (discordLoggedIn != null) {
-                                emu.put("discordLoggedIn", discordLoggedIn);
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.warn("获取物理状态失败，返回数据库原始数据: {}", e.getMessage());
-        }
-        
+        // 5. 不再调用 Agent 获取物理状态 — Agent 心跳（30s一次）已通过 syncEmulatorStatusFromHeartbeat
+        //    将每个模拟器的 status/adbPort 同步到 DB，直接返回 DB 数据即可
+        //    之前每 5-15s 发一次 GET_EMULATORS 造成 Agent 频繁返回 TASK_RESULT（每 1-2s 一次），已修复
         return result;
     }
 

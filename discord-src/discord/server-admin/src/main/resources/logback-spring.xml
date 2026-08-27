@@ -3,7 +3,7 @@
     <!-- ========= 控制台 ========= -->
     <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level [%X{traceId:-} u=%X{userId:--} m=%X{merchantId:--}] %logger{36} - %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -16,7 +16,7 @@
             <totalSizeCap>1GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{40} - %msg%n</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level [%X{traceId:-} u=%X{userId:--} m=%X{merchantId:--}] %logger{40} - %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -34,7 +34,7 @@
             <totalSizeCap>200MB</totalSizeCap>
         </rollingPolicy>
         <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %logger{40} - %msg%n%ex{5}</pattern>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] ERROR [%X{traceId:-} u=%X{userId:--} m=%X{merchantId:--}] %logger{40} - %msg%n%ex{5}</pattern>
         </encoder>
     </appender>
 
@@ -58,7 +58,9 @@
         <logger name="com.zaxxer.hikari" level="WARN"/>
         <logger name="org.hibernate.SQL" level="WARN"/>
         <logger name="net.dv8tion.jda" level="WARN"/>
-        <root level="WARN">
+        <logger name="com.discordadmin.config.AccessLogFilter" level="INFO"/>
+        <logger name="com.discordadmin.config.MdcTraceFilter" level="INFO"/>
+        <root level="INFO">
             <appender-ref ref="CONSOLE"/>
             <appender-ref ref="FILE"/>
             <appender-ref ref="ERROR_FILE"/>
