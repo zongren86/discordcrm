@@ -85,8 +85,8 @@
 
         <el-table-column label="账号编号" width="120" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.accountNumberId" type="success" size="small" effect="light">
-              #{{ row.accountNumberId }}
+            <el-tag v-if="row.accountCustomNo != null" type="success" size="small" effect="light">
+              #{{ row.accountCustomNo }}
             </el-tag>
             <span v-else class="cell-hint">-</span>
           </template>

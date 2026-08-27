@@ -138,6 +138,7 @@ public class DiscordAccountService {
         // Map<accountId, numberId>（一个账号绑定一个编号，取第一个，用于列表"账号编号"列显示）
         // 同时收集 numberId 集合，后面查编号链路关联的坐席
         Map<Long, Long> numberIdByAccountId = new HashMap<>();
+        Map<Long, Integer> customNoByAccountId = new HashMap<>();
         Map<Long, Long> accountIdByNumberId = new HashMap<>();
         if (!accounts.isEmpty()) {
             Set<Long> accountIds = accounts.stream().map(DiscordAccount::getId).collect(Collectors.toSet());
@@ -145,6 +146,7 @@ public class DiscordAccountService {
             for (DiscordAccountNumber num : numbers) {
                 if (num.getDiscordAccountId() != null) {
                     numberIdByAccountId.putIfAbsent(num.getDiscordAccountId(), num.getId());
+                    if (num.getCustomNo() != null) customNoByAccountId.putIfAbsent(num.getDiscordAccountId(), num.getCustomNo());
                     accountIdByNumberId.put(num.getId(), num.getDiscordAccountId());
                 }
             }
@@ -170,6 +172,7 @@ public class DiscordAccountService {
                         agentId = matched.getId();
                     }
                     Long accountNumberId = numberIdByAccountId.get(a.getId());
+                    Integer accountCustomNo = customNoByAccountId.get(a.getId());
                     return AccountDto.from(a,
                             botManager.isConnected(a.getId()),
                             botManager.isConnecting(a.getId()),
@@ -178,7 +181,7 @@ public class DiscordAccountService {
                             conversationCountMap.getOrDefault(a.getId(), 0L),
                             0L,
                             agentName, agentUsername, agentId,
-                            accountNumberId);
+                            accountNumberId, accountCustomNo);
                 })
                 .toList();
     }
@@ -457,13 +460,15 @@ public class DiscordAccountService {
         
         // 查询账号关联的编号
         Long accountNumberId = null;
+        Integer accountCustomNo = null;
         List<com.discordadmin.entity.DiscordAccountNumber> numbers = accountNumberRepository.findByDiscordAccountId(a.getId());
         if (!numbers.isEmpty()) {
             accountNumberId = numbers.get(0).getId();
+            accountCustomNo = numbers.get(0).getCustomNo();
         }
         
         return AccountDto.from(a, botManager.isConnected(a.getId()), botManager.isConnecting(a.getId()),
-                tokenValid, friendCount, conversationCount, messageCount, agentName, agentUsername, agentId, accountNumberId);
+                tokenValid, friendCount, conversationCount, messageCount, agentName, agentUsername, agentId, accountNumberId, accountCustomNo);
     }
 
     public AccountDto createAccount(CreateAccountRequest request) {

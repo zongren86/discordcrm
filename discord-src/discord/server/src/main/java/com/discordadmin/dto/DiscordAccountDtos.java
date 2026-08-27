@@ -45,27 +45,27 @@ public class DiscordAccountDtos {
                               String email, String remark, Long merchantId,
                               String agentName, String agentUsername, Long agentId,
                               String tokenExpiresAt, String tokenCheckedAt,
-                              Long accountNumberId) {
+                              Long accountNumberId, Integer accountCustomNo) {
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting) {
-            return from(a, connected, connecting, true, 0L, 0L, 0L, null, null, null, null);
+            return from(a, connected, connecting, true, 0L, 0L, 0L, null, null, null, null, null);
         }
 
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting,
                                       Long friendCount, Long conversationCount, Long messageCount) {
-            return from(a, connected, connecting, true, friendCount, conversationCount, messageCount, null, null, null, null);
+            return from(a, connected, connecting, true, friendCount, conversationCount, messageCount, null, null, null, null, null);
         }
 
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting,
                                       boolean tokenValid, Long friendCount, Long conversationCount, Long messageCount,
                                       String agentName, String agentUsername, Long agentId) {
             return from(a, connected, connecting, tokenValid, friendCount, conversationCount, messageCount,
-                    agentName, agentUsername, agentId, null);
+                    agentName, agentUsername, agentId, null, null);
         }
 
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting,
                                       boolean tokenValid, Long friendCount, Long conversationCount, Long messageCount,
                                       String agentName, String agentUsername, Long agentId,
-                                      Long accountNumberId) {
+                                      Long accountNumberId, Integer accountCustomNo) {
             return new AccountDto(a.getId(), a.getName(), maskToken(a.getToken()),
                     a.getAccountType() != null ? a.getAccountType().name() : "BOT",
                     a.getDiscordId(), a.getDiscordName(), a.getAvatarUrl(),
@@ -78,7 +78,7 @@ public class DiscordAccountDtos {
                     agentName, agentUsername, agentId,
                     a.getTokenExpiresAt() != null ? a.getTokenExpiresAt().toString() : null,
                     a.getTokenCheckedAt() != null ? a.getTokenCheckedAt().toString() : null,
-                    accountNumberId);
+                    accountNumberId, accountCustomNo);
         }
 
         private static String maskToken(String token) {
