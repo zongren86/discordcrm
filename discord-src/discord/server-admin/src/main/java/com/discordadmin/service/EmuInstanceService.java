@@ -166,9 +166,19 @@ public class EmuInstanceService {
                             int memoryMB = phys.get("memoryMB") instanceof Number ? ((Number) phys.get("memoryMB")).intValue() : 1024;
                             int memoryGb = memoryMB / 1024 > 0 ? memoryMB / 1024 : 1;
 
+                            // 解析 deviceId: 优先用方法参数，否则从物理实例获取，否则 fallback 到第一个在线 agent
+                            String autoDevId = deviceId;
+                            if (autoDevId == null || autoDevId.isEmpty()) {
+                                autoDevId = phys.get("deviceId") != null ? phys.get("deviceId").toString() : null;
+                            }
+                            if (autoDevId == null || autoDevId.isEmpty()) {
+                                autoDevId = webSocketService.getOnlineAgentsByUserId(userId)
+                                    .stream().findFirst().map(AgentRegistration::getDeviceId).orElse(null);
+                            }
                             EmuInstance inst = new EmuInstance();
                             inst.setMerchantId(merchantId);
                             inst.setUserId(userId);
+                            inst.setDeviceId(autoDevId);
                             inst.setName(physName);
                             inst.setInstanceIndex(dbIndex);
                             inst.setStatus(mapMumuStatus(phys.get("status") != null ? phys.get("status").toString() : "STOPPED"));
@@ -242,6 +252,8 @@ public class EmuInstanceService {
     public List<Map<String, Object>> setInstanceCount(int count, int cpuCores, int memoryGb, String mode, String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
+        // 最终用于写入 DB 记录的 deviceId —— 在 agentOnline 分支或 localMode 分支中被确定
+        String effectiveDeviceId = deviceId;
 
         if (merchantId == null || userId == null) {
             throw new RuntimeException("用户未登录，无法管理模拟器");
@@ -307,6 +319,14 @@ public class EmuInstanceService {
                 if (healthyInResult >= targetTotal) {
                     physicalSuccess = true;
                     createMethod = "local";
+                    // localMode 下 deviceId fallback 到第一个在线 agent（用于写 DB）
+                    if (effectiveDeviceId == null || effectiveDeviceId.isEmpty()) {
+                        effectiveDeviceId = webSocketService.getAllOnlineAgents()
+                            .stream().findFirst().map(AgentRegistration::getDeviceId).orElse(null);
+                        if (effectiveDeviceId != null) {
+                            log.info("localMode: deviceId fallback 到第一个在线 Agent: {}", effectiveDeviceId);
+                        }
+                    }
                 } else {
                     log.error("MumuManager 返回的健康模拟器数量不足: 需要 {}, 实际健康 {}", targetTotal, healthyInResult);
                     throw new RuntimeException("MumuManager 创建模拟器失败：健康实例数量不足 (需要 " + targetTotal + ", 实际 " + healthyInResult + ")");
@@ -334,6 +354,11 @@ public class EmuInstanceService {
                 if (targetAgents.isEmpty()) {
                     log.warn("未找到当前用户的在线 Agent, userId={}", userId);
                 }
+            }
+            // 将 deviceId 确定为 targetAgents 中的第一个（用于后续写入 DB 记录）
+            if ((effectiveDeviceId == null || effectiveDeviceId.isEmpty()) && !targetAgents.isEmpty()) {
+                effectiveDeviceId = targetAgents.get(0).getDeviceId();
+                log.info("deviceId fallback 到第一个匹配 Agent: {}", effectiveDeviceId);
             }
             for (AgentRegistration agent : targetAgents) {
                 try {
@@ -553,10 +578,10 @@ public class EmuInstanceService {
         // - 设置模式(set)：删除旧记录、按最新物理列表重建
         List<Map<String, Object>> instances;
         if (addMode) {
-            instances = syncInstanceDatabaseIncremental(merchantId, userId, existingInstances, targetTotal,
+            instances = syncInstanceDatabaseIncremental(merchantId, userId, effectiveDeviceId, existingInstances, targetTotal,
                     cpuCores, memoryGb, physicalList);
         } else {
-            instances = syncInstanceDatabase(merchantId, userId, targetTotal, cpuCores, memoryGb, physicalList);
+            instances = syncInstanceDatabase(merchantId, userId, effectiveDeviceId, targetTotal, cpuCores, memoryGb, physicalList);
         }
 
         // 8. 如果 APK 存在，异步启动【新增的】模拟器并自动安装 Discord
@@ -607,7 +632,7 @@ public class EmuInstanceService {
      * 追加模式下增量同步：保留已有 DB 记录，只为新增的物理实例创建新 DB 记录；
      * 已存在的记录（按 instanceIndex 匹配）完全保留原有字段（autoRunning/discordAccountNumber 等）。
      */
-    private List<Map<String, Object>> syncInstanceDatabaseIncremental(Long merchantId, Long userId,
+    private List<Map<String, Object>> syncInstanceDatabaseIncremental(Long merchantId, Long userId, String deviceId,
                                                                      List<EmuInstance> existingInstances,
                                                                      int targetTotal,
                                                                      int cpuCores, int memoryGb,
@@ -686,6 +711,7 @@ public class EmuInstanceService {
             EmuInstance instance = new EmuInstance();
             instance.setMerchantId(merchantId);
             instance.setUserId(userId);
+            instance.setDeviceId(deviceId);
             instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", dbIndex));
             instance.setInstanceIndex(dbIndex);
             instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
@@ -718,7 +744,7 @@ public class EmuInstanceService {
      * 同步模拟器数据库记录 — 使用 Mumu 实际名称建立对应关系
      * Mumu 使用 0-based index (V001=0, V002=1...)，数据库使用 1-based instanceIndex
      */
-    private List<Map<String, Object>> syncInstanceDatabase(Long merchantId, Long userId, int count, int cpuCores, int memoryGb, List<Map<String, Object>> physicalList) {
+    private List<Map<String, Object>> syncInstanceDatabase(Long merchantId, Long userId, String deviceId, int count, int cpuCores, int memoryGb, List<Map<String, Object>> physicalList) {
         // 获取 Mumu 的实际模拟器列表（按 index 排序）
         List<Map<String, Object>> mumuEmulators = new ArrayList<>();
         
@@ -775,6 +801,7 @@ public class EmuInstanceService {
             EmuInstance instance = new EmuInstance();
             instance.setMerchantId(merchantId);
             instance.setUserId(userId);
+            instance.setDeviceId(deviceId);
             instance.setName(mumuName != null ? mumuName : "V" + String.format("%03d", mumuIndex + 1));
             instance.setInstanceIndex(mumuIndex + 1);
             instance.setStatus(mapMumuStatus((String) mumuEmu.get("status")));
@@ -919,11 +946,25 @@ public class EmuInstanceService {
         if (merchantId != null && userId != null) {
             instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index).orElse(null);
         }
+        // fallback 2: merchantId alone（异步线程无 SecurityContext 但 merchantId 从别处补全了）
+        if (instance == null && merchantId != null) {
+            instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index).orElse(null);
+        }
+        // fallback 3: userId alone
+        if (instance == null && userId != null) {
+            List<EmuInstance> byUser = instanceRepository.findByUserId(userId);
+            for (EmuInstance e : byUser) {
+                if (e.getInstanceIndex() != null && e.getInstanceIndex().equals(index)) {
+                    instance = e; break;
+                }
+            }
+        }
+        // fallback 4: deviceId
         if (instance == null && deviceId != null && !deviceId.isEmpty()) {
             instance = instanceRepository.findByDeviceIdAndInstanceIndex(deviceId, index).orElse(null);
         }
         if (instance == null) {
-            throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%d, userId=%s, deviceId=%s)", index, merchantId, userId, deviceId));
+            throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%s, userId=%s, deviceId=%s)", index, merchantId, userId, deviceId));
         }
 
 
@@ -1912,6 +1953,7 @@ public class EmuInstanceService {
         item.put("memoryGb", instance.getMemoryGb());
         item.put("resolution", instance.getResolution());
         item.put("adbPort", instance.getAdbPort());
+        item.put("deviceId", instance.getDeviceId());
         item.put("discordInstalled", instance.getDiscordInstalled());
         item.put("discordLoggedIn", instance.getDiscordLoggedIn());
         item.put("discordOnHome", instance.getDiscordOnHome());

@@ -22,6 +22,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -63,6 +64,7 @@ public class CustomerController {
     }
 
     /** 客户管理列表：所有可访问客户 */
+    @Transactional(readOnly = true)
     @GetMapping
     public List<Map<String, Object>> listCustomers(
             @RequestParam(required = false) String keyword,
@@ -245,6 +247,7 @@ public class CustomerController {
     }
 
     /** 数据导出为JSON */
+    @Transactional(readOnly = true)
     @GetMapping("/export")
     public ResponseEntity<byte[]> exportCustomers(
             @RequestParam(required = false) String keyword,
