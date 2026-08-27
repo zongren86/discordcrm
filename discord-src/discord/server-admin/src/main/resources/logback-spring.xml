@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <!-- ========= 控制台 ========= -->
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ========= 主日志 (按天滚动, 14天, 总量1G) ========= -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH:-./logs}/discord-admin.log</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH:-./logs}/discord-admin.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+            <maxHistory>14</maxHistory>
+            <totalSizeCap>1GB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{40} - %msg%n</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ========= ERROR 单独文件 (30天) ========= -->
+    <appender name="ERROR_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_PATH:-./logs}/error.log</file>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>ERROR</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_PATH:-./logs}/error.%d{yyyy-MM-dd}.log.gz</fileNamePattern>
+            <maxHistory>30</maxHistory>
+            <totalSizeCap>200MB</totalSizeCap>
+        </rollingPolicy>
+        <encoder>
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %logger{40} - %msg%n%ex{5}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- ========= dev ========= -->
+    <springProfile name="dev">
+        <logger name="com.discordadmin" level="DEBUG"/>
+        <logger name="com.zaxxer.hikari" level="INFO"/>
+        <logger name="org.hibernate.SQL" level="DEBUG"/>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </root>
+    </springProfile>
+
+    <!-- ========= prod ========= -->
+    <springProfile name="prod">
+        <logger name="com.discordadmin" level="INFO"/>
+        <logger name="com.discordadmin.discord.UserMessagePoller" level="WARN"/>
+        <logger name="com.discordadmin.service.CloudWebSocketService" level="WARN"/>
+        <logger name="com.zaxxer.hikari" level="WARN"/>
+        <logger name="org.hibernate.SQL" level="WARN"/>
+        <logger name="net.dv8tion.jda" level="WARN"/>
+        <root level="WARN">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ERROR_FILE"/>
+        </root>
+    </springProfile>
+
+    <!-- ========= 默认 ========= -->
+    <springProfile name="default">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+</configuration>

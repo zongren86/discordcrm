@@ -1,39 +1,53 @@
 # ============ 默认通用配置 ============
-# 此文件只放非环境敏感的默认值
-# 环境相关配置请在 application-dev.yml / application-prod.yml 中覆盖
-
-server:
-  port: 9090
-  websocket:
-    max-message-size: 67108864  # 64MB WebSocket最大消息大小
+# 无 profile 时故意连不存在的库，强制必须激活 dev 或 prod profile
+# 激活方式：
+#   本地开发  : java -jar app.jar --spring.profiles.active=dev
+#   生产部署  : java -jar app.jar --spring.profiles.active=prod
+#              (systemd 里设 SPRING_PROFILES_ACTIVE=prod)
 
 spring:
+  # 不设 active，让它走下面故意崩的 datasource
+  # profiles: active: xxx
   servlet:
     multipart:
       enabled: true
-      max-file-size: 500MB
-      max-request-size: 500MB
+      max-file-size: 100MB
+      max-request-size: 100MB
   jpa:
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         jdbc:
           batch_size: 50
+        order_inserts: true
+        order_updates: true
+        fetch_size: 100
   sql:
     init:
       mode: never
+  # 无 profile 时的 datasource — 故意指向不存在的库
+  # 任何忘记激活 profile 的启动都会直接崩
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/__NO_PROFILE_ACTIVATED__?useSSL=false
+    username: no_profile
+    password: ""
+    driver-class-name: com.mysql.cj.jdbc.Driver
 
-# JPA HikariCP 通用连接池参数
-hikari-common: &hikari-common
-  maximum-pool-size: 30
-  minimum-idle: 5
-  connection-timeout: 30000
-  idle-timeout: 300000
-  max-lifetime: 1800000
-  pool-name: DiscordHikariCP
-  connection-test-query: SELECT 1
-  leak-detection-threshold: 30000
-  validation-timeout: 1000
+server:
+  port: 9090
+  tomcat:
+    threads:
+      min-spare: 10
+      max: 80            # 4C/8G → 80线程足够(IO密集但短请求多)
+    accept-count: 100
+    max-connections: 10000
+    connection-timeout: 5000
+    compression:
+      enabled: true
+      mime-types: text/html,text/xml,text/plain,application/json,application/javascript,application/xml
+      min-response-size: 1024
+  websocket:
+    max-message-size: 4194304  # 4MB (之前64MB浪费内存, agent心跳消息远小于这个)
 
 discord:
   bot-token: ${DISCORD_BOT_TOKEN:}
@@ -50,6 +64,7 @@ mumu:
   max-emulator-count: 10
 
 jwt:
+  # 默认给一个开发用的值，但 prod 必须通过环境变量覆盖
   secret: ${JWT_SECRET:discord-admin-dev-secret-key-change-me-in-prod-0123456789}
   expire-hours: 24
 

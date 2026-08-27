@@ -38,4 +38,9 @@ public interface EmuInstanceRepository extends JpaRepository<EmuInstance, Long> 
      * 按用户ID查找所有模拟器实例
      */
     List<EmuInstance> findByUserId(Long userId);
+
+    /**
+     * 按 deviceId + instanceIndex 查找（后台线程无 SecurityContext 时使用）
+     */
+    Optional<EmuInstance> findByDeviceIdAndInstanceIndex(String deviceId, Integer instanceIndex);
 }

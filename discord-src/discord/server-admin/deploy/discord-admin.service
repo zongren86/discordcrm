@@ -1,0 +1,77 @@
+[Unit]
+Description=Discord CRM Admin Backend (server-admin)
+Documentation=https://github.com/zongren86/discordcrm
+After=network.target mysql.service
+Wants=network.target
+# 生产共用 DB 服务器, 等 DB 起来再启
+Requires=mariadb.service || mysql.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/discord-admin/server-admin
+
+# ============ 环境变量 ============
+# 必须! 激活 prod profile + DB 连接 + JWT 密钥
+Environment="SPRING_PROFILES_ACTIVE=prod"
+Environment="DB_HOST=101.47.41.155"
+Environment="DB_USER=root"
+Environment="DB_PASSWORD=CHANGE_ME_DB_PASSWORD"
+Environment="JWT_SECRET=CHANGE_ME_TO_A_RANDOM_SECRET_32_BYTES_LONG"
+Environment="APP_BASE_URL=http://101.47.41.149:9090"
+Environment="LOG_PATH=/var/log/discord-admin"
+Environment="JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64"
+
+# ============ JVM 参数 (4C/8G 生产) ============
+#   -Xms2g -Xmx4g     → 堆: 初始2G, 上限4G (8G 机器留 4G 给 OS + Tomcat native + 堆外内存)
+#   -XX:+UseG1GC       → G1GC (4C+ 推荐, 可预测停顿)
+#   -XX:MaxGCPauseMillis=200 → 目标停顿 < 200ms (G1 调优)
+#   -XX:+HeapDumpOnOutOfMemoryError → OOM 自动 dump, 放 /tmp
+#   -XX:+ExitOnOutOfMemoryError    → OOM 自动退出, 让 systemd 重启
+#   -XX:+UseCompressedOops         → 64GB 以下机器自动开启, 省内存
+#   -Duser.timezone=UTC            → 统一时区
+ExecStart=/usr/bin/bash -c '\
+  exec $JAVA_HOME/bin/java \
+    -Xms2g -Xmx4g \
+    -XX:+UseG1GC \
+    -XX:MaxGCPauseMillis=200 \
+    -XX:G1HeapRegionSize=8m \
+    -XX:+HeapDumpOnOutOfMemoryError \
+    -XX:HeapDumpPath=/var/log/discord-admin/heapdump.hprof \
+    -XX:+ExitOnOutOfMemoryError \
+    -XX:+UseCompressedOops \
+    -XX:+UseStringDeduplication \
+    -Duser.timezone=UTC \
+    -Dfile.encoding=UTF-8 \
+    -Dlogging.path=${LOG_PATH} \
+    -jar /opt/discord-admin/server-admin/discord-admin-server-admin-0.1.1.jar'
+
+# ============ 进程管理 ============
+Restart=on-failure
+RestartSec=5s
+# 最多重启 5 次后放弃 (避免 10s 死循环重启打爆 DB)
+RestartForceExitStatus=SIGPIPE
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# ============ 资源限制 ============
+# 防止 OOM kill 杀整个系统
+MemoryHigh=6g
+MemoryMax=7g
+# 最多文件句柄 65535 (Tomcat + WebSocket + DB 连接)
+LimitNOFILE=65535
+# 最多进程数
+LimitNPROC=4096
+# 关闭时给 30s 让 HikariCP 关连接, Tomcat 关会话
+TimeoutStopSec=30
+
+# ============ 安全加固 ============
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/discord-admin /var/log/discord-admin /opt/discord-admin/uploads
+
+[Install]
+WantedBy=multi-user.target

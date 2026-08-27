@@ -8,16 +8,17 @@ spring:
     password: Len2026!
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
-      maximum-pool-size: 10
+      maximum-pool-size: 20
       minimum-idle: 3
-      connection-timeout: 30000
-      idle-timeout: 300000
-      max-lifetime: 1800000
+      connection-timeout: 5000
+      idle-timeout: 60000
+      max-lifetime: 1200000
       pool-name: DiscordHikariCP-Dev
       connection-test-query: SELECT 1
-      leak-detection-threshold: 60000
-      validation-timeout: 1000
+      leak-detection-threshold: 30000
+      validation-timeout: 300
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: validate
     show-sql: false
@@ -32,7 +33,7 @@ discord:
     websocket-direct: ${DISCORD_WEBSOCKET_DIRECT:true}
 
 emulator:
-  local-mode: ${EMULATOR_LOCAL_MODE:true}
+  local-mode: ${EMULATOR_LOCAL_MODE:false}
 
 # 本地 base-url
 app:

@@ -70,6 +70,16 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="已排除" width="120" align="center">
+          <template #default="{ row }">
+            <span v-if="row.excludedCount > 0" class="excluded-count danger">
+              {{ row.excludedCount }} 
+              <span class="ratio">({{ row.excludedRatio || 0 }}%)</span>
+            </span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="最后采集" width="160">
           <template #default="{ row }">
             <span v-if="row.lastFetchAt" class="text-muted">{{ formatTime(row.lastFetchAt) }}</span>
@@ -616,6 +626,11 @@
               size="small" 
               type="danger"
             >添加失败</el-tag>
+            <el-tag
+              v-else-if="row.friendStatus === 4"
+              size="small"
+              style="background-color: #f4f4f5; color: #909399; border-color: #e9e9eb"
+            >已排除</el-tag>
             <el-tag 
               v-else 
               size="small"

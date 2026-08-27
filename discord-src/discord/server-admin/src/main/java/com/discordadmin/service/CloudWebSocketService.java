@@ -39,6 +39,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     
     private static final int REQUEST_TIMEOUT_SECONDS = 180;
     private static final int HEARTBEAT_TIMEOUT_SECONDS = 90; // 心跳超时时间（秒）
+    private static final long HEARTBEAT_DB_SAVE_THROTTLE_MS = 60000L; // 心跳DB保存降频
     
     public CloudWebSocketService(AgentRegistrationRepository agentRepository, 
                                   AgentRepository agentEntityRepository,
@@ -281,10 +282,12 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                     onlineAgents.put(deviceId, agent);
                     log.info("心跳恢复 Agent: deviceId={}, userId={}", deviceId, agent.getUserId());
                 }
-                agent.setLastHeartbeatAt(Instant.now());
+                // 心跳只更新内存, DB保存降频到60秒一次
+                // 关键: 避免心跳处理被DB阻塞, 连接池压力骤降
+                Instant now = Instant.now();
+                agent.setLastHeartbeatAt(now);
                 agent.setStatus("ONLINE");
-                
-                // 保存 MuMuPlayer 运行状态
+
                 Object mumuPlayerRunning = data.get("mumuPlayerRunning");
                 if (mumuPlayerRunning != null) {
                     agent.setMumuPlayerRunning(Boolean.TRUE.equals(mumuPlayerRunning));
@@ -297,7 +300,14 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 if (runningEmulatorCount != null) {
                     agent.setRunningEmulatorCount(((Number) runningEmulatorCount).intValue());
                 }
-                agentRepository.save(agent);
+
+                // 降频保存DB
+                Instant lastSave = agent.getLastDbSaveAt();
+                if (lastSave == null ||
+                    java.time.Duration.between(lastSave, now).toMillis() >= HEARTBEAT_DB_SAVE_THROTTLE_MS) {
+                    agent.setLastDbSaveAt(now);
+                    agentRepository.save(agent);
+                }
                 
                 syncEmulatorStatusFromHeartbeat(agent, data);
             }

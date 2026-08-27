@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Set;
 import java.util.Optional;
 
 @Repository
@@ -221,4 +222,45 @@ public interface GuildMemberRepository extends JpaRepository<GuildMember, Long>,
      */
     @Query("SELECT COUNT(m) FROM GuildMember m WHERE m.emulatorIndex = :emulatorIndex AND m.friendStatus = 1")
     long countAssigningByEmulatorIndex(@Param("emulatorIndex") Integer emulatorIndex);
+
+    // ========== 好友排除 (ExclusionService) ==========
+
+    /** 在指定服务器中标记排除: friend_status=0 → friend_status=4 */
+    @Modifying
+    @Query("UPDATE GuildMember m SET m.friendStatus = 4, m.updatedAt = CURRENT_TIMESTAMP " +
+           "WHERE m.friendStatus = 0 AND m.guildServerId IN :serverIds " +
+           "AND (LOWER(m.username) IN :names OR LOWER(m.globalName) IN :names OR " +
+           "LOWER(m.displayName) IN :names OR LOWER(m.nick) IN :names)")
+    int markExcludedInServers(@Param("serverIds") List<Long> serverIds,
+                              @Param("names") Set<String> excludedNames);
+
+    /** 跨服务器全局标记 (通过 GuildServer.merchantId 过滤) */
+    @Modifying
+    @Query("UPDATE GuildMember m SET m.friendStatus = 4, m.updatedAt = CURRENT_TIMESTAMP " +
+           "WHERE m.friendStatus = 0 AND m.guildServerId IN (" +
+           "  SELECT gs.id FROM GuildServer gs WHERE gs.merchantId = :merchantId" +
+           ") AND (LOWER(m.username) IN :names OR LOWER(m.globalName) IN :names OR " +
+           "LOWER(m.displayName) IN :names OR LOWER(m.nick) IN :names)")
+    int markExcludedGlobal(@Param("merchantId") Long merchantId,
+                           @Param("names") Set<String> excludedNames);
+
+    /** 跨服务器统计 EXCLUDED 数量 */
+    @Query("SELECT COUNT(m) FROM GuildMember m WHERE m.friendStatus = 4 AND m.guildServerId IN (" +
+           "  SELECT gs.id FROM GuildServer gs WHERE gs.merchantId = :merchantId" +
+           ")")
+    Long countWithFriendStatusByMerchant(@Param("merchantId") Long merchantId);
+
+    /** 批量查多个服务器的 EXCLUDED (friend_status=4) 数量 — 避免 N+1 */
+    @Query("SELECT m.guildServerId as id, COUNT(m) as cnt FROM GuildMember m " +
+           "WHERE m.guildServerId IN :serverIds AND m.friendStatus = 4 GROUP BY m.guildServerId")
+    List<Object[]> countExcludedRawByServerIds(@Param("serverIds") List<Long> serverIds);
+
+    default java.util.Map<Long, Long> countExcludedByServerIds(java.util.List<Long> serverIds) {
+        java.util.Map<Long, Long> map = new java.util.HashMap<>();
+        if (serverIds == null || serverIds.isEmpty()) return map;
+        for (Object[] row : countExcludedRawByServerIds(serverIds)) {
+            map.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+        }
+        return map;
+    }
 }

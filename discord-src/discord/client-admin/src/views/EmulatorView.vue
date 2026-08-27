@@ -18,7 +18,7 @@
               <el-option
                 v-for="agent in agentDetails.agents"
                 :key="agent.deviceId"
-                :label="(agent.userId || '-') + ' | ' + (agent.os === 'darwin' ? 'macOS' : agent.os === 'win32' ? 'Windows' : agent.os || '-') + ' | ' + (agent.emulatorCount ?? 0) + '台'"
+                :label="(agent.userId || '-') + ' | ' + (agent.os === 'darwin' ? 'macOS' : agent.os === 'win32' ? 'Windows' : agent.os || '-')"
                 :value="agent.deviceId"
               />
             </el-select>
@@ -627,7 +627,25 @@
           label="配置" 
           name="config"
         >
-          <el-card class="panel" shadow="hover" style="max-width: 600px">
+            <!-- APK 上传区域 -->
+          <el-card class="panel" shadow="hover" style="max-width: 600px; margin-bottom: 16px">
+            <template #header>
+              <div class="panel-header">
+                <el-icon><Upload /></el-icon>
+                <span>Discord APK 管理</span>
+              </div>
+            </template>
+            <div style="padding: 8px 0; display: flex; align-items: center; gap: 12px; flex-wrap: wrap">
+              <el-tag v-if="apkDownloaded" type="success" size="small">已上传</el-tag>
+              <el-tag v-else type="warning" size="small">未上传</el-tag>
+              <el-button v-if="apkDownloaded" size="small" @click="downloadApk" :loading="apkLoading">下载 APK</el-button>
+              <el-button size="small" type="primary" @click="triggerApkUpload">上传 APK</el-button>
+              <span style="color: #909399; font-size: 12px">启动模拟器时若未安装 Discord 则自动安装</span>
+            </div>
+            <input ref="apkInput" type="file" accept=".apk" style="display: none" @change="handleApkUpload" />
+          </el-card>
+
+        <el-card class="panel" shadow="hover" style="max-width: 600px">
             <template #header>
               <div class="panel-header">
                 <el-icon><Promotion /></el-icon>
@@ -778,6 +796,69 @@
             </div>
           </el-card>
         </el-tab-pane>
+        <!-- Tab 4: 排除配置 -->
+        <el-tab-pane
+          label="排除配置"
+          name="exclusion"
+        >
+          <el-card class="panel" shadow="hover" style="max-width: 700px">
+            <template #header>
+              <div class="panel-header">
+                <el-icon><Delete /></el-icon>
+                <span>好友排除配置</span>
+              </div>
+            </template>
+            <div style="padding: 12px 0">
+              <div class="form-row inline-row" style="margin-bottom: 16px">
+                <el-checkbox v-model="exclusionConfig.excludeAllFriends">
+                  排除本商户所有已加好友的用户名
+                </el-checkbox>
+              </div>
+              <div class="form-row inline-row" style="margin-bottom: 12px">
+                <el-checkbox v-model="exclusionConfig.useCustomList">
+                  排除指定清单（当前 <b>{{ exclusionUserCount }}</b> 人）
+                </el-checkbox>
+              </div>
+              <div v-if="exclusionConfig.useCustomList" style="margin-left: 24px; margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap">
+                <el-button size="small" type="primary" @click="triggerExclusionUpload">上传名单</el-button>
+                <el-button size="small" @click="downloadTemplate">下载模板</el-button>
+                <el-button size="small" type="danger" plain @click="clearExclusionUsers">清空清单</el-button>
+                <input ref="exclusionFileInput" type="file" accept=".xlsx,.xls,.csv" style="display: none" @change="handleExclusionUpload" />
+              </div>
+              <el-divider />
+              <div style="display: flex; gap: 8px">
+                <el-button type="primary" size="small" @click="saveExclusionConfig" :loading="exclusionSaving">保存配置</el-button>
+                <el-button size="small" @click="applyExclusionNow" :loading="exclusionApplying">立即应用排除</el-button>
+              </div>
+              <div style="margin-top: 12px; color: #909399; font-size: 12px">
+                说明：保存配置后，下次同步服务器成员时会自动将命中的用户标记为「已排除」，不再加入加好友号池。
+              </div>
+            </div>
+          </el-card>
+
+          <!-- 排除用户清单预览 -->
+          <el-card v-if="exclusionConfig.useCustomList" class="panel" shadow="hover" style="max-width: 700px; margin-top: 16px">
+            <template #header>
+              <div class="panel-header">
+                <el-icon><User /></el-icon>
+                <span>排除用户清单预览（{{ exclusionUsers.length }} 条）</span>
+              </div>
+            </template>
+            <div v-if="exclusionUsers.length > 0" style="max-height: 300px; overflow-y: auto">
+              <el-table :data="exclusionUsers" size="small">
+                <el-table-column prop="username" label="用户名" />
+                <el-table-column prop="source" label="来源" width="100" />
+                <el-table-column label="操作" width="60">
+                  <template #default="{ row }">
+                    <el-button size="small" link type="danger" @click="deleteExclusionUser(row.id)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <el-empty v-else description="暂无排除用户，点击上方「上传名单」添加" :image-size="60" />
+          </el-card>
+        </el-tab-pane>
+
       </el-tabs>
       </div>
     </template>
@@ -992,6 +1073,17 @@ const guideStep = ref(0)
 const apkDownloaded = ref(false)
 const apkLoading = ref(false)
 const apkInput = ref(null)
+
+// 排除配置相关
+const exclusionConfig = ref({
+  excludeAllFriends: false,
+  useCustomList: false
+})
+const exclusionUsers = ref([])
+const exclusionUserCount = ref(0)
+const exclusionSaving = ref(false)
+const exclusionApplying = ref(false)
+const exclusionFileInput = ref(null)
 
 const emuConfig = ref({ cpuCores: 1, memoryGb: 1 })
 // 自动加好友配置：单位改为分钟
@@ -1369,6 +1461,8 @@ onMounted(async () => {
     withTimeout(loadAvailableServers(), LOAD_TIMEOUT),
     withTimeout(loadAutoConfig(), LOAD_TIMEOUT),
     withTimeout(checkApkStatus(), LOAD_TIMEOUT),
+    withTimeout(loadExclusionConfig(), LOAD_TIMEOUT),
+    withTimeout(loadExclusionUsers(), LOAD_TIMEOUT),
     withTimeout(loadFriendPoolStats(), LOAD_TIMEOUT),
     withTimeout(loadAllServerFriendPoolStats(), LOAD_TIMEOUT),
     withTimeout(loadFriendPool(), LOAD_TIMEOUT),
@@ -1404,12 +1498,17 @@ onMounted(async () => {
     now.value = Date.now()
   }, 1000)
   
-  // 定时刷新模拟器列表（每10秒）
-  refreshTimer = setInterval(() => {
-    if (!emuLoading.value) {
-      fetchEmulators()
-    }
-  }, 10000)
+  // 定时刷新模拟器列表（autoadd运行时每2秒，平时10秒）
+  function scheduleRefresh() {
+    const interval = autoAddTaskRunning.value ? 2000 : 10000
+    refreshTimer = setTimeout(async () => {
+      if (!emuLoading.value) {
+        await fetchEmulators()
+      }
+      scheduleRefresh()
+    }, interval)
+  }
+  scheduleRefresh()
 })
 
 onUnmounted(() => {
@@ -1488,7 +1587,7 @@ function startHealthCheck() {
     }
     // 同时检查物理状态
     await checkPhysicalStatus()
-  }, 10000) // 每 10s 检查一次，避免过于频繁
+  }, () => autoAddTaskRunning.value ? 2000 : 10000) // 每 10s 检查一次，避免过于频繁
 }
 
 async function checkPhysicalStatus() {
@@ -1731,7 +1830,7 @@ function toggleSelectAllDiff() {
 
 async function checkApkStatus() {
   try {
-    const resp = await friendApi.get('/discord/apk-status')
+    const resp = await emuApi.get('/discord/apk-status')
     apkDownloaded.value = resp.data.downloaded
   } catch {}
 }
@@ -1739,7 +1838,7 @@ async function checkApkStatus() {
 async function downloadApk() {
   apkLoading.value = true
   try {
-    await friendApi.post('/discord/download')
+    await emuApi.post('/discord/download')
     ElMessage.success('APK 下载中...')
     setTimeout(async () => {
       apkDownloaded.value = true
@@ -1773,11 +1872,105 @@ async function handleApkUpload(event) {
 
 async function installAllDiscord() {
   try {
-    await friendApi.post('/discord/installAll')
+    await emuApi.post('/discord/installAll')
     ElMessage.success('已开始安装 Discord 到所有模拟器')
     await fetchEmulators()
   } catch (e) {
     ElMessage.error('安装失败: ' + (e.response?.data?.message || e.message))
+  }
+}
+
+
+// ========== 排除配置功能 ==========
+async function loadExclusionConfig() {
+  try {
+    const resp = await friendApi.get('/exclusion/config')
+    exclusionConfig.value = resp.data?.config || exclusionConfig.value
+  } catch {}
+}
+
+async function saveExclusionConfig() {
+  exclusionSaving.value = true
+  try {
+    await friendApi.post('/exclusion/config', exclusionConfig.value)
+    ElMessage.success('排除配置已保存')
+  } catch (e) {
+    ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    exclusionSaving.value = false
+  }
+}
+
+async function loadExclusionUsers() {
+  try {
+    const resp = await friendApi.get('/exclusion/users', { params: { page: 0, size: 100 } })
+    exclusionUsers.value = resp.data?.list || []
+    exclusionUserCount.value = resp.data?.total || 0
+  } catch {}
+}
+
+function triggerExclusionUpload() { exclusionFileInput.value?.click() }
+
+async function handleExclusionUpload(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  const formData = new FormData()
+  formData.append('file', file)
+  try {
+    const resp = await friendApi.post('/exclusion/users/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    })
+    ElMessage.success(resp.data?.message || '上传成功')
+    await loadExclusionUsers()
+  } catch (e) {
+    ElMessage.error('上传失败: ' + (e.response?.data?.message || e.message))
+  }
+  event.target.value = ''
+}
+
+async function downloadTemplate() {
+  try {
+    const resp = await friendApi.get('/exclusion/template', { responseType: 'blob' })
+    const blob = new Blob([resp.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'userlist_template.xlsx'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error('下载模板失败')
+  }
+}
+
+async function clearExclusionUsers() {
+  try {
+    await ElMessageBox.confirm('确定要清空所有排除用户吗？', '确认', { type: 'warning' })
+    await friendApi.delete('/exclusion/users')
+    ElMessage.success('已清空')
+    await loadExclusionUsers()
+  } catch {}
+}
+
+async function deleteExclusionUser(id) {
+  try {
+    await friendApi.delete(`/exclusion/users/${id}`)
+    ElMessage.success('已删除')
+    await loadExclusionUsers()
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
+async function applyExclusionNow() {
+  exclusionApplying.value = true
+  try {
+    const resp = await friendApi.post('/exclusion/apply')
+    ElMessage.success(resp.data?.message || '已应用')
+  } catch (e) {
+    ElMessage.error('应用失败: ' + (e.response?.data?.message || e.message))
+  } finally {
+    exclusionApplying.value = false
   }
 }
 
@@ -2127,7 +2320,7 @@ function calculateEstimatedTotalDuration() {
 
 async function loadAutoConfig() {
   try {
-    const resp = await friendApi.get('/data/autoconfig')
+    const resp = await friendApi.get('/emu/data/autoconfig')
     if (resp.data) {
       autoConfig.value = {
         intervalMinutes: resp.data.intervalSeconds !== undefined ? (Math.round(resp.data.intervalSeconds / 60) || 1) : autoConfig.value.intervalMinutes,
@@ -2169,7 +2362,7 @@ async function saveAutoConfig() {
       dailyLimit: autoConfig.value.dailyLimit,
       estimatedSingleDurationMin: autoConfig.value.estimatedSingleDurationMin
     }
-    await friendApi.post('/data/autoconfig', configToSave)
+    await friendApi.post('/emu/data/autoconfig', configToSave)
     ElMessage.success('自动加好友配置已保存')
   } catch (e) {
     ElMessage.error('保存失败: ' + (e.response?.data?.message || e.message))

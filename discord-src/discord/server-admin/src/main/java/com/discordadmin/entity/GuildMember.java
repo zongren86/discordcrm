@@ -135,7 +135,8 @@ public class GuildMember {
         PENDING(0),      // 待添加
         ASSIGNED(1),     // 已分配
         SUCCESS(2),      // 添加成功
-        FAILED(3);       // 添加失败
+        FAILED(3),       // 添加失败
+        EXCLUDED(4);     // 已排除
 
         private final int value;
 

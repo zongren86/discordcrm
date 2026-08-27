@@ -59,6 +59,7 @@ public class EmuFriendPool {
         PENDING,        // 待添加
         ASSIGNED,       // 已分配添加
         SUCCESS,        // 添加成功
-        FAILED          // 添加失败
+        FAILED,        // 添加失败
+        EXCLUDED       // 已排除
     }
 }

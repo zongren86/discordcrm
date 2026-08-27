@@ -274,7 +274,7 @@ public class EmuInstanceService {
      * APK 检查仅作提示，不阻塞创建；创建后异步自动安装 Discord
      * @param mode 'set'(默认，设置总数量，会删除超出的旧记录) 或 'add'(追加模式，在现有基础上新增 count 台)
      */
-    @Transactional
+
     public List<Map<String, Object>> setInstanceCount(int count, int cpuCores, int memoryGb, String mode, String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
@@ -950,8 +950,17 @@ public class EmuInstanceService {
         
         log.info("startInstance 开始: index={}, deviceId={}, merchantId={}, userId={}", index, deviceId, merchantId, userId);
 
-        EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
-            .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%d, userId=%s)", index, merchantId, userId)));
+        // 查询模拟器: 优先 merchantId+userId, 后台线程无 SecurityContext 时 fallback 到 deviceId
+        EmuInstance instance = null;
+        if (merchantId != null && userId != null) {
+            instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index).orElse(null);
+        }
+        if (instance == null && deviceId != null && !deviceId.isEmpty()) {
+            instance = instanceRepository.findByDeviceIdAndInstanceIndex(deviceId, index).orElse(null);
+        }
+        if (instance == null) {
+            throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%d, userId=%s, deviceId=%s)", index, merchantId, userId, deviceId));
+        }
 
         boolean useAgent = agent != null;
         log.info("startInstance: deviceId={}, agent={}, useAgent={}", deviceId, agent != null ? agent.getDeviceId() : "null", useAgent);
@@ -1068,6 +1077,11 @@ public class EmuInstanceService {
             }
         }
         
+        // 后台线程无 SecurityContext 时, 通过 deviceId+index 查找
+        if (instanceOpt.isEmpty() && deviceId != null && !deviceId.isEmpty()) {
+            instanceOpt = instanceRepository.findByDeviceIdAndInstanceIndex(deviceId, index);
+        }
+
         EmuInstance instance = instanceOpt
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
@@ -1131,6 +1145,11 @@ public class EmuInstanceService {
             }
         }
         
+        // 后台线程无 SecurityContext 时, 通过 deviceId+index 查找
+        if (instanceOpt.isEmpty() && deviceId != null && !deviceId.isEmpty()) {
+            instanceOpt = instanceRepository.findByDeviceIdAndInstanceIndex(deviceId, index);
+        }
+
         EmuInstance instance = instanceOpt
             .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在", index)));
 
@@ -1982,7 +2001,7 @@ public class EmuInstanceService {
             status.put("mumuPlayerRunning", true);
             status.put("emulatorCount", emuCount);
             status.put("runningEmulatorCount", runningCount);
-            status.put("message", "Agent已连接，" + emuCount + " 台模拟器就绪");
+            status.put("message", "Agent已连接");
         } else if (localReachable) {
             int physicalCount = 0;
             try {
@@ -1992,9 +2011,7 @@ public class EmuInstanceService {
                 // 忽略
             }
             status.put("emulatorCount", physicalCount);
-            status.put("message", physicalCount > 0
-                ? "本地环境已就绪，共 " + physicalCount + " 台模拟器"
-                : "本地环境已就绪，但暂无运行中的模拟器");
+            status.put("message", "本地环境已就绪");
             status.put("physicalCount", physicalCount);
         } else {
             status.put("message", "未检测到在线 Agent，请启动 Agent");

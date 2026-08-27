@@ -2454,7 +2454,9 @@ async function handleMessage(msg) {
                     
                     if (mumu.mumutoolPath) {
                         // 使用 mumutool create --count 命令创建模拟器
-                        const createArgs = ['create', '--count', String(neededCount), '--type', 'phone'];
+                        let createArgs = ['create', '--count', String(neededCount), '--type', 'phone'];
+                        if (cpuCores > 0) createArgs.push('--cpu', String(cpuCores));
+                        if (memoryGb > 0) createArgs.push('--memory', String(memoryGb * 1024));
                         
                         console.log(`[Agent] 使用 mumutool ${createArgs.join(' ')} 创建 ${neededCount} 个模拟器`);
                         const result = await mumu.execMumutool(createArgs);
@@ -2669,8 +2671,10 @@ async function handleMessage(msg) {
                                     // Windows 下使用 mumu-cli 创建模拟器（如果 mumutool 路径存在）
                                     if (this.mumutoolPath) {
                                         try {
-                                            // 使用 mumutool create 创建单个模拟器
-                                            const createResult = await this.execMumutool(['create', '--count', '1', '--type', 'phone']);
+                                            let fbCreateArgs = ['create', '--count', '1', '--type', 'phone'];
+                                            if (cpuCores > 0) fbCreateArgs.push('--cpu', String(cpuCores));
+                                            if (memoryGb > 0) fbCreateArgs.push('--memory', String(memoryGb * 1024));
+                                            const createResult = await this.execMumutool(fbCreateArgs);
                                             console.log(`[Agent] mumutool create 结果: ${JSON.stringify(createResult).substring(0, 200)}`);
                                         } catch (e) {
                                             console.warn(`[Agent] mumutool create 失败: ${e.message}`);

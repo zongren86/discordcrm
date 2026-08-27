@@ -83,6 +83,7 @@
             <el-option label="已分配" :value="1" />
             <el-option label="添加成功" :value="2" />
             <el-option label="添加失败" :value="3" />
+            <el-option label="已排除" :value="4" />
           </el-select>
 
           <el-date-picker
@@ -178,6 +179,7 @@
             <el-tag v-else-if="row.friendStatus === 1" size="small" type="warning">已分配</el-tag>
             <el-tag v-else-if="row.friendStatus === 2" size="small" type="success">添加成功</el-tag>
             <el-tag v-else-if="row.friendStatus === 3" size="small" type="danger">添加失败</el-tag>
+            <el-tag v-else-if="row.friendStatus === 4" size="small" type="info" style="background-color: #f4f4f5; color: #909399; border-color: #e9e9eb">已排除</el-tag>
             <el-tag v-else size="small">-</el-tag>
           </template>
         </el-table-column>

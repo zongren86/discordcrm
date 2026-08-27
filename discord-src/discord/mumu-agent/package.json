@@ -1,6 +1,6 @@
 {
   "name": "mumu-agent",
-  "version": "2.7.0",
+  "version": "v2.13.4",
   "description": "MuMu 模拟器远程管理 Agent",
   "main": "agent.js",
   "scripts": {

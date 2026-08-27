@@ -11,6 +11,7 @@ import com.discordadmin.repository.AgentAccountNumberRelRepository;
 import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
+import com.discordadmin.repository.GuildMemberRepository;
 import com.discordadmin.repository.GuildServerRepository;
 import com.discordadmin.security.SecurityUtils;
 import com.discordadmin.service.GuildService;
@@ -31,6 +32,7 @@ public class GuildServerController {
     private final AgentRepository agentRepository;
     private final AgentAccountNumberRelRepository relRepository;
     private final DiscordAccountNumberRepository accountNumberRepository;
+    private final GuildMemberRepository guildMemberRepository;
 
     public GuildServerController(GuildService guildService,
                                  DiscordAccountRepository accountRepository,
@@ -38,7 +40,8 @@ public class GuildServerController {
                                  DiscordMemberService discordMemberService,
                                  AgentRepository agentRepository,
                                  AgentAccountNumberRelRepository relRepository,
-                                 DiscordAccountNumberRepository accountNumberRepository) {
+                                 DiscordAccountNumberRepository accountNumberRepository,
+                                 GuildMemberRepository guildMemberRepository) {
         this.guildService = guildService;
         this.accountRepository = accountRepository;
         this.guildServerRepository = guildServerRepository;
@@ -46,6 +49,7 @@ public class GuildServerController {
         this.agentRepository = agentRepository;
         this.relRepository = relRepository;
         this.accountNumberRepository = accountNumberRepository;
+        this.guildMemberRepository = guildMemberRepository;
     }
 
     @GetMapping
@@ -93,8 +97,19 @@ public class GuildServerController {
                 .forEach(acc -> accountMap.put(acc.getId(), acc));
         }
         
+        // 批量查询每个服务器的 EXCLUDED (friend_status=4) 数量 — 一次 SQL, 避免 N+1
+        List<Long> serverIds = servers.stream().map(GuildServer::getId).filter(Objects::nonNull).collect(Collectors.toList());
+        Map<Long, Long> excludedCountMap = new HashMap<>();
+        if (!serverIds.isEmpty()) {
+            List<Object[]> rows = guildMemberRepository.countExcludedRawByServerIds(serverIds);
+            for (Object[] row : rows) {
+                excludedCountMap.put(((Number) row[0]).longValue(), ((Number) row[1]).longValue());
+            }
+        }
+
+        final Map<Long, Long> finalExcludedCountMap = excludedCountMap;
         return servers.stream()
-            .map(server -> toServerMap(server, accountMap))
+            .map(server -> toServerMap(server, accountMap, finalExcludedCountMap))
             .collect(Collectors.toList());
     }
 
@@ -324,6 +339,10 @@ public class GuildServerController {
     }
 
     private Map<String, Object> toServerMap(GuildServer server, Map<Long, com.discordadmin.entity.DiscordAccount> accountMap) {
+        return toServerMap(server, accountMap, java.util.Collections.emptyMap());
+    }
+
+    private Map<String, Object> toServerMap(GuildServer server, Map<Long, com.discordadmin.entity.DiscordAccount> accountMap, Map<Long, Long> excludedCountMap) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", server.getId());
         map.put("merchantId", server.getMerchantId());
@@ -334,6 +353,14 @@ public class GuildServerController {
         map.put("name", server.getName());
         map.put("iconUrl", server.getIconUrl());
         map.put("memberCount", server.getMemberCount());
+
+        // 排除数 + 占比
+        long excluded = excludedCountMap.getOrDefault(server.getId(), 0L);
+        map.put("excludedCount", excluded);
+        long total = server.getMemberCount() != null ? server.getMemberCount() : 0;
+        double ratio = total > 0 ? Math.round(excluded * 10000.0 / total) / 100.0 : 0;
+        map.put("excludedRatio", ratio);  // 百分比, 如 12.34
+
         map.put("lastFetchAt", server.getLastFetchAt());
         map.put("status", server.getStatus());
         map.put("statusText", getStatusTextZh(server.getStatus()));

@@ -54,6 +54,10 @@ public class AgentRegistration {
     
     @Column(name = "last_heartbeat_at")
     private Instant lastHeartbeatAt;
+
+    /** 上次写入DB的时间, 用于心跳降频保存 */
+    @Column(name = "last_db_save_at")
+    private Instant lastDbSaveAt;
     
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();

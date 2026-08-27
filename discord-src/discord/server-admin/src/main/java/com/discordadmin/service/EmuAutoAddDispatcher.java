@@ -6,6 +6,7 @@ import com.discordadmin.entity.GuildMember;
 import com.discordadmin.model.AutoAddConfig;
 import com.discordadmin.repository.EmuInstanceRepository;
 import com.discordadmin.repository.EmuServerBindingRepository;
+import com.discordadmin.service.EmuInstanceService;
 import com.discordadmin.repository.GuildMemberRepository;
 import com.discordadmin.security.SecurityUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -52,6 +53,7 @@ public class EmuAutoAddDispatcher {
     private final DataStoreService dataStore;
     private final GuildMemberRepository memberRepository;
     private final EmuFriendPoolService friendPoolService;
+    private final EmuInstanceService instanceService;
     private final EmuServerBindingRepository serverBindingRepository;
 
     /** 已经在 worker 中执行生命周期的模拟器 dbIndex（1-based），避免 tick 重复提交 */
@@ -93,6 +95,7 @@ public class EmuAutoAddDispatcher {
                                 DataStoreService dataStore,
                                 GuildMemberRepository memberRepository,
                                 EmuFriendPoolService friendPoolService,
+                                EmuInstanceService instanceService,
                                 EmuServerBindingRepository serverBindingRepository) {
         this.instanceRepository = instanceRepository;
         this.mumuClientService = mumuClientService;
@@ -100,6 +103,7 @@ public class EmuAutoAddDispatcher {
         this.dataStore = dataStore;
         this.memberRepository = memberRepository;
         this.friendPoolService = friendPoolService;
+        this.instanceService = instanceService;
         this.serverBindingRepository = serverBindingRepository;
     }
 
@@ -470,7 +474,7 @@ public class EmuAutoAddDispatcher {
         if (fresh.getStatus() == null || fresh.getStatus() != EmuInstance.EmuStatus.RUNNING) {
             log.info("调度启动：模拟器#{} 状态={}，启动物理模拟器", dbIndex, fresh.getStatus());
             try {
-                Map<String, Object> r = mumuClientService.startEmulator(dbIndex);
+                Map<String, Object> r = instanceService.startInstance(dbIndex, emu.getDeviceId());
                 // Mumu startEmulator 返回启动结果；等待完全启动
                 Thread.sleep(8000);
                 log.info("模拟器#{} 启动指令返回：{}", dbIndex, shortStr(r));
@@ -630,7 +634,9 @@ public class EmuAutoAddDispatcher {
         // 关模拟器
         try {
             log.info("模拟器#{} 完成本次任务，关闭模拟器", dbIndex);
-            mumuClientService.stopEmulator(dbIndex);
+            EmuInstance inst = refresh(dbIndex, merchantId, userId);
+            String did = inst != null ? inst.getDeviceId() : null;
+            instanceService.stopInstance(dbIndex, did);
             Thread.sleep(2000);
         } catch (Exception e) {
             log.warn("模拟器#{} 关闭失败", dbIndex, e);

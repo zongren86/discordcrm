@@ -30,6 +30,9 @@ public class EmuInstance {
     @Column(name = "merchant_id", nullable = false)
     private Long merchantId;
 
+    @Column(name = "device_id", length = 128)
+    private String deviceId;
+
     @Column(name = "user_id")
     private Long userId;
 
