@@ -916,7 +916,7 @@
           </div>
         </div>
 
-        <div class="profile-section">
+        <div class="profile-section" v-if="canEditStage">
           <div class="profile-section-title">销售阶段</div>
           <div class="status-grid">
             <el-button v-for="s in quickStageOptions" :key="s.value"
@@ -1370,6 +1370,11 @@ const gifHot = ref([])
 const systemStickers = ref([])
 const favoriteStickers = ref([])
 const memberList = ref([])
+
+const canEditStage = computed(() => {
+  const agent = auth.agent
+  return agent?.merchantId != null && agent?.accountType === 0
+})
 
 const currentStage = computed({
   get: () => conversations.currentConversation?.stage || null,
