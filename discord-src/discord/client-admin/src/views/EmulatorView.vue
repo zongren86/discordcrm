@@ -35,7 +35,7 @@
             {{ physicalStatus.message || '未检测到在线 Agent' }}
           </el-tag>
           <el-button
-            v-if="!physicalStatus.available"
+            v-if="!physicalStatus.agentOnline"
             link
             type="primary"
             size="small"
@@ -404,26 +404,26 @@
               <el-button type="primary" size="small" @click="syncPhysical" :disabled="emuLoading">
                 同步
               </el-button>
-              <el-button type="primary" size="small" @click="startAll" :disabled="emuLoading || !physicalStatus.available">
+              <el-button type="primary" size="small" @click="startAll" :disabled="emuLoading || !physicalStatus.agentOnline">
                 全部启动
               </el-button>
-              <el-button type="primary" size="small" @click="stopAll" :disabled="emuLoading || !physicalStatus.available">
+              <el-button type="primary" size="small" @click="stopAll" :disabled="emuLoading || !physicalStatus.agentOnline">
                 全部停止
               </el-button>
-              <el-button type="primary" size="small" @click="restartAll" :disabled="emuLoading || !physicalStatus.available">
+              <el-button type="primary" size="small" @click="restartAll" :disabled="emuLoading || !physicalStatus.agentOnline">
                 全部重启
               </el-button>
               <el-divider direction="vertical" />
-              <el-button type="primary" size="small" @click="batchAction('start')" :disabled="!canBatchStart || !physicalStatus.available">
+              <el-button type="primary" size="small" @click="batchAction('start')" :disabled="!canBatchStart || !physicalStatus.agentOnline">
                 批量启动
               </el-button>
-              <el-button type="primary" size="small" @click="batchAction('stop')" :disabled="!canBatchStop || !physicalStatus.available">
+              <el-button type="primary" size="small" @click="batchAction('stop')" :disabled="!canBatchStop || !physicalStatus.agentOnline">
                 批量停止
               </el-button>
-              <el-button type="primary" size="small" @click="batchAction('restart')" :disabled="!canBatchRestart || !physicalStatus.available">
+              <el-button type="primary" size="small" @click="batchAction('restart')" :disabled="!canBatchRestart || !physicalStatus.agentOnline">
                 批量重启
               </el-button>
-              <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall || !physicalStatus.available">
+              <el-button type="primary" size="small" @click="batchAction('installDiscord')" :disabled="!canBatchInstall || !physicalStatus.agentOnline">
                 批量安装DS
               </el-button>
               <el-divider direction="vertical" />
@@ -439,7 +439,7 @@
               <el-button type="primary" size="small" @click="batchAction('stopAuto')" :disabled="!canBatchStopAuto">
                 选中停止添加
               </el-button>
-              <el-button type="primary" size="small" @click="batchAction('delete')" :disabled="selectedEmulators.length === 0 || !physicalStatus.available">
+              <el-button type="primary" size="small" @click="batchAction('delete')" :disabled="selectedEmulators.length === 0 || !physicalStatus.agentOnline">
                 批量删除
               </el-button>
             </div>
@@ -1053,7 +1053,7 @@ function hideLoading() {
 }
 
 // 物理模拟器连接状态
-const physicalStatus = ref({ available: false, message: '检测中...' })
+const physicalStatus = ref({ available: false, agentOnline: false, message: '检测中...' })
 
 // Agent 详情弹窗状态
 const showAgentDetails = ref(false)
@@ -1597,7 +1597,7 @@ async function checkPhysicalStatus() {
     const resp = await emuApi.get('/emulators/physical-status', { params })
     physicalStatus.value = resp.data
   } catch {
-    physicalStatus.value = { available: false, message: '未检测到物理模拟器' }
+    physicalStatus.value = { available: false, agentOnline: false, message: '后端请求失败' }
   }
 }
 

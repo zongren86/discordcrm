@@ -923,7 +923,14 @@ class MuMuController {
                         console.log('[MuMu] MuMuManager info 退出码=' + r.exitCode + ', stdout前300字符: ' + r.stdout.substring(0, 300));
                         if (r.exitCode === 0 && r.json) {
                             let items = r.json;
-                            if (!Array.isArray(items)) items = [items];
+                            if (Array.isArray(items)) {
+                                // 已经是数组
+                            } else if (items && typeof items === 'object') {
+                                // MuMuManager 返回 key-value 对象 {"0": {...}, "1": {...}}，展平为 values
+                                items = Object.values(items);
+                            } else {
+                                items = [];
+                            }
                             for (const item of items) {
                                 if (!item || item.index === undefined) continue;
                                 const idx = parseInt(item.index);
