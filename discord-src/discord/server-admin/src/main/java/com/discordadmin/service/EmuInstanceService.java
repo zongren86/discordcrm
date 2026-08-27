@@ -972,8 +972,15 @@ public class EmuInstanceService {
             throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%d, userId=%s, deviceId=%s)", index, merchantId, userId, deviceId));
         }
 
+
+        // 从查到的 instance 补全 merchantId/userId（异步线程无 SecurityContext 时依赖 deviceId 查找）
+        if (merchantId == null) merchantId = instance.getMerchantId();
+        if (userId == null) userId = instance.getUserId();
+        // lambda 需要 effectively final，创建 final 副本
+        final Long finalMerchantId = merchantId;
+        final Long finalUserId = userId;
         boolean useAgent = agent != null;
-        log.info("startInstance: deviceId={}, agent={}, useAgent={}", deviceId, agent != null ? agent.getDeviceId() : "null", useAgent);
+        log.info("startInstance: deviceId={}, agent={}, useAgent={}, merchantId={}, userId={}", deviceId, agent != null ? agent.getDeviceId() : "null", useAgent, merchantId, userId);
 
         if (!useAgent && !mumuClientService.emulatorExists(index)) {
             throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法启动。请先创建模拟器。", index));
@@ -1003,7 +1010,7 @@ public class EmuInstanceService {
                     List<Map<String, Object>> physList;
                     if (agent != null) {
                         physList = webSocketService.getEmulatorsFromAgentByDeviceId(agent.getDeviceId());
-                        if (physList == null) physList = webSocketService.getEmulatorsFromAgent(userId);
+                        if (physList == null) physList = webSocketService.getEmulatorsFromAgent(finalUserId);
                     } else {
                         physList = mumuClientService.getAllEmulatorsWithError();
                     }
@@ -1022,7 +1029,7 @@ public class EmuInstanceService {
                 }
 
                 EmuInstance inst = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(
-                        merchantId, userId, index).orElse(null);
+                        finalMerchantId, finalUserId, index).orElse(null);
                 if (inst != null) {
                     inst.setDiscordInstalled(discordInstalled);
                     inst.setUpdatedAt(Instant.now());
