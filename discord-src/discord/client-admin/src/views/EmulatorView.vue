@@ -1500,7 +1500,7 @@ onMounted(async () => {
   
   // 定时刷新模拟器列表（autoadd运行时每2秒，平时10秒）
   function scheduleRefresh() {
-    const interval = autoAddTaskRunning.value ? 2000 : 10000
+    const interval = autoAddTaskRunning.value ? 5000 : 15000
     refreshTimer = setTimeout(async () => {
       if (!emuLoading.value) {
         await fetchEmulators()
@@ -1587,7 +1587,7 @@ function startHealthCheck() {
     }
     // 同时检查物理状态
     await checkPhysicalStatus()
-  }, () => autoAddTaskRunning.value ? 2000 : 10000) // 每 10s 检查一次，避免过于频繁
+  }, 15000) // 每 15s 健康检查一次，autoAdd 运行时由 autoAddStatusPollTimer 负责
 }
 
 async function checkPhysicalStatus() {
@@ -2239,7 +2239,7 @@ function startFriendPoolPolling() {
   friendPoolPollTimer = setInterval(() => {
     loadFriendPoolStats(true)
     loadAllServerFriendPoolStats()
-  }, 5000)
+  }, 10000) // 从 5s 降为 10s
 }
 
 function stopFriendPoolPolling() {
@@ -2478,7 +2478,7 @@ function startAutoAddStatusPolling() {
   // 每2秒轮询一次
   autoAddStatusPollTimer = setInterval(() => {
     fetchAutoAddStatus()
-  }, 2000)
+  }, 5000) // 从 2s 降为 5s，减少请求风暴
 }
 
 // 停止轮询任务状态
