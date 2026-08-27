@@ -917,7 +917,7 @@
         </div>
 
         <div class="profile-section">
-          <div class="profile-section-title">快速状态</div>
+          <div class="profile-section-title">销售阶段</div>
           <div class="status-grid">
             <el-button v-for="s in quickStageOptions" :key="s.value"
               size="small" :type="currentStage === s.value ? s.type : 'default'"
@@ -2985,10 +2985,19 @@ async function saveRemark() {
 
 async function onStageChange(newStage) {
   if (!conversations.currentConversation) return
+  if (currentStage.value === newStage) return
+  const option = quickStageOptions.find(o => o.value === newStage)
+  const label = option?.label || newStage
   try {
+    await ElMessageBox.confirm(
+      `该好友将变更为「${label}」，确认要修改吗？`,
+      '确认修改销售阶段',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
     await conversations.updateStage(conversations.currentConversation.id, newStage)
-    ElMessage.success('阶段已更新')
+    ElMessage.success(`已变更为「${label}」`)
   } catch (e) {
+    if (e === 'cancel' || e === 'close') return
     ElMessage.error('更新失败')
   }
 }
