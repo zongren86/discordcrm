@@ -870,20 +870,11 @@ public class DiscordAccountService {
         for (int attempt = 1; attempt <= MAX_DELETE_RETRIES; attempt++) {
             try {
                 txTemplate.execute(status -> {
-                    // 3a. 删除抓取进度：先按 discordAccountId 整体批量删除（覆盖所有进度，包括引用了已不存在的 guild_server_id 的孤儿记录），
-                    // 避免后续服务器级删除时出现 "actual row count: 0; expected: 1"。
-                    fetchProgressRepository.deleteByDiscordAccountId(id);
-
-                    // 3b. 删除关联的服务器及其成员数据
-                    List<GuildServer> guildServers = guildServerRepository.findByDiscordAccountId(id);
-                    for (GuildServer guild : guildServers) {
-                        Long guildServerId = guild.getId();
-                        // 再按 guildServerId 清理一次 fetch_progress（防御性，极端并发下新增的进度）
-                        fetchProgressRepository.deleteByGuildServerId(guildServerId);
-                        guildMemberRepository.deleteByGuildServerId(guildServerId);
-                    }
-                    guildServerRepository.deleteByDiscordAccountId(id);
-                    log.info("已删除账号[id={}]关联的 {} 个服务器及其成员/抓取进度数据", id, guildServers.size());
+                    // 3a. 保留服务器(guild_servers)、服务器成员(guild_members)、抓取进度(fetch_progress)数据不删除，
+                    // 这些数据一旦生成就脱离与原账号的关系，最终只用于加好友。
+                    // 统计当前账号关联的服务器数量，仅用于日志。
+                    long serverCount = guildServerRepository.findByDiscordAccountId(id).size();
+                    log.info("删除账号[id={}]，保留其关联的 {} 个服务器及其成员/抓取进度数据(不删除)", id, serverCount);
 
                     // 3b. 移除 Agent 关联
                     DiscordAccount acc = accountRepository.findById(id).orElse(null);
