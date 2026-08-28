@@ -358,7 +358,7 @@
                   <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
                   <span v-if="msg.editedAt" class="msg-edited">(已编辑)</span>
                 </div>
-                <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted, 'bubble-media-only': !msg.isDeleted && (isGifMsg(msg) || isStickerMsg(msg)) }]">
+                <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted, 'bubble-media-only': !msg.isDeleted && isMediaMsg(msg)) }]">
                   <!-- 非GIF附件区域（排除GIF，由专门的GIF区域渲染） -->
                   <div v-if="nonGifAttachments(msg).length" class="msg-attachments">
                     <div v-for="att in nonGifAttachments(msg)" :key="att.url" class="attachment-item">
@@ -1751,6 +1751,22 @@ function isGifMsg(msg) {
       /\.(gif|webp|mp4|webm|png|jpg|jpeg)(\?|#|$)/i.test(content)
   }
   return false
+}
+
+
+/** 判断是否为纯图片消息（只有图片附件，无实质文本内容） */
+function isImageOnlyMsg(msg) {
+  if (!msg) return false
+  const imgs = imageAttachmentsOf(msg)
+  if (imgs.length === 0) return false
+  const text = msg.content?.trim() || ''
+  const isPlaceholderText = text === '[图片]' || text === '[GIF]' || text === '[语音消息]' || text === '[Sticker]'
+  return !text || isPlaceholderText
+}
+
+/** 判断是否为媒体消息（GIF/Sticker/纯图片），用于移除气泡背景 */
+function isMediaMsg(msg) {
+  return isGifMsg(msg) || isStickerMsg(msg) || isImageOnlyMsg(msg)
 }
 
 function gifUrlOf(msg) {
