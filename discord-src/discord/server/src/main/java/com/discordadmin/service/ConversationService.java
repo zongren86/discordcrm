@@ -585,6 +585,7 @@ public class ConversationService {
         return List.of();
     }
 
+    @Transactional(readOnly = true)
     public Conversation loadOwnedConversation(Long id) {
         Conversation conversation = conversationRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
@@ -619,6 +620,7 @@ public class ConversationService {
         throw new AccessDeniedException("无权访问该会话");
     }
 
+    @Transactional(readOnly = true)
     public List<MessageDto> listMessages(Long id) {
         loadOwnedConversation(id);
         return messageService.listMessages(id).stream()
