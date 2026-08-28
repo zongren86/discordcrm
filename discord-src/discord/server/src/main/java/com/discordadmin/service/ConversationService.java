@@ -673,8 +673,12 @@ public class ConversationService {
                                    Integer audioDuration, String audioFileName, String senderName,
                                    java.util.List<java.util.Map<String, String>> attachments) {
         loadOwnedConversation(id);
-        return MessageDto.from(messageService.sendReply(id, content, targetLanguage,
-                messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName, attachments));
+        Message msg = messageService.sendReply(id, content, targetLanguage,
+                messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName, attachments);
+        if (msg == null) {
+            throw new IllegalStateException("消息发送失败：内容为空或附件发送失败");
+        }
+        return MessageDto.from(msg);
     }
 
     public MessageDto sendGifMessage(Long id, String gifUrl, String title) {

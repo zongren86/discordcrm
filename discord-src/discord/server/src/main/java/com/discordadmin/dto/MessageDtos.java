@@ -20,10 +20,13 @@ public class MessageDtos {
                               String gifUrl, String stickerItemsJson) {
 
         public static MessageDto from(Message m) {
+            if (m == null) {
+                throw new IllegalArgumentException("Message must not be null");
+            }
             String avatarUrl = resolveAvatarUrl(m);
             return new MessageDto(
                     m.getId(),
-                    m.getConversation().getId(),
+                    m.getConversation() != null ? m.getConversation().getId() : null,
                     m.getDirection().name(),
                     m.getSenderName(),
                     m.getContent(),
@@ -55,10 +58,13 @@ public class MessageDtos {
         }
 
         public static MessageDto from(Message m, Conversation conv, DiscordAccount account) {
+            if (m == null) {
+                throw new IllegalArgumentException("Message must not be null");
+            }
             String avatarUrl = resolveAvatarUrl(m, conv, account);
             return new MessageDto(
                     m.getId(),
-                    m.getConversation().getId(),
+                    m.getConversation() != null ? m.getConversation().getId() : null,
                     m.getDirection().name(),
                     m.getSenderName(),
                     m.getContent(),
