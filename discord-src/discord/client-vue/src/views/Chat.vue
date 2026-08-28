@@ -3313,15 +3313,8 @@ function handleGlobalKeydown(e) {
     return
   }
   
-  // Enter 发送（全局兜底，防止 textarea 绑定失效）
-  if (e.code === 'Enter' && !e.shiftKey && !e.isComposing) {
-    // 只在输入框聚焦时拦截
-    const ta = document.activeElement
-    if (ta && ta.tagName === 'TEXTAREA' && ta.classList.contains('el-textarea__inner')) {
-      e.preventDefault()
-      send()
-    }
-  }
+  // 注意: Enter 发送已移到 onInputKeydown (textarea 原生 DOM 绑定)
+  // 不能在这里全局监听 Enter，否则和 textarea 上的 keydown 重复触发 send()
 }
 
 function onInputKeydown(e) {
@@ -3357,7 +3350,16 @@ function doTranslateInput() {
   translateAndReplaceInput(text)
 }
 
+let _lastSendTs = 0
 async function send() {
+  // 防重入锁: 150ms 内重复调用直接返回（解决 Enter 重复触发问题）
+  const now = Date.now()
+  if (now - _lastSendTs < 150) {
+    console.warn('[send] 防重入: 距上次发送仅', now - _lastSendTs, 'ms，跳过')
+    return
+  }
+  _lastSendTs = now
+
   const text = inputText.value.trim()
   if (!text && !replyToMsg.value && pendingAttachments.value.length === 0) return
   if (!conversations.currentConversationId) {
