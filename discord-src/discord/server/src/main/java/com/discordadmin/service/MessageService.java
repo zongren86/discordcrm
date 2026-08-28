@@ -356,51 +356,27 @@ public class MessageService {
                         conversation.getDiscordAccount().getId())
                 .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
 
-        String discordMessageId = null;
+        String discordMessageId;
         String discordAttachmentUrl = null;
-        if (account.getAccountType() == DiscordAccount.AccountType.USER) {
-            try {
-                if (isVoiceMessage) {
-                    byte[] audioBytes = java.util.Base64.getDecoder().decode(audioData);
-                    // Discord 原生语音消息要求文件名必须以 voice-message. 开头
-                    // 官方客户端默认扩展名 ogg，这里统一规范化
-                    String fileName = normalizeVoiceFileName(audioFileName, audioMimeType);
-                    String mimeType = normalizeVoiceMimeType(audioMimeType);
-                    // 语音消息 content 必须为空，客户端才会自动显示原生语音条
-                    String discordContent = "";
-                    com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
-                            account.getToken(), conversation.getChannelId(), discordContent,
-                            fileName, audioBytes, mimeType, audioDuration, null);
-                    discordMessageId = resp.path("id").asText(null);
-                    discordAttachmentUrl = extractAttachmentUrl(resp);
-                } else {
-                    discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
-                }
-            } catch (Exception e) {
-                if (e.getMessage() != null && (e.getMessage().contains("401") || e.getMessage().contains("Unauthorized"))) {
-                    log.error("账号 [{}] token 已失效，无法发送消息", account.getName());
-                    throw new IllegalStateException("账号「" + account.getName() + "」的 Discord 授权已失效，请重新登录该账号", e);
-                }
-                throw new IllegalStateException("消息发送失败: " + e.getMessage(), e);
-            }
-        } else {
+        try {
             if (isVoiceMessage) {
                 byte[] audioBytes = java.util.Base64.getDecoder().decode(audioData);
                 String fileName = normalizeVoiceFileName(audioFileName, audioMimeType);
                 String mimeType = normalizeVoiceMimeType(audioMimeType);
-                try {
-                    com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
-                            account.getToken(), conversation.getChannelId(), "",
-                            fileName, audioBytes, mimeType, audioDuration, null);
-                    discordMessageId = resp.path("id").asText(null);
-                    discordAttachmentUrl = extractAttachmentUrl(resp);
-                } catch (Exception e) {
-                    log.warn("Bot账号发送语音消息失败，尝试纯文本: {}", e.getMessage());
-                    discordBotManager.sendMessage(account.getId(), conversation, textToSend);
-                }
+                com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
+                        account.getToken(), conversation.getChannelId(), "",
+                        fileName, audioBytes, mimeType, audioDuration, null);
+                discordMessageId = resp.path("id").asText(null);
+                discordAttachmentUrl = extractAttachmentUrl(resp);
             } else {
-                discordBotManager.sendMessage(account.getId(), conversation, textToSend);
+                discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
             }
+        } catch (Exception e) {
+            if (e.getMessage() != null && (e.getMessage().contains("401") || e.getMessage().contains("Unauthorized"))) {
+                log.error("账号 [{}] token 已失效，无法发送消息", account.getName());
+                throw new IllegalStateException("账号「" + account.getName() + "」的 Discord 授权已失效，请重新登录该账号", e);
+            }
+            throw new IllegalStateException("消息发送失败: " + e.getMessage(), e);
         }
 
         Message message = new Message();

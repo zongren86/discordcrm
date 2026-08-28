@@ -45,6 +45,12 @@ public class DiscordMessageListener extends ListenerAdapter {
             log.debug("收到消息但忽略：作者是bot或系统 (accountId={} authorId={})", accountId, event.getAuthor().getId());
             return;
         }
+        // 跳过自己账号发出的消息 — 发送端已经通过 REST API 拿到 discordMessageId 并入库了
+        String selfId = event.getJDA().getSelfUser().getId();
+        if (selfId.equals(event.getAuthor().getId())) {
+            log.debug("收到消息但忽略：作者是自己 (accountId={} authorId={})", accountId, event.getAuthor().getId());
+            return;
+        }
 
         var attachments = event.getMessage().getAttachments();
         String attachmentsJson = attachments.isEmpty()
