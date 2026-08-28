@@ -97,8 +97,21 @@ public class EmuServerBindingService {
         // 获取服务器（按角色/商户过滤，防止跨商户）
         List<GuildServer> servers;
         if (accountId != null) {
-            // 如果指定了账号ID，只获取该账号的服务器
-            servers = serverRepository.findByDiscordAccountId(accountId);
+            // 指定账号ID时，必须校验该账号属于当前商户（防止跨商户泄漏）
+            if (!"PLATFORM_ADMIN".equals(role)) {
+                Set<Long> ownedAccountIds = getAvailableAccountIds(merchantId, userId, role);
+                if (!ownedAccountIds.contains(accountId)) {
+                    return List.of();
+                }
+            }
+            List<GuildServer> accountServers = serverRepository.findByDiscordAccountId(accountId);
+            // 非平台管理员额外按 merchantId 二次过滤，确保不跨商户
+            if (!"PLATFORM_ADMIN".equals(role)) {
+                accountServers = accountServers.stream()
+                    .filter(s -> merchantId.equals(s.getMerchantId()))
+                    .collect(Collectors.toList());
+            }
+            servers = accountServers;
         } else if ("PLATFORM_ADMIN".equals(role)) {
             // 平台管理员：可看全部
             servers = serverRepository.findAll();

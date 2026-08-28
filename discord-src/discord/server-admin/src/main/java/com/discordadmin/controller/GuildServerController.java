@@ -60,8 +60,16 @@ public class GuildServerController {
         Long currentAgentId = SecurityUtils.currentAgentId();
 
         // 平台管理员可以查看所有商户的服务器，不按merchantId过滤
+        // DB 二次校验：防止 JWT merchantId 丢失导致商户管理员被误判为平台管理员（跨商户泄漏）
         if (SecurityUtils.isPlatformAdmin()) {
-            merchantId = null;
+            if (currentAgentId != null) {
+                Agent dbAgent = agentRepository.findById(currentAgentId).orElse(null);
+                if (dbAgent != null && dbAgent.getMerchantId() != null) {
+                    // DB 里商户ID有值 → JWT 丢失了 merchantId，用 DB 值按商户隔离
+                    merchantId = dbAgent.getMerchantId();
+                }
+                // else: DB 里 merchant_id 也为 null → 真平台管理员，merchantId 保持 null
+            }
         }
 
         List<GuildServer> servers;

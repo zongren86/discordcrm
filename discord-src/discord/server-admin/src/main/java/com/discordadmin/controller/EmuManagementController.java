@@ -82,12 +82,18 @@ public class EmuManagementController {
 
     private Long resolveMerchantId() {
         Long id = SecurityUtils.currentMerchantId();
-        return id != null ? id : 1L;
+        if (id == null) {
+            throw new RuntimeException("当前用户未绑定商户");
+        }
+        return id;
     }
 
     private Long resolveUserId() {
         Long id = SecurityUtils.currentUserId();
-        return id != null ? id : 1L;
+        if (id == null) {
+            throw new RuntimeException("当前用户身份异常");
+        }
+        return id;
     }
 
     // ========== APK 管理 ==========
