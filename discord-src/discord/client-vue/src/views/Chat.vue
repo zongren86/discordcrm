@@ -532,8 +532,8 @@
 
                   <div v-if="!msg.isDeleted && !isVoiceMsg(msg) && !isGifMsg(msg) && !isStickerMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
 
-                  <!-- 图片附件渲染 -->
-                  <div v-if="!msg.isDeleted && imageAttachmentsOf(msg).length > 0" class="msg-image-attachments">
+                  <!-- 图片附件渲染（gif消息已由GIF区域渲染，这里跳过避免重复） -->
+                  <div v-if="!msg.isDeleted && !isGifMsg(msg) && !isStickerMsg(msg) && imageAttachmentsOf(msg).length > 0" class="msg-image-attachments">
                     <img v-for="(img, i) in imageAttachmentsOf(msg)" :key="i"
                          :src="resolveAttachmentUrl(img.url)" class="msg-image-attachment"
                          @click="openMediaPreview(resolveAttachmentUrl(img.url))"

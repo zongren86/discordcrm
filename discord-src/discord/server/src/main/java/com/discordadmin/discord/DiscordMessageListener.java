@@ -145,24 +145,35 @@ public class DiscordMessageListener extends ListenerAdapter {
                 }
             }
 
-            // 检测附件中的 GIF/视频（Discord 动画消息通常以 MP4/WebM 附件形式发送）
+            // 检测附件类型：先看是否 GIF/动画/视频，再看是否普通图片
             if ("text".equals(messageType)) {
-                Attachment gifAtt = attachments.stream()
+                // 优先检测 GIF/动画/视频
+                Attachment mediaAtt = attachments.stream()
                         .filter(a -> {
                             String ct = a.getContentType();
                             String fn = a.getFileName() != null ? a.getFileName().toLowerCase() : "";
-                            return (ct != null && (ct.startsWith("video/") || ct.startsWith("image/gif")))
+                            return (ct != null && (ct.startsWith("video/") || "image/gif".equals(ct)))
                                     || fn.endsWith(".gif") || fn.endsWith(".mp4") || fn.endsWith(".webm") || fn.endsWith(".mov");
                         })
                         .findFirst().orElse(null);
-                if (gifAtt != null) {
+                if (mediaAtt != null) {
                     messageType = "gif";
-                    gifUrl = gifAtt.getUrl();
+                    gifUrl = mediaAtt.getUrl();
                     if (content == null || content.isBlank()) {
-                        content = "[GIF] " + (gifAtt.getFileName() != null ? gifAtt.getFileName() : "动画");
+                        content = "[GIF] " + (mediaAtt.getFileName() != null ? mediaAtt.getFileName() : "动画");
                     }
                     log.info("[DISCORD GIF] 检测到附件形式的GIF/视频消息: accountId={}, file={}, url={}",
-                            accountId, gifAtt.getFileName(), truncate(gifUrl, 120));
+                            accountId, mediaAtt.getFileName(), truncate(gifUrl, 120));
+                } else {
+                    // 普通静态图片（PNG/JPG/WEBP等），标记为 image
+                    boolean hasImage = attachments.stream().anyMatch(a -> {
+                        String ct = a.getContentType();
+                        return ct != null && ct.startsWith("image/") && !"image/gif".equals(ct);
+                    });
+                    if (hasImage) {
+                        messageType = "image";
+                        log.info("[DISCORD IMG] 检测到普通图片附件: accountId={}", accountId);
+                    }
                 }
             }
         }
@@ -322,17 +333,14 @@ public class DiscordMessageListener extends ListenerAdapter {
         String lowerUrl = url.toLowerCase();
         
         // 检查常见的图片/视频扩展名
-        if (lowerUrl.matches(".*\\.(gif|webp|mp4|webm|mov|png|jpg|jpeg|bmp|svg)(\\?|#|$).*")) {
+        if (lowerUrl.matches(".*\\.(gif|webp|mp4|webm|mov|)(\\?|#|$).*")) {
             return true;
         }
         
         // 检查主流媒体/分享站点域名
         return lowerUrl.contains("gif") 
-            || lowerUrl.contains("imgur") 
-            || lowerUrl.contains("tenor") 
-            || lowerUrl.contains("giphy") 
-            || lowerUrl.contains("klipy")
-            || lowerUrl.contains("cdn.discordapp.com");
+            || lowerUrl.contains("giphy.com") 
+            || lowerUrl.contains("klipy");
     }
 
     /**
