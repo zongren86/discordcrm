@@ -3295,41 +3295,49 @@ async function onInputPaste(e) {
   }
   ElMessage.success(`已添加 ${files.length} 个文件`)
 }
+/** 全局键盘监听 — 用 e.code 确保跨平台可靠 */
 function handleGlobalKeydown(e) {
-  // Alt+W (Windows) / Cmd+W (Mac) — 全局兜底（onInputKeydown 已优先处理）
-  if ((e.altKey || e.metaKey) && e.key.toLowerCase() === 'w') {
+  console.log('[GLOBAL KEY] code=', e.code, 'key=', e.key, 'alt=', e.altKey, 'meta=', e.metaKey)
+  const isAltOrCmd = e.altKey || e.metaKey
+  
+  // Alt+W (Windows) / Cmd+W (Mac) — 翻译输入框
+  if (isAltOrCmd && e.code === 'KeyW') {
+    console.log('[GLOBAL] Alt/Cmd+W matched!')
     e.preventDefault()
     e.stopPropagation()
     if (inputText.value.trim()) {
       doTranslateInput()
+    } else {
+      ElMessage.warning('请先输入要翻译的内容')
+    }
+    return
+  }
+  
+  // Enter 发送（全局兜底，防止 textarea 绑定失效）
+  if (e.code === 'Enter' && !e.shiftKey && !e.isComposing) {
+    // 只在输入框聚焦时拦截
+    const ta = document.activeElement
+    if (ta && ta.tagName === 'TEXTAREA' && ta.classList.contains('el-textarea__inner')) {
+      e.preventDefault()
+      send()
     }
   }
 }
 
 function onInputKeydown(e) {
-  const isAltOrCmd = e.altKey || e.metaKey
-  const keyLower = e.key.toLowerCase()
-  console.log('[DEBUG onInputKeydown] key=', e.key, 'alt=', e.altKey, 'meta=', e.metaKey, 'ctrl=', e.ctrlKey)
+  // Alt+W / Cmd+W — 已由全局 handleGlobalKeydown 统一处理
+  if (e.altKey || e.metaKey) return
   
-  // Alt+W (Windows) / Cmd+W (Mac) — 翻译输入框内容（输入框内优先拦截）
-  if (isAltOrCmd && keyLower === 'w') {
-    console.log('[DEBUG] Alt/Cmd+W detected! inputText=', inputText.value)
-    e.preventDefault()
-    e.stopPropagation()
-    doTranslateInput()
-    return
-  }
-  
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  if (e.code === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     send()
-  } else if (e.altKey && keyLower === 'e') {
+  } else if (e.altKey && e.code === 'KeyE') {
     e.preventDefault()
     ElMessageBox.prompt('输入漏斗阶段 (PROSPECT/NEW/CONVERTED/CHURNED/ARCHIVED)',
       '快速修改漏斗', { inputValue: currentStage.value || '' }).then(({ value }) => {
       if (value) updateStageSilently(value.toUpperCase())
     }).catch(() => {})
-  } else if (e.altKey && keyLower === 'r') {
+  } else if (e.altKey && e.code === 'KeyR') {
     e.preventDefault()
     toggleAiPanel()
   }
@@ -5787,8 +5795,12 @@ video.msg-gif-img {
   margin-bottom: 6px;
   padding: 0 2px;
 }
+.input-hint .el-icon {
+  font-size: 12px;
+}
 
 .shortcut-hint {
+  font-size: 12px;
   color: var(--color-text-3);
   margin-left: auto;
 }
