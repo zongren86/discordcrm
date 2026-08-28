@@ -687,7 +687,7 @@
           <div class="input-hint" v-if="inputHint">
             <el-icon><InfoFilled /></el-icon>
             <span>{{ inputHint }}</span>
-            <span class="shortcut-hint">（Alt/Cmd+W 翻译 · Alt+E 漏斗 · Alt+R AI建议 · 支持拖拽/粘贴图片）</span>
+            <span class="shortcut-hint">（Alt/Cmd+W 翻译）</span>
           </div>
 
           <div v-if="showAiPanel" class="ai-panel">
@@ -3295,45 +3295,56 @@ async function onInputPaste(e) {
   }
   ElMessage.success(`已添加 ${files.length} 个文件`)
 }
-
 function handleGlobalKeydown(e) {
-  // Only handle when input is focused or has content
-  const textarea = document.querySelector('.msg-input textarea')
-  const isInputFocused = textarea && document.activeElement === textarea
-  
+  // Alt+W (Windows) / Cmd+W (Mac) — 全局兜底（onInputKeydown 已优先处理）
   if ((e.altKey || e.metaKey) && e.key.toLowerCase() === 'w') {
-    // Alt+W (Windows) or Cmd+W (Mac) - translate input box content
-    if (!isInputFocused && !inputText.value.trim()) return
     e.preventDefault()
     e.stopPropagation()
-    const text = inputText.value.trim()
-    if (!text) {
-      if (isInputFocused) ElMessage.warning('请先输入要翻译的内容')
-      return
+    if (inputText.value.trim()) {
+      doTranslateInput()
     }
-    // 纯数字不翻译
-    if (/^[\d\s.,;:!?\-+/\\*()\[\]{}'"]+$/.test(text)) {
-      ElMessage.info('纯数字无需翻译')
-      return
-    }
-    translateAndReplaceInput(text)
   }
 }
 
 function onInputKeydown(e) {
+  const isAltOrCmd = e.altKey || e.metaKey
+  const keyLower = e.key.toLowerCase()
+  
+  // Alt+W (Windows) / Cmd+W (Mac) — 翻译输入框内容（输入框内优先拦截）
+  if (isAltOrCmd && keyLower === 'w') {
+    e.preventDefault()
+    e.stopPropagation()
+    doTranslateInput()
+    return
+  }
+  
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     send()
-  } else if (e.altKey && e.key.toLowerCase() === 'e') {
+  } else if (e.altKey && keyLower === 'e') {
     e.preventDefault()
     ElMessageBox.prompt('输入漏斗阶段 (PROSPECT/NEW/CONVERTED/CHURNED/ARCHIVED)',
       '快速修改漏斗', { inputValue: currentStage.value || '' }).then(({ value }) => {
       if (value) updateStageSilently(value.toUpperCase())
     }).catch(() => {})
-  } else if (e.altKey && e.key.toLowerCase() === 'r') {
+  } else if (e.altKey && keyLower === 'r') {
     e.preventDefault()
     toggleAiPanel()
   }
+}
+
+/** 翻译输入框内容（纯数字跳过） */
+function doTranslateInput() {
+  const text = inputText.value.trim()
+  if (!text) {
+    ElMessage.warning('请先输入要翻译的内容')
+    return
+  }
+  if (/^[\d\s.,;:!?\-+/\*()\[\]{}'"]+$/.test(text)) {
+    ElMessage.info('纯数字无需翻译')
+    return
+  }
+  translateAndReplaceInput(text)
 }
 
 async function send() {
