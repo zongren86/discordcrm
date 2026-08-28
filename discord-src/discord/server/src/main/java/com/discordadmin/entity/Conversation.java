@@ -42,8 +42,10 @@ public class Conversation {
     @com.fasterxml.jackson.annotation.JsonIgnore
     private DiscordUser discordUser;
 
-    /** 该会话归属的 Discord 账号，用于出站消息路由 */
-    @ManyToOne(fetch = FetchType.LAZY)
+    /** 该会话归属的 Discord 账号，用于出站消息路由
+     *  EAGER 加载：Conversation 的 discordAccount 在 DTO 转换和权限过滤中必须可用，
+     *  用 LAZY 会在 Session 关闭后访问时抛出 LazyInitializationException 或返回 null */
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "discord_account_id")
     @com.fasterxml.jackson.annotation.JsonIgnore
     private DiscordAccount discordAccount;
