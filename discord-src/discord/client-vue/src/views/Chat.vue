@@ -849,7 +849,7 @@
               </el-button>
             </div>
 
-            <el-input v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
+            <el-input ref="chatInputRef" v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
               :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
               resize="none" @keydown="onInputKeydown" class="msg-input" />
             <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
@@ -3309,9 +3309,11 @@ function handleGlobalKeydown(e) {
 function onInputKeydown(e) {
   const isAltOrCmd = e.altKey || e.metaKey
   const keyLower = e.key.toLowerCase()
+  console.log('[DEBUG onInputKeydown] key=', e.key, 'alt=', e.altKey, 'meta=', e.metaKey, 'ctrl=', e.ctrlKey)
   
   // Alt+W (Windows) / Cmd+W (Mac) — 翻译输入框内容（输入框内优先拦截）
   if (isAltOrCmd && keyLower === 'w') {
+    console.log('[DEBUG] Alt/Cmd+W detected! inputText=', inputText.value)
     e.preventDefault()
     e.stopPropagation()
     doTranslateInput()
@@ -3417,6 +3419,8 @@ watch(() => conversations.currentMessages.length, (cnt) => {
 })
 
 watch(() => conversations.currentConversationId, async (newId, oldId) => {
+  await nextTick()
+  bindTextareaKeydown()
   replyToMsg.value = null
   userChangedTargetLang = false
   firstMessageDetectedLang = null  // 切换会话时重置首次检测缓存
@@ -4361,18 +4365,22 @@ async function translateCurrentMsg() {
 /** 直接翻译输入框内容并替换（用于快捷键 Alt+W/Cmd+W） */
 async function translateAndReplaceInput(text) {
   if (!text) return
+  console.log('[DEBUG translateAndReplaceInput] text=', text, 'targetLang=', targetLang.value)
   const loading = ElLoading.service({ text: '翻译中...', background: 'rgba(0,0,0,0.5)' })
   try {
     const result = await translateText(text, targetLang.value)
+    console.log('[DEBUG translateAndReplaceInput] result=', JSON.stringify(result?.data || result).substring(0, 200))
     if (result && result.data && result.data.translatedText) {
       inputText.value = result.data.translatedText
+      console.log('[DEBUG] inputText set to:', inputText.value)
       ElMessage.success('已翻译，可继续编辑或发送')
     } else {
+      console.warn('[DEBUG] translate result missing translatedText:', result)
       ElMessage.warning('翻译失败，请重试')
     }
   } catch (e) {
-    console.error('翻译失败:', e)
-    ElMessage.error('翻译失败')
+    console.error('[DEBUG] translate error:', e)
+    ElMessage.error('翻译失败: ' + (e?.response?.data?.message || e.message || ''))
   } finally {
     loading.close()
   }
@@ -4435,8 +4443,24 @@ async function onAISettingsUpdated(event) {
   }
 }
 
+/** 给真正的 textarea DOM 元素绑定原生 keydown（Element Plus 的事件转发不可靠） */
+function bindTextareaKeydown() {
+  const allTextareas = document.querySelectorAll('.msg-input textarea.el-textarea__inner')
+  allTextareas.forEach(ta => {
+    // 移除旧的（防止重复绑定）
+    ta.removeEventListener('keydown', onInputKeydown)
+    ta.addEventListener('keydown', onInputKeydown)
+    console.log('[DEBUG bindTextareaKeydown] bound to textarea:', ta)
+  })
+}
+
 onMounted(async () => {
+
   // 添加全局键盘监听（确保 Alt/Cmd+W 翻译快捷键可靠工作）
+  // 确保 DOM 渲染完成后再绑定原生 keydown（Element Plus 事件转发不可靠）
+  await nextTick()
+  bindTextareaKeydown()
+
   window.addEventListener('keydown', handleGlobalKeydown);
   // 添加滚动监听
   document.addEventListener('scroll', handleScroll, true);
@@ -4460,6 +4484,9 @@ watch(() => accounts.accounts.length, async (newLen, oldLen) => {
 })
 
 onUnmounted(() => {
+  // 移除 textarea 原生键盘监听
+  const allTextareas = document.querySelectorAll('.msg-input textarea.el-textarea__inner')
+  allTextareas.forEach(ta => ta.removeEventListener('keydown', onInputKeydown))
   // 移除全局键盘监听
   window.removeEventListener('keydown', handleGlobalKeydown);
   // 移除滚动监听
