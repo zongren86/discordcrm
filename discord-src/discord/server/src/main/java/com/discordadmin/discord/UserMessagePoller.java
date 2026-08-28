@@ -703,6 +703,17 @@ public class UserMessagePoller {
                     && account.getDiscordId() != null
                     && authorId.equals(account.getDiscordId());
 
+            // ===== 关键修复：跳过 OUTBOUND 消息 =====
+            // 发送端已通过 REST API 拿到 discordMessageId 并入库（sendReply 方法）
+            // Poller 只负责捞 INBOUND 消息，同时处理 OUTBOUND 会导致：
+            // 1) 消息重复入库（发送者+Poller 各存一份，同一 discordMessageId）
+            // 2) 数据库死锁（两个事务同时 UPDATE 同一条 conversation）
+            if (isOutbound) {
+                log.debug("跳过 OUTBOUND 消息（发送端 REST API 已入库）convId={}, msgId={}", conv.getId(), msgId);
+                processedMsgIds.remove(processedKey);  // 清理标记，不影响后续
+                continue;
+            }
+
             log.info("处理新消息 [convId={}, msgId={}, direction={}, author={}, contentLen={}]",
                     conv.getId(), msgId, (isOutbound ? "OUTBOUND" : "INBOUND"), authorName, content.length());
 
