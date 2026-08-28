@@ -851,7 +851,7 @@
 
             <el-input v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
               :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
-              resize="none" @keydown="onInputKeydown" class="msg-input" />
+              resize="none" @keydown.native="onInputKeydown" class="msg-input" />
             <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
               :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
               @click="send">
@@ -3280,17 +3280,19 @@ async function onInputPaste(e) {
   ElMessage.success(`已添加 ${files.length} 个文件`)
 }
 
-function onInputKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-    e.preventDefault()
-    send()
-  } else if ((e.altKey || e.metaKey) && e.key.toLowerCase() === 'w') {
-    // Alt+W (Windows) or Cmd+W (Mac) - translate input box content to target language
+function handleGlobalKeydown(e) {
+  // Only handle when input is focused or has content
+  const textarea = document.querySelector('.msg-input textarea')
+  const isInputFocused = textarea && document.activeElement === textarea
+  
+  if ((e.altKey || e.metaKey) && e.key.toLowerCase() === 'w') {
+    // Alt+W (Windows) or Cmd+W (Mac) - translate input box content
+    if (!isInputFocused && !inputText.value.trim()) return
     e.preventDefault()
     e.stopPropagation()
     const text = inputText.value.trim()
     if (!text) {
-      ElMessage.warning('请先输入要翻译的内容')
+      if (isInputFocused) ElMessage.warning('请先输入要翻译的内容')
       return
     }
     // 纯数字不翻译
@@ -3299,6 +3301,13 @@ function onInputKeydown(e) {
       return
     }
     translateAndReplaceInput(text)
+  }
+}
+
+function onInputKeydown(e) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault()
+    send()
   } else if (e.altKey && e.key.toLowerCase() === 'e') {
     e.preventDefault()
     ElMessageBox.prompt('输入漏斗阶段 (PROSPECT/NEW/CONVERTED/CHURNED/ARCHIVED)',
@@ -4400,6 +4409,8 @@ async function onAISettingsUpdated(event) {
 }
 
 onMounted(async () => {
+  // 添加全局键盘监听（确保 Alt/Cmd+W 翻译快捷键可靠工作）
+  window.addEventListener('keydown', handleGlobalKeydown);
   // 添加滚动监听
   document.addEventListener('scroll', handleScroll, true);
   try { await accounts.fetchAccounts() } catch (e) {}
@@ -4422,6 +4433,8 @@ watch(() => accounts.accounts.length, async (newLen, oldLen) => {
 })
 
 onUnmounted(() => {
+  // 移除全局键盘监听
+  window.removeEventListener('keydown', handleGlobalKeydown);
   // 移除滚动监听
   document.removeEventListener('scroll', handleScroll, true);
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
