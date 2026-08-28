@@ -462,8 +462,10 @@ public class GuildServerController {
             map.put("accountDiscordName", acc.getDiscordName());
             map.put("accountDiscordId", acc.getDiscordId());
             map.put("accountToken", acc.getToken());
+            map.put("accountTokenValid", Boolean.TRUE.equals(acc.getTokenValid()));
         } else {
             map.put("accountName", "未知账号");
+            map.put("accountTokenValid", null);
         }
 
         return map;

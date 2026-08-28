@@ -51,9 +51,16 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="所属账号" width="180">
+        <el-table-column label="所属账号" width="200">
           <template #default="{ row }">
-            <el-tag size="small" type="info" effect="plain">{{ row.accountName || row.accountDiscordName || '-' }}</el-tag>
+            <div class="account-cell">
+              <el-tag size="small" type="info" effect="plain" class="account-name-tag">{{ row.accountName || row.accountDiscordName || '-' }}</el-tag>
+              <div class="account-token-status">
+                <el-tag v-if="row.accountTokenValid === true" size="small" type="success" effect="plain">有效</el-tag>
+                <el-tag v-else-if="row.accountTokenValid === false" size="small" type="danger" effect="plain">失效</el-tag>
+                <el-tag v-else size="small" type="info" effect="plain">未知</el-tag>
+              </div>
+            </div>
           </template>
         </el-table-column>
 
