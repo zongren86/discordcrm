@@ -297,9 +297,9 @@
             </div>
             <div class="stat-info">
               <div class="stat-values">
-                <span class="stat-current">{{ currentProgressTask.membersUnique || 0 }}</span>
+                <span class="stat-current">{{ currentProgressTask.totalRespondedMembers || 0 }}</span>
                 <span class="stat-sep">/</span>
-                <span class="stat-total">{{ currentProgressTask.totalRespondedMembers || 0 }}</span>
+                <span class="stat-total">{{ currentProgressTask.maxMembers || 0 }}</span>
               </div>
               <div class="stat-label">已采集 / 总采集数</div>
             </div>
@@ -910,7 +910,7 @@ function getDedupRate(task) {
 
 function getCollectRate(task) {
   if (!task) return 0
-  const total = task.totalRespondedMembers || 0
+  const total = task.maxMembers || 0
   if (total <= 0) return 0
   return Math.min(100, Math.round((task.membersUnique || 0) / total * 100))
 }
@@ -1192,7 +1192,7 @@ async function openProgressDialog(server, taskId = null) {
           taskId: tempTaskId,
           // 计算 maxRequests 和 maxMembers（从已请求数推算）
           maxRequests: latestTask.requestsSent || 1000,
-          totalRespondedMembers: latestTask.totalRespondedMembers || 0
+          maxMembers: latestTask.maxMembers || 0
         })
       } else {
         // 没有历史记录，显示空状态

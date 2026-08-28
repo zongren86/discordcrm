@@ -429,12 +429,32 @@ public class MessageService {
         message.setDiscordCreatedAt(now);
         message.setCreatedAt(now);
         if (discordMessageId != null) {
-            message.setDiscordMessageId(discordMessageId);
+            // Check for duplicate before saving to avoid unique constraint violation
+            Optional<Message> existingMsg = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
+            if (existingMsg.isPresent()) {
+                log.warn("消息已存在，跳过保存: conversationId={}, discordMessageId={}", conversationId, discordMessageId);
+                // Update existing message instead of creating duplicate
+                Message existing = existingMsg.get();
+                existing.setContent(message.getContent());
+                existing.setTranslatedContent(message.getTranslatedContent());
+                existing.setDiscordCreatedAt(message.getDiscordCreatedAt());
+                if (!isVoiceMessage && !textToSend.equals(content)) {
+                    existing.setTranslatedContent(textToSend);
+                }
+                message = messageRepository.save(existing);
+            } else {
+                message.setDiscordMessageId(discordMessageId);
+                if (!isVoiceMessage && !textToSend.equals(content)) {
+                    message.setTranslatedContent(textToSend);
+                }
+                message = messageRepository.save(message);
+            }
+        } else {
+            if (!isVoiceMessage && !textToSend.equals(content)) {
+                message.setTranslatedContent(textToSend);
+            }
+            message = messageRepository.save(message);
         }
-        if (!isVoiceMessage && !textToSend.equals(content)) {
-            message.setTranslatedContent(textToSend);
-        }
-        message = messageRepository.save(message);
 
         // 语音消息：自动触发 ASR 转写（后台用户也可以手动点，不依赖这个自动流程）
         // INBOUND：转写+自动翻译成中文；OUTBOUND：只转写原文（用户发的原文，翻译看发送前已处理）
