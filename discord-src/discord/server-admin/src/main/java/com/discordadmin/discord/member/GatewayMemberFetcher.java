@@ -32,7 +32,7 @@ public class GatewayMemberFetcher {
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
           + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-    private static final double MIN_REQUEST_INTERVAL = 2.5;
+    private static final double MIN_REQUEST_INTERVAL = 10.0;
     private static final int MAX_RECONNECT = 10;
     // 重连策略常量：初始5次重试 → 暂停5分钟 → 3次重试
     private static final int INITIAL_MAX_RECONNECTS = 5;
@@ -96,6 +96,11 @@ public class GatewayMemberFetcher {
     private int prefixesTotal = 0;
     private final Queue<String> prefixQueue = new LinkedList<>();
     private final Set<String> visitedPrefixes = ConcurrentHashMap.newKeySet();
+
+    /** 完整前缀执行清单（有序）：每个元素 [前缀, 状态 PENDING|DONE|FAILED] */
+    private final List<Object[]> prefixSequenceList = new ArrayList<>();
+    /** prefix -> prefixSequenceList 中的索引位置，便于快速查找 */
+    private final Map<String, Integer> prefixSeqIndex = new HashMap<>();
 
     // 深度级统计：追踪每层的扩展/剪枝情况
     private final Map<Integer, int[]> depthStats = new LinkedHashMap<>();  // depth -> [processed, expanded, pruned, no_expand]
@@ -346,6 +351,19 @@ public class GatewayMemberFetcher {
                     timeoutCount = 0;
                 }
 
+                // 加入前缀执行清单并标记 DONE
+                synchronized (prefixSequenceList) {
+                    Integer idx = prefixSeqIndex.get(prefix);
+                    Object[] entry;
+                    if (idx == null) {
+                        entry = new Object[]{prefix, "DONE"};
+                        prefixSequenceList.add(entry);
+                        prefixSeqIndex.put(prefix, prefixSequenceList.size() - 1);
+                    } else {
+                        entry = prefixSequenceList.get(idx);
+                        entry[1] = "DONE";
+                    }
+                }
                 visitedPrefixes.add(prefix);
                 prefixesDone++;
                 int newMemberCount = members.size() - beforeSize;
@@ -373,6 +391,13 @@ public class GatewayMemberFetcher {
                         if (!visitedPrefixes.contains(sub) && !prefixQueue.contains(sub)) {
                             prefixQueue.offer(sub);
                             added++;
+                            // 扩展子前缀时，加入前缀执行清单 PENDING
+                            synchronized (prefixSequenceList) {
+                                if (!prefixSeqIndex.containsKey(sub)) {
+                                    prefixSequenceList.add(new Object[]{sub, "PENDING"});
+                                    prefixSeqIndex.put(sub, prefixSequenceList.size() - 1);
+                                }
+                            }
                         }
                     }
                     expandedTotal++;
@@ -506,16 +531,35 @@ public class GatewayMemberFetcher {
 
         // 如果有断点续传的前缀队列，直接使用
         if (resumeFrontierOverride != null && !resumeFrontierOverride.isEmpty()) {
-            for (String prefix : resumeFrontierOverride) {
-                if (prefix != null && !prefix.isEmpty()) {
-                    prefixQueue.offer(prefix);
+            synchronized (prefixSequenceList) {
+                // 先把已完成前缀加入清单 DONE
+                for (String prefix : completedPrefixesFromPrev) {
+                    visitedPrefixes.add(prefix);
+                    if (!prefixSeqIndex.containsKey(prefix)) {
+                        prefixSequenceList.add(new Object[]{prefix, "DONE"});
+                        prefixSeqIndex.put(prefix, prefixSequenceList.size() - 1);
+                    } else {
+                        prefixSequenceList.get(prefixSeqIndex.get(prefix))[1] = "DONE";
+                    }
+                }
+                // 再把剩余前缀加入清单 PENDING
+                for (String prefix : resumeFrontierOverride) {
+                    if (prefix != null && !prefix.isEmpty()) {
+                        prefixQueue.offer(prefix);
+                        if (!prefixSeqIndex.containsKey(prefix)) {
+                            prefixSequenceList.add(new Object[]{prefix, "PENDING"});
+                            prefixSeqIndex.put(prefix, prefixSequenceList.size() - 1);
+                        } else {
+                            Object[] entry = prefixSequenceList.get(prefixSeqIndex.get(prefix));
+                            if (!"DONE".equals(entry[1])) {
+                                entry[1] = "PENDING";
+                            }
+                        }
+                    }
                 }
             }
-            for (String prefix : completedPrefixesFromPrev) {
-                visitedPrefixes.add(prefix);
-            }
             prefixesTotal = ALPHABET.length();
-            log.info("断点续传: 使用保存的前缀队列 {} 个，已完成 {} 个", 
+            log.info("断点续传: 使用保存的前缀队列 {} 个，已完成 {} 个",
                     prefixQueue.size(), completedPrefixesFromPrev.size());
             return;
         }
@@ -523,6 +567,16 @@ public class GatewayMemberFetcher {
         // 38个前缀: a-z, 0-9, _, .
         for (char c : ALPHABET.toCharArray()) {
             String prefix = String.valueOf(c);
+            synchronized (prefixSequenceList) {
+                if (!prefixSeqIndex.containsKey(prefix)) {
+                    if (completedPrefixesFromPrev.contains(prefix)) {
+                        prefixSequenceList.add(new Object[]{prefix, "DONE"});
+                    } else {
+                        prefixSequenceList.add(new Object[]{prefix, "PENDING"});
+                    }
+                    prefixSeqIndex.put(prefix, prefixSequenceList.size() - 1);
+                }
+            }
             if (!completedPrefixesFromPrev.contains(prefix)) {
                 prefixQueue.offer(prefix);
             } else {
@@ -530,6 +584,17 @@ public class GatewayMemberFetcher {
             }
         }
         prefixesTotal = ALPHABET.length();
+        
+        // 安全检查：如果已完成前缀覆盖全部38个，说明上次可能是假完成，清空重新全量采集
+        if (prefixQueue.isEmpty() && !completedPrefixesFromPrev.isEmpty()) {
+            log.warn("所有 {} 个前缀都已标记完成但队列为空，可能是上次假完成，清空已完成前缀重新全量采集",
+                    completedPrefixesFromPrev.size());
+            completedPrefixesFromPrev.clear();
+            visitedPrefixes.clear();
+            for (char c : ALPHABET.toCharArray()) {
+                prefixQueue.offer(String.valueOf(c));
+            }
+        }
         
         if (!completedPrefixesFromPrev.isEmpty()) {
             log.info("断点续传: 已完成 {} 个前缀，剩余 {} 个", 
@@ -1337,6 +1402,82 @@ public class GatewayMemberFetcher {
     public Set<String> getCompletedPrefixes() {
         return new HashSet<>(visitedPrefixes);
     }
+
+    /**
+     * 获取完整前缀执行清单（JSON 序列化，每个元素: [前缀, 状态]）
+     * 用于持久化到 fetch_progress.prefix_sequence_list
+     */
+    public String getPrefixSequenceListJson() {
+        synchronized (prefixSequenceList) {
+            try {
+                List<Map<String, String>> list = new ArrayList<>();
+                for (Object[] entry : prefixSequenceList) {
+                    Map<String, String> m = new LinkedHashMap<>();
+                    m.put("p", (String) entry[0]);
+                    m.put("s", (String) entry[1]);
+                    list.add(m);
+                }
+                return mapper.writeValueAsString(list);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+    }
+
+    /**
+     * 从 JSON 恢复前缀执行清单（续传时使用）
+     * 返回 [List<[prefix,status]>, Set<String> donePrefixes, List<String> pendingPrefixes]
+     */
+    public static Object[] loadPrefixSequenceListFromJson(String json, ObjectMapper om) {
+        List<Object[]> list = new ArrayList<>();
+        Set<String> done = new HashSet<>();
+        List<String> pending = new ArrayList<>();
+        if (json == null || json.isBlank()) {
+            return new Object[]{list, done, pending};
+        }
+        try {
+            List<Map> raw = om.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<List<Map>>() {});
+            for (Map<String, String> m : raw) {
+                String p = m.get("p");
+                String s = m.getOrDefault("s", "PENDING");
+                list.add(new Object[]{p, s});
+                if ("DONE".equals(s)) {
+                    done.add(p);
+                } else {
+                    pending.add(p);
+                }
+            }
+        } catch (Exception e) {
+            // 解析失败返回空
+        }
+        return new Object[]{list, done, pending};
+    }
+
+    /**
+     * 从已有清单初始化（续传时填充 prefixSequenceList 和 prefixSeqIndex）
+     */
+    public void initWithPrefixSequenceList(List<Object[]> seqList) {
+        if (seqList == null || seqList.isEmpty()) return;
+        synchronized (prefixSequenceList) {
+            prefixSequenceList.clear();
+            prefixSeqIndex.clear();
+            for (int i = 0; i < seqList.size(); i++) {
+                Object[] entry = seqList.get(i);
+                String prefix = (String) entry[0];
+                String status = (String) entry[1];
+                prefixSequenceList.add(new Object[]{prefix, status});
+                prefixSeqIndex.put(prefix, i);
+                if ("DONE".equals(status)) {
+                    visitedPrefixes.add(prefix);
+                }
+            }
+            log.info("从清单初始化: 前缀序列 {} 个，其中 DONE={}, PENDING+其他={}",
+                    prefixSequenceList.size(),
+                    prefixSequenceList.stream().filter(e -> "DONE".equals(e[1])).count(),
+                    prefixSequenceList.stream().filter(e -> !"DONE".equals(e[1])).count());
+        }
+    }
+
     
     private void sleepQuietly(long ms) {
         try {

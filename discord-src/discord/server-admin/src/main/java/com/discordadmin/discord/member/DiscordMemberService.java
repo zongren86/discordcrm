@@ -144,6 +144,7 @@ public class DiscordMemberService {
         public Set<String> completedPrefixes = new LinkedHashSet<>();
         /** 本次完成的前缀集合 */
         public Set<String> newlyCompletedPrefixes = new LinkedHashSet<>();
+        public String prefixSequenceList;
         
         // 详细统计信息（用于结果展示）
         /** 累计响应成员数（不去重） */
@@ -218,11 +219,18 @@ public class DiscordMemberService {
                     // 始终加载已完成前缀和剩余前缀，支持增量同步
                     st.resumeFrontier = fromJson(prev.getResumeFrontier());
                     st.completedPrefixes = new LinkedHashSet<>(fromJson(prev.getCompletedPrefixes()));
+                    // 加载前缀执行清单（优先于 resumeFrontier/completedPrefixes）
+                    st.prefixSequenceList = prev.getPrefixSequenceList();
 
                     if ("FAILED".equals(prev.getStatus())) {
                         // 失败：从断点续抓
                         if (st.resumeFrontier.isEmpty() && st.completedPrefixes.isEmpty()) {
                             log.info("断点续抓: guildServerId={}, 无剩余前缀也无已完成前缀，改为全量扫描", st.guildServerId);
+                            st.completedPrefixes.clear();
+                        } else if (st.completedPrefixes.size() >= 38 && st.resumeFrontier.isEmpty()) {
+                            // 已完成前缀覆盖全部38个但无剩余前缀 → 假完成，改为全量扫描
+                            log.info("断点续抓: guildServerId={}, 已完成前缀覆盖全部{}个但无剩余前缀，改为全量扫描",
+                                    st.guildServerId, st.completedPrefixes.size());
                             st.completedPrefixes.clear();
                         } else {
                             log.info("断点续抓: guildServerId={}, lastBatchId={}, 剩余前缀 {} 个, 已完成前缀 {} 个",
@@ -232,6 +240,12 @@ public class DiscordMemberService {
                         // 上次完成但仍有未处理完的前缀（理论上不常见），继续从断点续抓
                         log.info("增量续抓: guildServerId={}, lastBatchId={}, 继续处理剩余前缀 {} 个",
                                 st.guildServerId, st.lastBatchId, st.resumeFrontier.size());
+                    } else if (st.completedPrefixes.size() >= 38 || (prev.getRequestCount() != null && prev.getRequestCount() == 0)) {
+                        // 已完成前缀覆盖全部38个，或上次未发起任何请求（假完成） → 全量重新采集
+                        String reason = st.completedPrefixes.size() >= 38 ? "已完成前缀覆盖全部" + st.completedPrefixes.size() + "个" : "上次未发起任何请求（假完成）";
+                        log.info("全量重采: guildServerId={}, {}，改为全量扫描", st.guildServerId, reason);
+                        st.completedPrefixes.clear();
+                        st.resumeFrontier.clear();
                     } else {
                         // 增量同步：跳过已完成前缀，只处理新前缀
                         log.info("增量同步: guildServerId={}, lastBatchId={}, 已完成前缀 {} 个, 跳过已处理",
@@ -372,13 +386,16 @@ public class DiscordMemberService {
                         if (_fetcher[0] != null) {
                             progress.setResumeFrontier(toJson(_fetcher[0].getRemainingFrontier()));
                             progress.setCompletedPrefixes(toJson(new ArrayList<>(_fetcher[0].getCompletedPrefixes())));
+                            progress.setPrefixSequenceList(_fetcher[0].getPrefixSequenceListJson());
                         }
                         fetchProgressRepository.save(progress);
                     }
                 }
             };
 
-            int pageDelayMs = (int) (req.getPageDelay() * 1000);
+            // 强制校验请求间隔不低于10秒
+            double pageDelay = Math.max(10.0, req.getPageDelay());
+            int pageDelayMs = (int) (pageDelay * 1000);
 
             // 分批保存监听器：在采集过程中实时保存成员数据
             List<MemberRecord> allRecords = Collections.synchronizedList(new ArrayList<>());
@@ -414,6 +431,30 @@ public class DiscordMemberService {
             if (!st.resumeFrontier.isEmpty()) {
                 _fetcher[0].setResumeFrontier(st.resumeFrontier);
                 log.info("断点续传: 设置剩余前缀队列 {} 个", st.resumeFrontier.size());
+            }
+
+            // 断点续传：从前缀执行清单恢复（优先级最高，确保按清单顺序续传）
+            if (st.prefixSequenceList != null && !st.prefixSequenceList.isBlank()) {
+                Object[] seqData = GatewayMemberFetcher.loadPrefixSequenceListFromJson(st.prefixSequenceList, mapper);
+                @SuppressWarnings("unchecked")
+                List<Object[]> seqList = (List<Object[]>) seqData[0];
+                @SuppressWarnings("unchecked")
+                Set<String> doneFromSeq = (Set<String>) seqData[1];
+                @SuppressWarnings("unchecked")
+                List<String> pendingFromSeq = (List<String>) seqData[2];
+                if (!seqList.isEmpty()) {
+                    // 使用清单初始化：填充 DONE/PENDING 状态
+                    _fetcher[0].initWithPrefixSequenceList(seqList);
+                    // 如果有 PENDING 前缀，则按顺序作为 resumeFrontier（按清单顺序而不是队列顺序）
+                    if (!pendingFromSeq.isEmpty()) {
+                        _fetcher[0].setResumeFrontier(pendingFromSeq);
+                        // 合并 completedPrefixes 为清单中所有 DONE 前缀
+                        st.completedPrefixes = new LinkedHashSet<>(doneFromSeq);
+                        _fetcher[0].setCompletedPrefixes(st.completedPrefixes);
+                        log.info("断点续传: 从清单恢复顺序前缀 {} 个(DONE={}, PENDING={})",
+                                seqList.size(), doneFromSeq.size(), pendingFromSeq.size());
+                    }
+                }
             }
 
             // 断点续传：加载已存在的成员 ID 集合（用于去重）
@@ -477,6 +518,7 @@ public class DiscordMemberService {
                 progress.setFailureReason("");
                 progress.setResumeFrontier(toJson(_fetcher[0].getRemainingFrontier()));
                 progress.setCompletedPrefixes(toJson(new ArrayList<>(_fetcher[0].getCompletedPrefixes())));
+                progress.setPrefixSequenceList(_fetcher[0].getPrefixSequenceListJson());
                 fetchProgressRepository.save(progress);
             }
 
@@ -502,6 +544,7 @@ public class DiscordMemberService {
                 if (_fetcher[0] != null) {
                     progress.setResumeFrontier(toJson(_fetcher[0].getRemainingFrontier()));
                     progress.setCompletedPrefixes(toJson(new ArrayList<>(_fetcher[0].getCompletedPrefixes())));
+                    progress.setPrefixSequenceList(_fetcher[0].getPrefixSequenceListJson());
                 }
                 fetchProgressRepository.save(progress);
             }
@@ -534,6 +577,7 @@ public class DiscordMemberService {
                 if (_fetcher[0] != null) {
                     progress.setResumeFrontier(toJson(_fetcher[0].getRemainingFrontier()));
                     progress.setCompletedPrefixes(toJson(new ArrayList<>(_fetcher[0].getCompletedPrefixes())));
+                    progress.setPrefixSequenceList(_fetcher[0].getPrefixSequenceListJson());
                 }
                 fetchProgressRepository.save(progress);
             }

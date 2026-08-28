@@ -138,8 +138,9 @@ public class EmuAutoAddDispatcher {
         // 获取模拟器总数
         Long merchantId = SecurityUtils.currentMerchantId();
         Long userId = SecurityUtils.currentUserId();
-        if (merchantId == null) merchantId = 1L;
-        if (userId == null) userId = 1L;
+        if (merchantId == null || userId == null) {
+            throw new RuntimeException("无法获取当前用户的商户信息和用户信息，请重新登录");
+        }
         
         List<EmuInstance> all = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         int totalEmulators = all.size();

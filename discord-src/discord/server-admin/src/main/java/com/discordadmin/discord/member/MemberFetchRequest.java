@@ -17,8 +17,8 @@ public class MemberFetchRequest {
     private Long discordAccountId;
     /** 获取数量上限（默认 2000000） */
     private int maxMembers = 2000000;
-    /** 请求间隔（秒，防限流） */
-    private double pageDelay = 1.0;
+    /** 请求间隔（秒，防限流）- 默认60秒，最小10秒 */
+    private double pageDelay = 60.0;
     /** 每次请求数 */
     private int requestCount = 100;
     /** 最大下钻深度（默认 5） */

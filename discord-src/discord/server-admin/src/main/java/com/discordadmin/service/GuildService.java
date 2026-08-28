@@ -134,18 +134,24 @@ public class GuildService {
         return guildMemberRepository.countByGuildServerId(guildServerId);
     }
 
-    /** 获取或创建商户配置 */
+    /** 获取或创建商户配置 - 强制校验请求间隔不低于10秒，默认60秒 */
     @Transactional
     public MerchantConfig getOrCreateConfig(Long merchantId) {
         if (merchantId == null) {
             throw new IllegalArgumentException("商户ID不能为空");
         }
-        return merchantConfigRepository.findByMerchantId(merchantId)
+        MerchantConfig config = merchantConfigRepository.findByMerchantId(merchantId)
                 .orElseGet(() -> {
-                    MerchantConfig config = new MerchantConfig();
-                    config.setMerchantId(merchantId);
-                    return merchantConfigRepository.save(config);
+                    MerchantConfig newConfig = new MerchantConfig();
+                    newConfig.setMerchantId(merchantId);
+                    return merchantConfigRepository.save(newConfig);
                 });
+        // 强制校验：请求间隔不得低于10秒，低于则重置为60秒
+        if (config.getRequestInterval() == null || config.getRequestInterval() < 10) {
+            config.setRequestInterval(60);
+            merchantConfigRepository.save(config);
+        }
+        return config;
     }
 
     /** 更新商户配置 */

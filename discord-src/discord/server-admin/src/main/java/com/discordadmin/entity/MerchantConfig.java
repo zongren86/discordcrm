@@ -24,7 +24,7 @@ public class MerchantConfig {
     private Integer fetchLimit = 2000000;
 
     @Column(name = "request_interval_ms")
-    private Integer requestInterval = 3;
+    private Integer requestInterval = 60;
 
     @Column(name = "request_count")
     private Integer requestCount = 100;

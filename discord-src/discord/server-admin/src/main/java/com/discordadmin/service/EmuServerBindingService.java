@@ -2,6 +2,7 @@ package com.discordadmin.service;
 
 import com.discordadmin.entity.*;
 import com.discordadmin.repository.*;
+import jakarta.persistence.EntityManager;
 import com.discordadmin.security.SecurityUtils;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +21,7 @@ public class EmuServerBindingService {
     private final AgentAccountNumberRelRepository relRepository;
     private final DiscordAccountNumberRepository numberRepository;
     private final EmuAccountBindingRepository accountBindingRepository;
+    private final EntityManager entityManager;
 
     public EmuServerBindingService(EmuServerBindingRepository bindingRepository,
                                     GuildServerRepository serverRepository,
@@ -27,7 +29,8 @@ public class EmuServerBindingService {
                                     OccupancyCheckService occupancyCheckService,
                                     AgentAccountNumberRelRepository relRepository,
                                     DiscordAccountNumberRepository numberRepository,
-                                    EmuAccountBindingRepository accountBindingRepository) {
+                                    EmuAccountBindingRepository accountBindingRepository,
+                                    EntityManager entityManager) {
         this.bindingRepository = bindingRepository;
         this.serverRepository = serverRepository;
         this.accountRepository = accountRepository;
@@ -35,6 +38,7 @@ public class EmuServerBindingService {
         this.relRepository = relRepository;
         this.numberRepository = numberRepository;
         this.accountBindingRepository = accountBindingRepository;
+        this.entityManager = entityManager;
     }
 
     /**
@@ -247,11 +251,13 @@ public class EmuServerBindingService {
     }
 
     /**
-     * 移除服务器绑定
+     * 移除服务器绑定 - 使用原生SQL绕过Hibernate DeleteEvent加载问题
      */
     @Transactional
     public void removeServer(Long bindingId) {
-        bindingRepository.deleteById(bindingId);
+        entityManager.createNativeQuery("DELETE FROM emu_server_bindings WHERE id = :id")
+            .setParameter("id", bindingId)
+            .executeUpdate();
     }
 
     /**

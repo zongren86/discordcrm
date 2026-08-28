@@ -193,11 +193,13 @@
           <el-form-item label="获取数量">
             <el-input-number v-model="syncDialog.config.fetchLimit" :min="100" :max="2000000" :step="1000" style="width: 100%" />
           </el-form-item>
-          <el-form-item label="请求间隔(秒)">
-            <el-input-number v-model="syncDialog.config.requestInterval" :min="1" :max="60" :step="1" style="width: 100%" />
+          <!-- 请求间隔已隐藏，使用默认值 60 秒 -->
+          <el-form-item v-show="false" label="请求间隔(秒)">
+            <el-input-number v-model="syncDialog.config.requestInterval" :min="10" :max="3600" :step="10" style="width: 100%" />
           </el-form-item>
-          <el-form-item label="每次请求数">
-            <el-input-number v-model="syncDialog.config.requestCount" :min="10" :max="1000" :step="50" style="width: 100%" />
+          <!-- 每次请求数已隐藏，使用默认值 100 -->
+          <el-form-item v-show="false" label="每次请求数">
+            <el-input-number v-model="syncDialog.config.requestCount" :min="1" :max="1000" :step="50" style="width: 100%" />
           </el-form-item>
           <el-form-item label="下钻深度" v-if="false">
             <el-input-number v-model="syncDialog.config.maxDepth" :min="1" :max="20" style="width: 100%" />
@@ -748,7 +750,7 @@ const syncDialog = reactive({
   resumeSync: true,
   config: {
     fetchLimit: 100000,
-    requestInterval: 3,
+    requestInterval: 60,
     requestCount: 100,
     maxDepth: 5,
     maxRequests: 1000
@@ -1029,8 +1031,8 @@ function openSyncDialog(server) {
     if (config) {
       syncDialog.config = {
         fetchLimit: config.fetchLimit || 100000,
-        requestInterval: config.requestInterval || 3,
-        requestCount: config.requestCount || 100,
+        requestInterval: 60,
+        requestCount: 100,
         maxDepth: config.maxDepth || 5,
         maxRequests: config.maxRequests || 1000
       }
@@ -1064,6 +1066,7 @@ async function startFetch() {
       channelId: syncDialog.server.channelId,
       maxMembers: syncDialog.config.fetchLimit,
       pageDelay: syncDialog.config.requestInterval,
+      requestCount: syncDialog.config.requestCount,
       maxDepth: syncDialog.config.maxDepth,
       maxRequests: syncDialog.config.maxRequests,
       resumeSync: syncDialog.resumeSync

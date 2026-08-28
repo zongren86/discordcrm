@@ -80,6 +80,10 @@ public class FetchProgress {
     @Column(name = "last_prefix", length = 64)
     private String lastPrefix;
 
+    /** 前缀执行清单：完整有序的前缀序列 + 每个前缀的执行状态（JSON 数组，元素: {"p":"前缀","s":"PENDING|DONE|FAILED"}） */
+    @Column(name = "prefix_sequence_list", columnDefinition = "LONGTEXT")
+    private String prefixSequenceList;
+
     /** 失败/中断原因 */
     @Column(name = "failure_reason", length = 512)
     private String failureReason;

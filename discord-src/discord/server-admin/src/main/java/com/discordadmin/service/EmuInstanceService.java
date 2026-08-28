@@ -936,13 +936,17 @@ public class EmuInstanceService {
         
         log.info("startInstance 开始: index={}, deviceId={}, merchantId={}, userId={}", index, deviceId, merchantId, userId);
 
-        // 严格按 merchantId+userId+instanceIndex 查询，不允许任何回退
+        // 严格按 merchantId+userId+instanceIndex 查询
         EmuInstance instance = null;
         if (merchantId != null && userId != null) {
             instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index).orElse(null);
         }
+        // 后台线程无 SecurityContext 时, 通过 deviceId+index 查找（deviceId 唯一对应一个 agent，数据隔离安全）
+        if (instance == null && deviceId != null && !deviceId.isEmpty()) {
+            instance = instanceRepository.findByDeviceIdAndInstanceIndex(deviceId, index).orElse(null);
+        }
         if (instance == null) {
-            throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%s, userId=%s)，数据隔离查询不到该模拟器", index, merchantId, userId));
+            throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%s, userId=%s, deviceId=%s)，数据隔离查询不到该模拟器", index, merchantId, userId, deviceId));
         }
 
 
