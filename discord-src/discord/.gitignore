@@ -31,3 +31,5 @@ build/
 *.test
 test.txt
 test_write.txt
+server/uploads/
+uploads/

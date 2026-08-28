@@ -339,7 +339,7 @@ public class MessageService {
         }
 
         String textToSend = content;
-        if (!isVoiceMessage && content != null && !content.isBlank()) {
+        if (!isVoiceMessage && content != null && !content.isBlank() && !isPureNumber(content)) {
             textToSend = translationServiceFactory.translate(content, targetLang, merchantId)
                     .orElse(content);
         } else if (isVoiceMessage) {
@@ -588,10 +588,12 @@ public class MessageService {
                 Message attMsg = new Message();
                 attMsg.setConversation(conversation);
                 attMsg.setDirection(Message.Direction.OUTBOUND);
-                attMsg.setSenderName(agentDisplayName != null ? agentDisplayName : "我");
+                attMsg.setSenderName(account.getName());
                 // 附件消息内容设为空字符串，附件信息由 attachmentsJson 传递给前端渲染
                 attMsg.setContent("");
                 attMsg.setAttachmentsJson(toJson(sentAttachments));
+                attMsg.setTranslatedContent("");
+                attMsg.setDiscordCreatedAt(Instant.now());
                 attMsg.setMessageType("attachment");
                 attMsg.setCreatedAt(Instant.now());
                 Message savedAtt = messageRepository.save(attMsg);
@@ -1134,6 +1136,15 @@ public class MessageService {
             if (c >= '\u4e00' && c <= '\u9fff') return true;
         }
         return false;
+    }
+
+    /**
+     * 检测文本是否为纯数字（可包含小数点、正负号等数学符号）
+     * 纯数字不应该被翻译
+     */
+    private boolean isPureNumber(String text) {
+        if (text == null || text.trim().isEmpty()) return false;
+        return text.trim().matches("[\\d\\s.,;:!?+\\-*/()\\[\\]{}]+");
     }
 
     /**

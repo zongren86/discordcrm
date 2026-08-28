@@ -535,8 +535,9 @@
                   <!-- 图片附件渲染 -->
                   <div v-if="!msg.isDeleted && imageAttachmentsOf(msg).length > 0" class="msg-image-attachments">
                     <img v-for="(img, i) in imageAttachmentsOf(msg)" :key="i"
-                         :src="img.url" class="msg-image-attachment"
-                         @click="openMediaPreview(img.url)" />
+                         :src="resolveAttachmentUrl(img.url)" class="msg-image-attachment"
+                         @click="openMediaPreview(resolveAttachmentUrl(img.url))"
+                         @error="onImageError($event)" />
                   </div>
 
                   <div v-else-if="msg.isDeleted" class="msg-deleted-tip">[消息已删除]</div>
@@ -1400,7 +1401,12 @@ const filteredConversations = computed(() => {
     list = list.filter(c => c.stage !== 'CHURNED')
   }
   if (selectedAccountId.value) {
-    list = list.filter(c => (c.discordAccountId || c.accountId) === selectedAccountId.value)
+    const selId = Number(selectedAccountId.value) || selectedAccountId.value
+    list = list.filter(c => {
+      const rawId = c.discordAccountId != null ? c.discordAccountId : c.accountId
+      const accId = Number(rawId) || rawId
+      return accId == selId
+    })
   }
   if (selectedStage.value) {
     list = list.filter(c => c.stage === selectedStage.value)
@@ -1471,7 +1477,7 @@ const accountOptionsForFilter = computed(() => {
   // 从会话列表中收集所有账号
   const accountMap = new Map()
   for (const c of conversations.conversations) {
-    if (c.discordAccountId) {
+    if (c.discordAccountId != null) {
       const name = c.discordAccountName || c.discordAccount?.name || c.accountName || `账号#${c.discordAccountId}`
       if (!accountMap.has(c.discordAccountId)) {
         // 从accounts store获取tokenValid，默认为true
@@ -1577,6 +1583,8 @@ const hasMore = computed(() =>
 
 const inputHint = computed(() => {
   if (!inputText.value.trim()) return ''
+  // 纯数字不显示翻译提示
+  if (/^[\d\s.,;:!?\-+/\\*()\[\]{}'"]+$/.test(inputText.value.trim())) return ''
   if (containsChinese(inputText.value)) {
     const targetName = LANGUAGE_NAMES[targetLang.value] || targetLang.value
     return `检测到中文，发送时将自动翻译为${targetName}`
@@ -1612,6 +1620,9 @@ const presenceLabel = computed(() => {
 })
 
 function containsChinese(text) {
+  if (!text || !text.trim()) return false
+  // 纯数字不翻译
+  if (/^[\d\s.,;:!?\-+/\\*()\[\]{}'"]+$/.test(text.trim())) return false
   return /[\u4e00-\u9fa5]/.test(text || '')
 }
 
@@ -2254,6 +2265,30 @@ function handleStickerDownload(sticker) {
   }
 }
 
+
+/** 解析附件 URL - 处理相对路径和 localhost 问题 */
+function resolveAttachmentUrl(url) {
+  if (!url) return ''
+  // 如果是相对路径，添加后端基础 URL
+  if (url.startsWith('/')) {
+    const base = window.location.origin
+    return url
+  }
+  // 如果是 localhost 但前端不在 localhost，替换为当前域名
+  if (url.includes('localhost:8090') && !window.location.hostname.includes('localhost')) {
+    return url.replace('localhost:8090', window.location.hostname + ':8090')
+  }
+  return url
+}
+
+/** 图片加载错误处理 */
+function onImageError(e) {
+  if (e.target) {
+    e.target.style.opacity = '0.3'
+    e.target.style.background = '#eee'
+    e.target.alt = '图片加载失败'
+  }
+}
 /** 判断是否图片附件 */
 function isImageAttachment(att) {
   if (!att) return false
@@ -3252,12 +3287,18 @@ function onInputKeydown(e) {
   } else if ((e.altKey || e.metaKey) && e.key.toLowerCase() === 'w') {
     // Alt+W (Windows) or Cmd+W (Mac) - translate input box content to target language
     e.preventDefault()
+    e.stopPropagation()
     const text = inputText.value.trim()
     if (!text) {
       ElMessage.warning('请先输入要翻译的内容')
       return
     }
-    requestTranslationPreview()
+    // 纯数字不翻译
+    if (/^[\d\s.,;:!?\-+/\\*()\[\]{}'"]+$/.test(text)) {
+      ElMessage.info('纯数字无需翻译')
+      return
+    }
+    translateAndReplaceInput(text)
   } else if (e.altKey && e.key.toLowerCase() === 'e') {
     e.preventDefault()
     ElMessageBox.prompt('输入漏斗阶段 (PROSPECT/NEW/CONVERTED/CHURNED/ARCHIVED)',
@@ -4281,6 +4322,26 @@ async function translateCurrentMsg() {
 }
 
 /** 请求翻译预览 - 调用后端翻译API获取真实翻译结果 */
+/** 直接翻译输入框内容并替换（用于快捷键 Alt+W/Cmd+W） */
+async function translateAndReplaceInput(text) {
+  if (!text) return
+  const loading = ElLoading.service({ text: '翻译中...', background: 'rgba(0,0,0,0.5)' })
+  try {
+    const result = await translateText(text, targetLang.value)
+    if (result && result.data && result.data.translatedText) {
+      inputText.value = result.data.translatedText
+      ElMessage.success('已翻译，可继续编辑或发送')
+    } else {
+      ElMessage.warning('翻译失败，请重试')
+    }
+  } catch (e) {
+    console.error('翻译失败:', e)
+    ElMessage.error('翻译失败')
+  } finally {
+    loading.close()
+  }
+}
+
 async function requestTranslationPreview() {
   const text = inputText.value.trim()
   if (!text) {
