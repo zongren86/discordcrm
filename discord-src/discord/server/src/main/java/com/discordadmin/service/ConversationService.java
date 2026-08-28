@@ -575,28 +575,36 @@ public class ConversationService {
         // 普通用户：按merchantId和分配账号过滤（ownerAgentId=自己的 + 分配账号下的）
         if (currentAgentId != null) {
             Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
-            if (assignedAccountIds.isEmpty()) {
-                return List.of();
-            }
-            List<Long> accountIdList = new ArrayList<>(assignedAccountIds);
-
-            // 如果指定了accountId但不是分配的账号，返回空
-            if (accountId != null && !assignedAccountIds.contains(accountId)) {
-                return List.of();
-            }
 
             Conversation.Stage stageEnum = null;
             if (stage != null && !stage.isBlank()) {
                 stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
             }
 
-            // 如果指定了accountId，用单账号查询；否则用账号列表查询
-            if (accountId != null) {
-                return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
-                        merchantId, List.of(accountId), stageEnum, currentAgentId);
+            // 如果指定了accountId但不在分配列表中，返回空
+            if (accountId != null && !assignedAccountIds.contains(accountId)) {
+                return List.of();
+            }
+
+            // 有分配账号：用ownerAgentId OR accountIds的条件查询
+            if (!assignedAccountIds.isEmpty()) {
+                List<Long> accountIdList = new ArrayList<>(assignedAccountIds);
+                if (accountId != null) {
+                    return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
+                            merchantId, List.of(accountId), stageEnum, currentAgentId);
+                } else {
+                    return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
+                            merchantId, accountIdList, stageEnum, currentAgentId);
+                }
+            }
+
+            // 没有分配账号：只能看ownerAgentId=自己的会话（按merchantId+ownerAgentId查）
+            if (stageEnum != null) {
+                return conversationRepository.findByMerchantIdAndOwnerAgentIdAndStageOrderByLastMessageAtDesc(
+                        merchantId, currentAgentId, stageEnum);
             } else {
-                return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
-                        merchantId, accountIdList, stageEnum, currentAgentId);
+                return conversationRepository.findByMerchantIdAndOwnerAgentIdOrderByLastMessageAtDesc(
+                        merchantId, currentAgentId);
             }
         }
 
