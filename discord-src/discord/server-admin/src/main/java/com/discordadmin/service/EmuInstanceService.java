@@ -927,37 +927,150 @@ public class EmuInstanceService {
     /**
      * 启动模拟器 — 异步执行，立即返回
      * 启动后自动打开 Discord（如果已安装）
+     * 
+     * 注意：此方法依赖 SecurityContext 获取 merchantId/userId，仅适用于 Controller 层调用
+     * 后台线程（如 auto-add-dispatcher）请使用 startInstanceByData 方法
      */
     @Transactional
     public Map<String, Object> startInstance(int index, String deviceId) {
         Long merchantId = resolveMerchantId();
         Long userId = resolveUserId();
+        
+        // 严格要求 merchantId 和 userId 不为 null（数据隔离必须）
+        if (merchantId == null || userId == null) {
+            throw new RuntimeException(String.format("启动模拟器失败: merchantId或userId为null (index=%d, deviceId=%s)。请使用 startInstanceByData 方法传入完整数据", index, deviceId));
+        }
+        
         AgentRegistration agent = resolveSelectedAgent(deviceId);
         
         log.info("startInstance 开始: index={}, deviceId={}, merchantId={}, userId={}", index, deviceId, merchantId, userId);
 
-        // 严格按 merchantId+userId+instanceIndex 查询
-        EmuInstance instance = null;
-        if (merchantId != null && userId != null) {
-            instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index).orElse(null);
-        }
-        // 后台线程无 SecurityContext 时, 通过 deviceId+index 查找（deviceId 唯一对应一个 agent，数据隔离安全）
-        if (instance == null && deviceId != null && !deviceId.isEmpty()) {
-            instance = instanceRepository.findByDeviceIdAndInstanceIndex(deviceId, index).orElse(null);
-        }
-        if (instance == null) {
-            throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%s, userId=%s, deviceId=%s)，数据隔离查询不到该模拟器", index, merchantId, userId, deviceId));
-        }
+        // 严格按 merchantId+userId+instanceIndex 查询（数据隔离）
+        EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
+            .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%s, userId=%s)，数据隔离查询不到该模拟器", index, merchantId, userId)));
 
-
-        // 从查到的 instance 补全 merchantId/userId（异步线程无 SecurityContext 时依赖 deviceId 查找）
-        if (merchantId == null) merchantId = instance.getMerchantId();
-        if (userId == null) userId = instance.getUserId();
-        // lambda 需要 effectively final，创建 final 副本
-        final Long finalMerchantId = merchantId;
-        final Long finalUserId = userId;
+        // 使用查询到的 instance 数据
+        final Long finalMerchantId = instance.getMerchantId();
+        final Long finalUserId = instance.getUserId();
+        // finalMerchantId 和 finalUserId 已在上方定义（从 instance 获取）
         boolean useAgent = agent != null;
         log.info("startInstance: deviceId={}, agent={}, useAgent={}, merchantId={}, userId={}", deviceId, agent != null ? agent.getDeviceId() : "null", useAgent, merchantId, userId);
+
+        if (!useAgent && !mumuClientService.emulatorExists(index)) {
+            throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法启动。请先创建模拟器。", index));
+        }
+        if (useAgent) {
+            log.info("Agent 模式: 通过 Agent {} 启动模拟器 #{}", agent.getDeviceId(), index);
+        }
+
+        CompletableFuture.runAsync(() -> {
+            try {
+                Map<String, Object> startResult;
+                if (agent != null) {
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("index", index - 1);
+                    startResult = webSocketService.sendCommandAndWait(agent.getDeviceId(), "START_EMULATOR", params)
+                        .get(60, TimeUnit.SECONDS);
+                    log.info("通过 Agent {} 启动模拟器 #{}", agent.getDeviceId(), index);
+                } else {
+                    startResult = mumuClientService.startEmulator(index);
+                }
+                log.info("模拟器 #{} 启动指令执行完成, discordInstalled={}", index, startResult.get("discordInstalled"));
+
+                Thread.sleep(8000);
+
+                boolean discordInstalled = Boolean.TRUE.equals(startResult.get("discordInstalled"));
+                if (!discordInstalled) {
+                    List<Map<String, Object>> physList;
+                    if (agent != null) {
+                        physList = webSocketService.getEmulatorsFromAgentByDeviceId(agent.getDeviceId());
+                        if (physList == null) physList = webSocketService.getEmulatorsFromAgent(finalUserId);
+                    } else {
+                        physList = mumuClientService.getAllEmulatorsWithError();
+                    }
+                    if (physList != null) {
+                        int mumuIdx = index - 1;
+                        for (Map<String, Object> phys : physList) {
+                            Object pIdx = phys.get("index");
+                            if (pIdx instanceof Number && ((Number) pIdx).intValue() == mumuIdx) {
+                                Object instObj = phys.get("discordInstalled");
+                                discordInstalled = Boolean.TRUE.equals(instObj) ||
+                                        "true".equalsIgnoreCase(String.valueOf(instObj));
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                EmuInstance inst = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(
+                        finalMerchantId, finalUserId, index).orElse(null);
+                if (inst != null) {
+                    inst.setDiscordInstalled(discordInstalled);
+                    inst.setUpdatedAt(Instant.now());
+                    instanceRepository.save(inst);
+                }
+
+                if (discordInstalled) {
+                    log.info("模拟器 #{} Discord 已安装，自动打开...", index);
+                    try {
+                        mumuClientService.launchDiscord(index);
+                        log.info("模拟器 #{} Discord 已自动打开", index);
+                        updateDiscordOnHome(index, true);
+                        Thread.sleep(5000);
+                        checkAndUpdateDiscordStatus(index);
+                    } catch (Exception e) {
+                        log.warn("模拟器 #{} 自动打开 Discord 失败: {}", index, e.getMessage());
+                        checkAndUpdateDiscordStatus(index);
+                    }
+                } else {
+                    log.info("模拟器 #{} 未安装 Discord", index);
+                }
+            } catch (Exception e) {
+                log.warn("模拟器 #{} 启动指令执行失败: {}", index, e.getMessage());
+            }
+        });
+
+        instance.setStatus(EmuInstance.EmuStatus.RUNNING);
+        instance.setAutoRunning(false);
+        instance.setLastError(null);
+        instance.setUpdatedAt(Instant.now());
+        instanceRepository.save(instance);
+
+        return convertToMap(instance);
+    }
+
+    /**
+     * 启动模拟器 — 使用已查询到的完整数据（适用于后台线程无 SecurityContext 场景）
+     * 先从数据库获取模拟器完整数据，再用这些数据启动实例
+     */
+    @Transactional
+    public Map<String, Object> startInstanceByData(EmuInstance emuData) {
+        if (emuData == null) {
+            throw new RuntimeException("模拟器数据为空，无法启动");
+        }
+        
+        Long merchantId = emuData.getMerchantId();
+        Long userId = emuData.getUserId();
+        int index = emuData.getInstanceIndex();
+        String deviceId = emuData.getDeviceId();
+        
+        // 验证必要数据
+        if (merchantId == null || userId == null) {
+            throw new RuntimeException(String.format("模拟器 #%d 数据不完整: merchantId=%s, userId=%s", index, merchantId, userId));
+        }
+        
+        // 验证模拟器存在（按数据隔离查询）
+        EmuInstance instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index)
+            .orElseThrow(() -> new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%s, userId=%s)，数据隔离查询不到该模拟器", index, merchantId, userId)));
+        
+        AgentRegistration agent = resolveSelectedAgent(deviceId);
+        
+        log.info("startInstanceByData 开始: index={}, deviceId={}, merchantId={}, userId={}", index, deviceId, merchantId, userId);
+        
+        final Long finalMerchantId = instance.getMerchantId();
+        final Long finalUserId = instance.getUserId();
+        boolean useAgent = agent != null;
+        log.info("startInstanceByData: deviceId={}, agent={}, useAgent={}", deviceId, agent != null ? agent.getDeviceId() : "null", useAgent);
 
         if (!useAgent && !mumuClientService.emulatorExists(index)) {
             throw new RuntimeException(String.format("物理模拟器 #%d 不存在，无法启动。请先创建模拟器。", index));

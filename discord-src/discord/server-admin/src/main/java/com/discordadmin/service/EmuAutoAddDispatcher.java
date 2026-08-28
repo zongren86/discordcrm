@@ -473,9 +473,10 @@ public class EmuAutoAddDispatcher {
             return;
         }
         if (fresh.getStatus() == null || fresh.getStatus() != EmuInstance.EmuStatus.RUNNING) {
-            log.info("调度启动：模拟器#{} 状态={}，启动物理模拟器", dbIndex, fresh.getStatus());
+            log.info("调度启动：模拟器#{} 状态={}，启动物理模拟器 (使用数据库完整数据)", dbIndex, fresh.getStatus());
             try {
-                Map<String, Object> r = instanceService.startInstance(dbIndex, emu.getDeviceId());
+                // 先从数据库获取完整数据（deviceId, merchantId, userId 都有值），再用这些数据启动
+                Map<String, Object> r = instanceService.startInstanceByData(fresh);
                 // Mumu startEmulator 返回启动结果；等待完全启动
                 Thread.sleep(8000);
                 log.info("模拟器#{} 启动指令返回：{}", dbIndex, shortStr(r));
