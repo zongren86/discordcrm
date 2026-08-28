@@ -72,7 +72,13 @@ public class GuildService {
     /** 删除服务器配置 */
     @Transactional
     public void deleteGuildServer(Long id) {
+        // 先删抓取进度：使用批量 DELETE（@Modifying @Query），避免孤儿记录导致 row count mismatch
+        fetchProgressRepository.deleteByGuildServerId(id);
+        // 再删服务器成员
         guildMemberRepository.deleteByGuildServerId(id);
+        // 同时清理进度缓存，避免后续读取脏数据
+        progressCache.remove(id);
+        // 最后删服务器本身
         guildServerRepository.deleteById(id);
     }
 
