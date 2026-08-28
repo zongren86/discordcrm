@@ -5,6 +5,7 @@ import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.Message;
 
 import java.time.Instant;
+import org.hibernate.Hibernate;
 
 public class MessageDtos {
 
@@ -96,11 +97,12 @@ public class MessageDtos {
 
         private static String resolveAvatarUrl(Message m, Conversation conv, DiscordAccount account) {
             if (m.getDirection() == Message.Direction.INBOUND) {
-                if (conv != null && conv.getDiscordUser() != null) {
+                // 使用 Hibernate.isInitialized 防止 LAZY 代理在事务关闭后抛出 LazyInitializationException
+                if (conv != null && Hibernate.isInitialized(conv.getDiscordUser()) && conv.getDiscordUser() != null) {
                     return conv.getDiscordUser().getAvatarUrl();
                 }
             } else {
-                if (account != null && account.getAvatarUrl() != null) {
+                if (account != null && Hibernate.isInitialized(account) && account.getAvatarUrl() != null) {
                     return account.getAvatarUrl();
                 }
             }

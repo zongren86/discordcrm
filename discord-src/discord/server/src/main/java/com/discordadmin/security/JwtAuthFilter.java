@@ -58,11 +58,30 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             } catch (JwtException | IllegalArgumentException e) {
                 log.warn("JWT 验证失败: URI={}, 原因={}", uri, e.getMessage());
                 SecurityContextHolder.clearContext();
+                // Token 无效/过期：向前端返回 401 JSON，前端拦截器会提示"登录已过期，请重新登录"并跳转登录页。
+                // 放行登录/注册等白名单接口（如 /api/auth/login）。
+                if (!isWhitelisted(uri)) {
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write(
+                        "{\"success\":false,\"code\":401,\"message\":\"登录token已过期，请重新登录\"}"
+                    );
+                    response.getWriter().flush();
+                    return;
+                }
             }
         } else {
             log.debug("无 Authorization 头: URI={}", uri);
         }
         filterChain.doFilter(request, response);
+    }
+
+    /** 判断 URI 是否在认证白名单内（放行登录等接口） */
+    private boolean isWhitelisted(String uri) {
+        if (uri == null) return false;
+        return uri.startsWith("/api/auth/")
+                || uri.startsWith("/ws/")
+                || uri.endsWith("/error");
     }
 
     public record AuthenticatedAgent(Long agentId, Long userId, String username, Integer accountType, Long merchantId) {

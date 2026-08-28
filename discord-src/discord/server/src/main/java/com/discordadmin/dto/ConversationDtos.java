@@ -6,6 +6,7 @@ import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.DiscordUser;
 
 import java.time.Instant;
+import org.hibernate.Hibernate;
 import java.util.List;
 
 public class ConversationDtos {
@@ -69,13 +70,15 @@ public class ConversationDtos {
 
         public static ConversationDto from(Conversation c, int unreadCount, String associatedUserName) {
             List<MessageDtos.MessageDto> emptyMessages = List.of();
-            DiscordUser du = c.getDiscordUser();
+            // 使用 Hibernate.isInitialized 防止 LAZY 代理在事务关闭后抛 LazyInitializationException
+            DiscordUser du = (c.getDiscordUser() != null && Hibernate.isInitialized(c.getDiscordUser()))
+                    ? c.getDiscordUser() : null;
             String agentName = null;
             String agentUsername = null;
             Long agentId = null;
 
             // 仅当会话有明确分配的客服（转移后）时才设置agent信息
-            if (c.getAssignedAgent() != null) {
+            if (c.getAssignedAgent() != null && Hibernate.isInitialized(c.getAssignedAgent())) {
                 Agent agent = c.getAssignedAgent();
                 agentName = agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername();
                 agentUsername = agent.getUsername();
@@ -84,16 +87,16 @@ public class ConversationDtos {
             return new ConversationDto(
                     c.getId(),
                     c.getChannelId(),
-                    du.getId(),
-                    du.getDiscordUserId(),
-                    du.getUsername(),
-                    du.getGlobalName(),
-                    du.getAvatarUrl(),
-                    du.getLastActiveAt(),
-                    du.getPresence(),
-                    du.getPresenceUpdatedAt(),
-                    c.getDiscordAccount() != null ? c.getDiscordAccount().getId() : null,
-                    c.getDiscordAccount() != null ? c.getDiscordAccount().getName() : null,
+                    du != null ? du.getId() : null,
+                    du != null ? du.getDiscordUserId() : null,
+                    du != null ? du.getUsername() : null,
+                    du != null ? du.getGlobalName() : null,
+                    du != null ? du.getAvatarUrl() : null,
+                    du != null ? du.getLastActiveAt() : null,
+                    du != null ? du.getPresence() : null,
+                    du != null ? du.getPresenceUpdatedAt() : null,
+                    c.getDiscordAccount() != null && Hibernate.isInitialized(c.getDiscordAccount()) ? c.getDiscordAccount().getId() : null,
+                    c.getDiscordAccount() != null && Hibernate.isInitialized(c.getDiscordAccount()) ? c.getDiscordAccount().getName() : null,
                     c.getType().name(),
                     c.getStatus().name(),
                     c.getLastMessagePreview(),

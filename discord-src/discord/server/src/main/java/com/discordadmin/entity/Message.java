@@ -31,7 +31,9 @@ public class Message {
     @Column(name = "merchant_id")
     private Long merchantId;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    /** EAGER 加载：Message 转换为 MessageDto 时需要读取会话的 discordUser/discordAccount 以解析头像等信息。
+     *  LAZY 会在事务关闭后的 DTO 转换阶段抛出 LazyInitializationException。 */
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "conversation_id", nullable = false)
     @com.fasterxml.jackson.annotation.JsonIgnore
     private Conversation conversation;

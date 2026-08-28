@@ -35,7 +35,9 @@ public class Conversation {
     @Column(name = "merchant_id")
     private Long merchantId;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    /** EAGER 加载：Conversation 必须绑定好友 DiscordUser，消息列表/会话列表均需其信息（昵称/头像等）。
+     *  用 LAZY 会在 DTO 转换（如 ConversationDto.from / MessageDto.from）时因 Session 关闭抛出 LazyInitializationException。 */
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "discord_user_id", nullable = false)
     @com.fasterxml.jackson.annotation.JsonIgnore
     private DiscordUser discordUser;
