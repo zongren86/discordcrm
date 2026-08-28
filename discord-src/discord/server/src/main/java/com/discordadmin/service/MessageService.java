@@ -550,8 +550,8 @@ public class MessageService {
                             conversation.getDiscordAccount().getId())
                     .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
 
-            StringBuilder attachmentDesc = new StringBuilder();
             java.util.List<java.util.Map<String, String>> sentAttachments = new java.util.ArrayList<>();
+            String discordMessageId = null;
 
             for (java.util.Map<String, String> att : attachments) {
                 String url = att.get("url");
@@ -581,11 +581,22 @@ public class MessageService {
                         String mimeType = contentType != null ? contentType : "application/octet-stream";
                         String name = fileName != null ? fileName : "attachment";
                         
-                        // 发送到 Discord
+                        // 发送到 Discord，并获取 API 响应
                         if (account.getAccountType() == DiscordAccount.AccountType.USER) {
-                            discordUserClient.sendMessageWithFile(
+                            com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
                                     account.getToken(), conversation.getChannelId(), "",
                                     name, fileBytes, mimeType, null, null);
+                            // 获取 discordMessageId（只取最后一个附件对应的消息ID）
+                            if (resp != null && resp.path("id").isTextual()) {
+                                discordMessageId = resp.path("id").asText();
+                            }
+                            // 使用 Discord CDN 返回的真实附件 URL（更可靠，跨设备可访问）
+                            if (resp != null && resp.path("attachments").isArray() && resp.path("attachments").size() > 0) {
+                                String cdnUrl = resp.path("attachments").get(0).path("url").asText(null);
+                                if (cdnUrl != null && !cdnUrl.isBlank()) {
+                                    url = cdnUrl;
+                                }
+                            }
                         } else {
                             log.warn("Bot 账号暂不支持文件附件发送");
                         }
@@ -596,7 +607,6 @@ public class MessageService {
                         sent.put("contentType", mimeType);
                         sent.put("size", String.valueOf(fileBytes.length));
                         sentAttachments.add(sent);
-                        // 不再在消息内容中添加 [附件:文件名] 文本，改为由前端附件区域渲染
                     }
                 } catch (Exception e) {
                     log.error("发送附件失败: {}", e.getMessage());
@@ -609,13 +619,23 @@ public class MessageService {
                 attMsg.setConversation(conversation);
                 attMsg.setDirection(Message.Direction.OUTBOUND);
                 attMsg.setSenderName(account.getName());
-                // 附件消息内容设为空字符串，附件信息由 attachmentsJson 传递给前端渲染
                 attMsg.setContent("");
                 attMsg.setAttachmentsJson(toJson(sentAttachments));
                 attMsg.setTranslatedContent("");
                 attMsg.setDiscordCreatedAt(Instant.now());
                 attMsg.setMessageType("attachment");
                 attMsg.setCreatedAt(Instant.now());
+                
+                // 如果拿到了 discordMessageId，先检查是否已存在（Gateway 可能已经入库）
+                if (discordMessageId != null) {
+                    Optional<Message> existingMsg = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
+                    if (existingMsg.isPresent()) {
+                        log.info("附件消息已由 Gateway 入库，跳过: discordMessageId={}", discordMessageId);
+                        return existingMsg.get();
+                    }
+                    attMsg.setDiscordMessageId(discordMessageId);
+                }
+                
                 Message savedAtt = messageRepository.save(attMsg);
                 
                 // 推送到前端
