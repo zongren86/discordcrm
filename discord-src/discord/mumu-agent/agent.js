@@ -32,7 +32,7 @@ function loadConfig() {
             config = {
                 userId: 'merchantadmin',
                 merchantId: 1,
-                serverUrl: 'ws://localhost:8090/ws/agent',
+                serverUrl: 'ws://localhost:9090/ws/agent',
                 heartbeatInterval: 30000,
                 autoStart: true
             };
@@ -72,7 +72,7 @@ function loadConfig() {
         config = {
             userId: 'merchantadmin',
             merchantId: 1,
-            serverUrl: 'ws://localhost:8090/ws/agent',
+            serverUrl: 'ws://localhost:9090/ws/agent',
             heartbeatInterval: 30000,
             autoStart: true
         };
@@ -2099,7 +2099,7 @@ const deviceId = getOrCreateDeviceId();
 let mumu = null;
 
 function connect() {
-    const serverUrl = config.serverUrl || 'ws://localhost:8090/ws/agent';
+    const serverUrl = config.serverUrl || 'ws://localhost:9090/ws/agent';
     const url = `${serverUrl}?deviceId=${deviceId}&userId=${encodeURIComponent(config.userId)}`;
     
     console.log(`[Agent] 正在连接: ${url}`);
@@ -2986,7 +2986,7 @@ function main() {
         console.error('[Agent] 模板:');
         console.error(JSON.stringify({
             userId: 'merchantadmin',
-            serverUrl: 'ws://localhost:8090/ws/agent',
+            serverUrl: 'ws://localhost:9090/ws/agent',
             mumuPath: '/Applications/MuMuPlayer.app'
         }, null, 2));
         process.exit(1);

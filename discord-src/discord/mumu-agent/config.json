@@ -1,8 +1,8 @@
 {
-  "version": "v2.13.7",
+  "version": "v2.13.8",
   "userId": "merchantadmin",
   "merchantId": 2,
-  "serverUrl": "ws://localhost:8090/ws/agent",
+  "serverUrl": "ws://localhost:9090/ws/agent",
   "heartbeatInterval": 30000,
   "autoStart": true,
   "platforms": {
