@@ -864,7 +864,76 @@ public class DiscordMemberService {
     }
 
     public TaskState getTask(String taskId) {
-        return tasks.get(taskId);
+        TaskState st = tasks.get(taskId);
+        if (st == null) return null;
+        
+        // 如果任务仍在运行，从活跃的 fetcher 获取实时状态合并到 TaskState
+        if ("RUNNING".equals(st.status) || "PENDING".equals(st.status)) {
+            GatewayMemberFetcher fetcher = activeFetchers.get(taskId);
+            if (fetcher != null) {
+                Map<String, Object> snapshot = fetcher.getSnapshot();
+                // 将快照数据合并到 TaskState
+                if (snapshot.containsKey("requestsSent")) {
+                    st.requestsSent = safeInt(snapshot, "requestsSent");
+                }
+                if (snapshot.containsKey("membersUnique")) {
+                    st.membersUnique = safeInt(snapshot, "membersUnique");
+                }
+                if (snapshot.containsKey("totalRespondedMembers")) {
+                    st.totalRespondedMembers = safeInt(snapshot, "totalRespondedMembers");
+                }
+                if (snapshot.containsKey("totalResponseTimeMs")) {
+                    st.totalResponseTimeMs = safeLong(snapshot, "totalResponseTimeMs");
+                }
+                if (snapshot.containsKey("currentPrefix")) {
+                    String prefix = (String) snapshot.get("currentPrefix");
+                    if (prefix != null && !prefix.isEmpty()) {
+                        st.currentPrefix = prefix;
+                        st.lastPrefix = prefix;
+                    }
+                }
+                if (snapshot.containsKey("prefixesDone")) {
+                    st.prefixesDone = safeInt(snapshot, "prefixesDone");
+                }
+                if (snapshot.containsKey("prefixesTotal")) {
+                    st.prefixesTotal = safeInt(snapshot, "prefixesTotal");
+                }
+                if (snapshot.containsKey("reconnects")) {
+                    st.reconnects = safeInt(snapshot, "reconnects");
+                }
+                if (snapshot.containsKey("lastResponded")) {
+                    st.lastResponded = safeInt(snapshot, "lastResponded");
+                }
+                if (snapshot.containsKey("lastDeduped")) {
+                    st.lastDeduped = safeInt(snapshot, "lastDeduped");
+                }
+                if (snapshot.containsKey("lastRequestTimeMs")) {
+                    st.lastRequestTimeMs = safeLong(snapshot, "lastRequestTimeMs");
+                }
+                if (snapshot.containsKey("elapsedMs")) {
+                    st.elapsedMs = safeLong(snapshot, "elapsedMs");
+                }
+                if (snapshot.containsKey("maxRequests")) {
+                    int mr = safeInt(snapshot, "maxRequests");
+                    if (mr > 0) st.maxRequests = mr;
+                }
+                if (snapshot.containsKey("maxMembers")) {
+                    int mm = safeInt(snapshot, "maxMembers");
+                    if (mm > 0) st.maxMembers = mm;
+                }
+                if (snapshot.containsKey("isPaused")) {
+                    Object ip = snapshot.get("isPaused");
+                    st.isPaused = ip instanceof Boolean && (Boolean) ip;
+                }
+                if (snapshot.containsKey("nextRetryAtMs")) {
+                    st.nextRetryAtMs = safeLong(snapshot, "nextRetryAtMs");
+                }
+                if (snapshot.containsKey("finalReconnectAttempts")) {
+                    st.finalReconnectAttempts = safeInt(snapshot, "finalReconnectAttempts");
+                }
+            }
+        }
+        return st;
     }
 
     public Map<String, TaskState> getTasks() {

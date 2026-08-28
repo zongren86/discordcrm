@@ -1212,7 +1212,15 @@ function startTaskPolling(taskId, serverId) {
       
       if (task) {
         consecutiveErrors = 0
-        progressTasksMap.set(taskId, task)
+        // 使用 Object.assign 合并更新，确保 Vue 响应性正确触发
+        const existingTask = progressTasksMap.get(taskId)
+        if (existingTask) {
+          Object.assign(existingTask, task)
+          // 触发 Map 的响应性更新
+          progressTasksMap.set(taskId, existingTask)
+        } else {
+          progressTasksMap.set(taskId, task)
+        }
         if (task.status === 'COMPLETED' || task.status === 'FAILED' || task.status === 'DONE' || task.status === 'ERROR') {
           stopTaskPolling(taskId, serverId)
           progressDialog.stopping = false

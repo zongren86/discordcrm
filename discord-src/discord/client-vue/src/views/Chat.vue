@@ -358,7 +358,7 @@
                   <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
                   <span v-if="msg.editedAt" class="msg-edited">(已编辑)</span>
                 </div>
-                <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted, 'bubble-media-only': !msg.isDeleted && isMediaMsg(msg)) }]">
+                <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted, 'bubble-media-only': !msg.isDeleted && isMediaMsg(msg) }]">
                   <!-- 非GIF附件区域（排除GIF，由专门的GIF区域渲染） -->
                   <div v-if="nonGifAttachments(msg).length" class="msg-attachments">
                     <div v-for="att in nonGifAttachments(msg)" :key="att.url" class="attachment-item">

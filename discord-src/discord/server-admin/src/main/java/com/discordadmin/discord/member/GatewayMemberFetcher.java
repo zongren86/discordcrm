@@ -1388,6 +1388,33 @@ public class GatewayMemberFetcher {
     // ------------------------------------------------------------------ //
     
     /**
+     * 获取实时状态快照（用于前端轮询显示）
+     * 直接从 Atomic 变量读取最新状态，不依赖 emitProgress 的节流
+     */
+    public Map<String, Object> getSnapshot() {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("requestsSent", requestsSent.get());
+        snapshot.put("membersUnique", members.size());
+        snapshot.put("totalRespondedMembers", totalRespondedAll.get());
+        snapshot.put("totalResponseTimeMs", totalResponseTimeMs.get());
+        snapshot.put("currentPrefix", currentPrefix);
+        snapshot.put("prefixesDone", prefixesDone);
+        snapshot.put("prefixesTotal", prefixesTotal);
+        snapshot.put("reconnects", reconnects.get());
+        snapshot.put("lastResponded", lastRespondedCount.get());
+        snapshot.put("lastDeduped", lastDedupedCount.get());
+        snapshot.put("lastRequestTimeMs", lastRequestTimeMs.get());
+        long elapsed = fetchStartTimeMs.get() > 0 ? (System.currentTimeMillis() - fetchStartTimeMs.get()) : 0;
+        snapshot.put("elapsedMs", elapsed);
+        snapshot.put("maxRequests", maxRequestsRef);
+        snapshot.put("maxMembers", maxMembersRef);
+        snapshot.put("isPaused", isPaused.get());
+        snapshot.put("nextRetryAtMs", nextRetryAtMs.get());
+        snapshot.put("finalReconnectAttempts", finalReconnectAttempts.get());
+        return snapshot;
+    }
+
+    /**
      * 获取剩余待处理的前缀队列（用于断点续传）
      */
     public List<String> getRemainingFrontier() {
