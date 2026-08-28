@@ -410,7 +410,7 @@
                           <div class="asr-toggle-link" @click="toggleOriginalBelow(msg)">
                             {{ originalBelowExpanded[msg.id] ? '收起原文' : '查看原文' }}
                           </div>
-                          <div v-show="originalBelowExpanded[msg.id]" class="asr-original-text">{{ msg.asrText }}</div>
+                          <div v-show="originalBelowExpanded[msg.id]" class="asr-original-text">{{ msg.asrTranslated || msg.asrText }}</div>
                         </div>
                       </div>
                     </div>
@@ -554,7 +554,7 @@
                       {{ originalExpandedSet[msg.id] ? '收起原文' : `查看原文 (${(originalContentOf(msg) || '').length})` }}
                       <el-icon class="arrow-icon" :class="{ flip: originalExpandedSet[msg.id] }"><ArrowDown /></el-icon>
                     </el-button>
-                    <div v-show="originalExpandedSet[msg.id]" class="original-text">原文：{{ originalContentOf(msg) }}</div>
+                    <div v-show="originalExpandedSet[msg.id]" class="original-text">译文：{{ originalContentOf(msg) }}</div>
                   </div>
 
                   <div v-if="canTranslateInbound(msg)" class="msg-translate-wrap">
@@ -678,11 +678,15 @@
         </div>
 
         <!-- 输入区 -->
-        <div class="input-area">
+        <div class="input-area"
+             @dragover.prevent
+             @dragenter.prevent
+             @drop.prevent="onInputDrop"
+             @paste.prevent="onInputPaste">
           <div class="input-hint" v-if="inputHint">
             <el-icon><InfoFilled /></el-icon>
             <span>{{ inputHint }}</span>
-            <span class="shortcut-hint">（Alt+W 翻译 · Alt+E 漏斗 · Alt+R AI建议）</span>
+            <span class="shortcut-hint">（Alt/Cmd+W 翻译 · Alt+E 漏斗 · Alt+R AI建议 · 支持拖拽/粘贴图片）</span>
           </div>
 
           <div v-if="showAiPanel" class="ai-panel">
@@ -1696,8 +1700,8 @@ function senderNameOf(msg) {
 function displayContentOf(msg) {
   if (msg?.messageType === 'voice') return ''
   if (isGifMsg(msg)) return ''
-  if (msg.direction === 'OUTBOUND') return msg.translatedContent || msg.content || ''
-  return msg.translatedContent || msg.content || ''
+  // 默认显示原文（翻译前内容），"查看原文"展开后显示翻译后的内容
+  return msg.content || msg.translatedContent || ''
 }
 
 function isGifMsg(msg) {
@@ -2296,7 +2300,7 @@ function hasOriginal(msg) {
   return !!(msg.translatedContent && msg.content && msg.translatedContent !== msg.content)
 }
 
-function originalContentOf(msg) { return msg.content || '' }
+function originalContentOf(msg) { return msg.translatedContent || msg.content || '' }
 
 function toggleOriginal(msgId) {
   if (originalExpandedSet.value[msgId]) delete originalExpandedSet.value[msgId]
@@ -2417,9 +2421,9 @@ function asrStatusIconClass(msg) {
 }
 
 function asrDisplayText(msg) {
-  // 优先显示译文，没有译文时显示原文
-  if (hasAsrTranslated(msg)) return msg.asrTranslated
+  // 默认显示原文（asrText），"查看原文"展开后显示翻译后的内容（asrTranslated）
   if (hasAsrText(msg)) return msg.asrText
+  if (hasAsrTranslated(msg)) return msg.asrTranslated
   return ''
 }
 
@@ -3159,17 +3163,101 @@ function jumpToBottom() {
   scrollToBottom({ force: true })
 }
 
+
+/** 拖拽文件到输入区 */
+async function onInputDrop(e) {
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (files.length === 0) return
+  for (const file of files) {
+    try {
+      const res = await uploadAttachment(file)
+      if (res?.success) {
+        pendingAttachments.value.push({
+          name: res.filename || file.name,
+          url: res.url,
+          size: res.size,
+          contentType: res.contentType
+        })
+      } else {
+        pendingAttachments.value.push({
+          name: file.name,
+          url: URL.createObjectURL(file),
+          size: file.size,
+          contentType: file.type,
+          local: true
+        })
+      }
+    } catch (err) {
+      pendingAttachments.value.push({
+        name: file.name,
+        url: URL.createObjectURL(file),
+        size: file.size,
+        contentType: file.type,
+        local: true
+      })
+    }
+  }
+  ElMessage.success(`已添加 ${files.length} 个文件`)
+}
+
+/** 粘贴文件到输入区 */
+async function onInputPaste(e) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  const files = []
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile()
+      if (file) files.push(file)
+    }
+  }
+  if (files.length === 0) return
+  e.preventDefault()
+  for (const file of files) {
+    try {
+      const res = await uploadAttachment(file)
+      if (res?.success) {
+        pendingAttachments.value.push({
+          name: res.filename || file.name,
+          url: res.url,
+          size: res.size,
+          contentType: res.contentType
+        })
+      } else {
+        pendingAttachments.value.push({
+          name: file.name,
+          url: URL.createObjectURL(file),
+          size: file.size,
+          contentType: file.type,
+          local: true
+        })
+      }
+    } catch (err) {
+      pendingAttachments.value.push({
+        name: file.name,
+        url: URL.createObjectURL(file),
+        size: file.size,
+        contentType: file.type,
+        local: true
+      })
+    }
+  }
+  ElMessage.success(`已添加 ${files.length} 个文件`)
+}
+
 function onInputKeydown(e) {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     send()
-  } else if (e.altKey && e.key.toLowerCase() === 'w') {
+  } else if ((e.altKey || e.metaKey) && e.key.toLowerCase() === 'w') {
+    // Alt+W (Windows) or Cmd+W (Mac) - translate input box content to target language
     e.preventDefault()
-    ElMessage.info('正在批量翻译...')
-    const inboundMsgs = conversations.currentMessages.filter(m => m.direction === 'INBOUND' && canTranslateInbound(m))
-    for (const m of inboundMsgs) {
-      translateMsg(m)
+    const text = inputText.value.trim()
+    if (!text) {
+      ElMessage.warning('请先输入要翻译的内容')
+      return
     }
+    requestTranslationPreview()
   } else if (e.altKey && e.key.toLowerCase() === 'e') {
     e.preventDefault()
     ElMessageBox.prompt('输入漏斗阶段 (PROSPECT/NEW/CONVERTED/CHURNED/ARCHIVED)',
