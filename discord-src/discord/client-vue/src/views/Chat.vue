@@ -203,7 +203,7 @@
               <el-form-item label="选择客服">
                 <el-select v-model="assignForm.agentId" placeholder="请选择客服" style="width:100%" :loading="agentsLoading">
                   <el-option v-for="a in agents" :key="a.id" :value="a.id"
-                    :label="`${a.displayName || a.username} (${a.role})`" />
+                    :label="`${a.displayName || a.username} (${a.roleLabel})`" />
                 </el-select>
               </el-form-item>
             </el-form>
@@ -221,7 +221,7 @@
               <el-form-item label="目标客服">
                 <el-select v-model="transferForm.agentId" placeholder="选择要转移给的客服" style="width:100%" :loading="agentsLoading">
                   <el-option v-for="a in agents" :key="a.id" :value="a.id"
-                    :label="`${a.displayName || a.username} (${a.role})`" />
+                    :label="`${a.displayName || a.username} (${a.roleLabel})`" />
                 </el-select>
               </el-form-item>
               <el-form-item label="转移原因">
