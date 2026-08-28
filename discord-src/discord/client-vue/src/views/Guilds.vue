@@ -288,7 +288,7 @@
               <div class="stat-values">
                 <span class="stat-current">{{ currentProgressTask.totalRespondedMembers || 0 }}</span>
                 <span class="stat-sep">/</span>
-                <span class="stat-total">{{ currentProgressTask.maxMembers || 0 }}</span>
+                <span class="stat-total">{{ currentProgressTask.maxRequests || 0 }}</span>
               </div>
               <div class="stat-label">已采集 / 总采集数</div>
             </div>
@@ -391,7 +391,7 @@
             </div>
             <div class="result-item">
               <div class="result-label">本次采集量 / 采集上限</div>
-              <div class="result-value">{{ currentProgressTask.membersUnique || 0 }} / {{ currentProgressTask.maxMembers || '-' }}</div>
+              <div class="result-value">{{ currentProgressTask.membersUnique || 0 }} / {{ currentProgressTask.maxRequests || '-' }}</div>
               <div class="result-sub">完成率: {{ getCollectRate(currentProgressTask) }}%</div>
             </div>
             <div class="result-item">
