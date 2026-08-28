@@ -84,6 +84,16 @@ public class GuildMembersController {
         boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
+        // DB 二次校验：防止 JWT merchantId 丢失导致商户管理员被误判为平台管理员（跨商户泄漏）
+        if (isPlatformAdmin && currentAgentId != null) {
+            Agent dbAgent = agentRepository.findById(currentAgentId).orElse(null);
+            if (dbAgent != null && dbAgent.getMerchantId() != null) {
+                merchantId = dbAgent.getMerchantId();
+                isPlatformAdmin = false;
+                isMerchantAdmin = true;
+            }
+        }
+
         // 1) 权限：先收敛当前用户可见的服务器ID集合
         Set<Long> visibleServerIds = resolveVisibleServerIds(merchantId, isPlatformAdmin, isMerchantAdmin, currentAgentId);
         if (visibleServerIds.isEmpty()) {
@@ -163,6 +173,7 @@ public class GuildMembersController {
     /** 权限：确定当前用户可见的所有服务器ID */
     private Set<Long> resolveVisibleServerIds(Long merchantId, boolean isPlatformAdmin, boolean isMerchantAdmin, Long currentAgentId) {
         Set<Long> visibleServerIds;
+        // DB 二次校验已在调用方完成，此处直接使用修正后的参数
         if (isPlatformAdmin) {
             visibleServerIds = merchantId != null
                     ? guildServerRepository.findByMerchantId(merchantId).stream().map(GuildServer::getId).collect(Collectors.toSet())

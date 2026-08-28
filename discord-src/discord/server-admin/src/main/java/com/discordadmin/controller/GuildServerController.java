@@ -133,8 +133,21 @@ public class GuildServerController {
         Long currentAgentId = SecurityUtils.currentAgentId();
 
         if (SecurityUtils.isPlatformAdmin()) {
-            // 平台管理员：所有账号
-            accounts = accountRepository.findAll();
+            // DB 二次校验：防止 JWT merchantId 丢失导致商户管理员被误判为平台管理员
+            if (currentAgentId != null) {
+                Agent dbAgent = agentRepository.findById(currentAgentId).orElse(null);
+                if (dbAgent != null && dbAgent.getMerchantId() != null) {
+                    // DB 里商户ID有值 → JWT 丢失了 merchantId，按商户隔离
+                    merchantId = dbAgent.getMerchantId();
+                    accounts = accountRepository.findByMerchantIdOrNull(merchantId);
+                } else {
+                    // 真平台管理员：所有账号
+                    accounts = accountRepository.findAll();
+                }
+            } else {
+                // 真平台管理员：所有账号
+                accounts = accountRepository.findAll();
+            }
         } else if (!SecurityUtils.isMerchantAdmin() && currentAgentId != null) {
             // 普通用户：仅自己被分配的账号
             Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
@@ -192,6 +205,29 @@ public class GuildServerController {
         }
 
         GuildServer server = new GuildServer();
+
+        // DB 二次校验：防止 JWT merchantId 丢失导致商户管理员被误判为平台管理员
+        Long currentAgentIdForSave = SecurityUtils.currentAgentId();
+        if (merchantId == null && currentAgentIdForSave != null) {
+            Agent dbAgent = agentRepository.findById(currentAgentIdForSave).orElse(null);
+            if (dbAgent != null && dbAgent.getMerchantId() != null) {
+                merchantId = dbAgent.getMerchantId();
+            }
+        }
+
+        // 更新时校验：现有服务器必须属于当前商户（或平台管理员）
+        if (excludeId != null) {
+            GuildServer existing = guildServerRepository.findById(excludeId)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.NOT_FOUND, "服务器不存在"));
+            if (!SecurityUtils.isPlatformAdmin() && merchantId != null
+                && !merchantId.equals(existing.getMerchantId())) {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "无权修改此服务器");
+            }
+            server = existing;
+        }
+
         if (payload.containsKey("id") && payload.get("id") != null) {
             server.setId(excludeId);
         }
@@ -293,6 +329,16 @@ public class GuildServerController {
     @GetMapping("/merchant-config")
     public Map<String, Object> getMerchantConfig() {
         Long merchantId = SecurityUtils.currentMerchantId();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
+        // DB 二次校验：防止 JWT merchantId 丢失导致商户管理员被误判为平台管理员
+        if (merchantId == null && currentAgentId != null) {
+            Agent dbAgent = agentRepository.findById(currentAgentId).orElse(null);
+            if (dbAgent != null && dbAgent.getMerchantId() != null) {
+                merchantId = dbAgent.getMerchantId();
+            }
+        }
+
         Map<String, Object> map = new HashMap<>();
 
         if (merchantId != null) {
@@ -319,10 +365,26 @@ public class GuildServerController {
     }
 
     private void checkServerAccess(Long serverId) {
-        if (SecurityUtils.isPlatformAdmin()) {
-            return;
-        }
+        // DB 二次校验：防止 JWT merchantId 丢失导致商户管理员被误判为平台管理员（跨商户泄漏）
         Long merchantId = SecurityUtils.currentMerchantId();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
+        if (SecurityUtils.isPlatformAdmin()) {
+            if (currentAgentId != null) {
+                Agent dbAgent = agentRepository.findById(currentAgentId).orElse(null);
+                if (dbAgent != null && dbAgent.getMerchantId() != null) {
+                    // DB 里商户ID有值 → JWT 丢失了 merchantId，用 DB 值按商户隔离
+                    merchantId = dbAgent.getMerchantId();
+                }
+                // else: DB 里 merchant_id 也为 null → 真平台管理员，直接放行
+                if (merchantId == null) {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+
         if (merchantId == null) {
             throw new org.springframework.web.server.ResponseStatusException(
                 org.springframework.http.HttpStatus.FORBIDDEN, "无访问权限");

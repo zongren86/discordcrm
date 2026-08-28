@@ -521,6 +521,16 @@ public class ConversationService {
         boolean isMerchantAdmin = SecurityUtils.isMerchantAdmin();
         Long currentAgentId = SecurityUtils.currentAgentId();
 
+        // DB 二次校验：防止 JWT merchantId 丢失导致商户管理员被误判为平台管理员（跨商户泄漏）
+        if (isPlatform && currentAgentId != null) {
+            Agent dbAgent = agentRepository.findById(currentAgentId).orElse(null);
+            if (dbAgent != null && dbAgent.getMerchantId() != null) {
+                merchantId = dbAgent.getMerchantId();
+                isPlatform = false;
+                isMerchantAdmin = true;
+            }
+        }
+
         // 平台管理员：查看所有商户的会话（不按merchantId过滤）
         if (isPlatform) {
             if (accountId != null) {
@@ -728,8 +738,18 @@ public class ConversationService {
 
     public List<Map<String, Object>> listAvailableAgents() {
         Long merchantId = SecurityUtils.currentMerchantId();
+        Long currentAgentId = SecurityUtils.currentAgentId();
+
+        // DB 二次校验：防止 JWT merchantId 丢失导致商户管理员被误判为平台管理员（跨商户泄漏）
+        if (SecurityUtils.isPlatformAdmin() && currentAgentId != null) {
+            Agent dbAgent = agentRepository.findById(currentAgentId).orElse(null);
+            if (dbAgent != null && dbAgent.getMerchantId() != null) {
+                merchantId = dbAgent.getMerchantId();
+            }
+        }
+
         List<Agent> agents;
-        if (SecurityUtils.isPlatformAdmin()) {
+        if (SecurityUtils.isPlatformAdmin() && merchantId == null) {
             agents = agentRepository.findAll();
         } else {
             agents = agentRepository.findByMerchantId(merchantId);
