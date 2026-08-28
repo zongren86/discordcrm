@@ -591,7 +591,7 @@ public class ConversationService {
             }
         }
 
-        // Fallback
+        // 严格查询，查不到返回空列表（正常结果，不是容错回退）
         return List.of();
     }
 
@@ -751,8 +751,10 @@ public class ConversationService {
         List<Agent> agents;
         if (SecurityUtils.isPlatformAdmin() && merchantId == null) {
             agents = agentRepository.findAll();
-        } else {
+        } else if (merchantId != null) {
             agents = agentRepository.findByMerchantId(merchantId);
+        } else {
+            throw new SecurityException("当前用户未绑定商户");
         }
         return agents.stream().map(a -> {
             Map<String, Object> item = new LinkedHashMap<>();

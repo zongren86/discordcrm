@@ -175,9 +175,13 @@ public class GuildMembersController {
         Set<Long> visibleServerIds;
         // DB 二次校验已在调用方完成，此处直接使用修正后的参数
         if (isPlatformAdmin) {
-            visibleServerIds = merchantId != null
-                    ? guildServerRepository.findByMerchantId(merchantId).stream().map(GuildServer::getId).collect(Collectors.toSet())
-                    : guildServerRepository.findAll().stream().map(GuildServer::getId).collect(Collectors.toSet());
+            if (merchantId == null) {
+                // 真平台管理员：可以查看所有商户的服务器
+                visibleServerIds = guildServerRepository.findAll().stream().map(GuildServer::getId).collect(Collectors.toSet());
+            } else {
+                // DB 校验发现 JWT 丢失 merchantId，按商户隔离
+                visibleServerIds = guildServerRepository.findByMerchantId(merchantId).stream().map(GuildServer::getId).collect(Collectors.toSet());
+            }
         } else if (isMerchantAdmin) {
             visibleServerIds = merchantId != null
                     ? guildServerRepository.findByMerchantId(merchantId).stream().map(GuildServer::getId).collect(Collectors.toSet())
@@ -190,11 +194,12 @@ public class GuildMembersController {
                 visibleServerIds = guildServerRepository.findByMerchantIdAndDiscordAccountIdIn(merchantId, new ArrayList<>(assignedAccountIds))
                         .stream().map(GuildServer::getId).collect(Collectors.toSet());
             } else {
-                visibleServerIds = guildServerRepository.findByDiscordAccountIdIn(new ArrayList<>(assignedAccountIds))
-                        .stream().map(GuildServer::getId).collect(Collectors.toSet());
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "当前用户未绑定商户");
             }
         } else {
-            visibleServerIds = Collections.emptySet();
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "当前用户未绑定商户");
         }
         return visibleServerIds;
     }
@@ -275,12 +280,16 @@ public class GuildMembersController {
             if (merchantId != null) {
                 servers = guildServerRepository.findByMerchantIdAndDiscordAccountIdIn(merchantId, accountIdList);
             } else {
-                servers = guildServerRepository.findByDiscordAccountIdIn(accountIdList);
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "当前用户未绑定商户");
             }
         } else if (merchantId != null) {
             servers = guildServerRepository.findByMerchantId(merchantId);
-        } else {
+                } else if (isPlatformAdmin) {
             servers = guildServerRepository.findAll();
+        } else {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "当前用户未绑定商户");
         }
         return servers.stream().map(s -> {
             Map<String, Object> map = new LinkedHashMap<>();
@@ -308,8 +317,11 @@ public class GuildMembersController {
             accounts = discordAccountRepository.findAllById(new ArrayList<>(assignedAccountIds));
         } else if (merchantId != null) {
             accounts = discordAccountRepository.findByMerchantId(merchantId);
-        } else {
+        } else if (isPlatformAdmin) {
             accounts = discordAccountRepository.findAll();
+        } else {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "当前用户未绑定商户");
         }
         return accounts.stream().map(a -> {
             Map<String, Object> map = new LinkedHashMap<>();

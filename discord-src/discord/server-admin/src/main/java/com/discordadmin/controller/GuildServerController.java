@@ -89,6 +89,13 @@ public class GuildServerController {
             } else {
                 servers = guildServerRepository.findByDiscordAccountIdIn(accountIdList);
             }
+        } else if (SecurityUtils.isPlatformAdmin() && merchantId == null) {
+            // 真平台管理员：可以查看所有商户的服务器
+            if (discordAccountId != null) {
+                servers = guildServerRepository.findByDiscordAccountId(discordAccountId);
+            } else {
+                servers = guildServerRepository.findAll();
+            }
         } else {
             servers = guildService.listGuildServers(merchantId, discordAccountId);
         }
@@ -155,10 +162,14 @@ public class GuildServerController {
                     ? List.of()
                     : accountRepository.findByIdIn(new ArrayList<>(assignedAccountIds));
         } else if (merchantId != null) {
-            // 商户管理员：本商户账号 + 未分配商户的账号
-            accounts = accountRepository.findByMerchantIdOrNull(merchantId);
+            // 商户管理员：只能看到本商户账号
+            accounts = accountRepository.findByMerchantId(merchantId);
+        } else if (SecurityUtils.isPlatformAdmin()) {
+            // 真平台管理员：可以查看所有账号
+            accounts = accountRepository.findAll();
         } else {
-            accounts = accountRepository.findByMerchantIdIsNull();
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "当前用户未绑定商户");
         }
 
         return accounts.stream().map(this::toAccountOptionMap).collect(Collectors.toList());
@@ -178,6 +189,19 @@ public class GuildServerController {
         Long merchantId = SecurityUtils.currentMerchantId();
 
         Long discordAccountId = Long.valueOf(payload.get("discordAccountId").toString());
+
+        // 校验 discordAccountId 必须属于当前商户
+        com.discordadmin.entity.DiscordAccount accountForCheck = accountRepository.findById(discordAccountId).orElse(null);
+        if (accountForCheck == null) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.NOT_FOUND, "关联账号不存在");
+        }
+        Long accountMerchantId = accountForCheck.getMerchantId();
+        if (!SecurityUtils.isPlatformAdmin() && merchantId != null
+            && accountMerchantId != null && !merchantId.equals(accountMerchantId)) {
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "无权使用该账号");
+        }
         String guildId = payload.containsKey("guildId") && payload.get("guildId") != null
                         ? payload.get("guildId").toString()
                         : null;
@@ -232,20 +256,22 @@ public class GuildServerController {
             server.setId(excludeId);
         }
 
-        Long serverMerchantId = merchantId;
-
-        if (serverMerchantId == null && payload.containsKey("discordAccountId")) {
-            Long accountId = Long.valueOf(payload.get("discordAccountId").toString());
-            com.discordadmin.entity.DiscordAccount account = accountRepository.findById(accountId).orElse(null);
-            if (account != null && account.getMerchantId() != null) {
-                serverMerchantId = account.getMerchantId();
+        // 严格按当前登录用户的 merchantId 设置，禁止任何回退
+        if (merchantId == null) {
+            if (SecurityUtils.isPlatformAdmin()) {
+                // 平台管理员：从账号获取 merchantId
+                if (accountForCheck != null && accountForCheck.getMerchantId() != null) {
+                    merchantId = accountForCheck.getMerchantId();
+                } else {
+                    throw new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.BAD_REQUEST, "账号未绑定商户，无法创建服务器");
+                }
+            } else {
+                throw new org.springframework.web.server.ResponseStatusException(
+                    org.springframework.http.HttpStatus.FORBIDDEN, "当前用户未绑定商户，无法添加服务器");
             }
         }
-
-        if (serverMerchantId == null && payload.containsKey("merchantId") && payload.get("merchantId") != null) {
-            serverMerchantId = Long.valueOf(payload.get("merchantId").toString());
-        }
-
+        Long serverMerchantId = merchantId;
         server.setMerchantId(serverMerchantId);
         server.setDiscordAccountId(discordAccountId);
 
@@ -352,14 +378,8 @@ public class GuildServerController {
             map.put("maxRequests", config.getMaxRequests());
             map.put("archiveDays", config.getArchiveDays());
         } else {
-            map.put("id", null);
-            map.put("merchantId", null);
-            map.put("fetchLimit", 2000000);
-            map.put("requestInterval", 3);
-            map.put("requestCount", 100);
-            map.put("maxDepth", 5);
-            map.put("maxRequests", 1000);
-            map.put("archiveDays", 30);
+            throw new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "当前用户未绑定商户");
         }
         return map;
     }

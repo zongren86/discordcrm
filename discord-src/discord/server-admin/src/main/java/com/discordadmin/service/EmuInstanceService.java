@@ -120,13 +120,8 @@ public class EmuInstanceService {
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         log.info("按 merchantId+userId 查询: 找到 {} 个模拟器", instances.size());
         
-        // 2. 回退查询：如果按 userId 查询结果为空，回退到只按 merchantId 查询
-        // 仅作为兼容处理，确保历史数据能显示
-        if (instances.isEmpty()) {
-            List<EmuInstance> allByMerchant = instanceRepository.findByMerchantId(merchantId);
-            log.warn("按 merchantId+userId 查询为空，回退到按 merchantId 查询: 找到 {} 个模拟器", allByMerchant.size());
-            instances = allByMerchant;
-        }
+        // 2. 严格按 merchantId+userId 查询，查不到就为空，不回退
+        // 数据隔离是严谨的，不允许通过回退逻辑扩大数据范围
         
         log.info("数据库中有 {} 条模拟器记录", instances.size());
 
@@ -302,7 +297,7 @@ public class EmuInstanceService {
             log.warn("获取当前物理模拟器数量失败: {}", e.getMessage());
         }
 
-        // 4. 创建物理实例（优先本地模式，回退到 Agent 模式）
+        // 4. 创建物理实例
         boolean physicalSuccess = false;
         List<Map<String, Object>> physicalList = new ArrayList<>();
         String createMethod = "none";
@@ -319,7 +314,7 @@ public class EmuInstanceService {
                 if (healthyInResult >= targetTotal) {
                     physicalSuccess = true;
                     createMethod = "local";
-                    // localMode 下 deviceId fallback 到第一个在线 agent（用于写 DB）
+                    // localMode 下 deviceId 使用第一个在线 agent（用于写 DB）
                     if (effectiveDeviceId == null || effectiveDeviceId.isEmpty()) {
                         effectiveDeviceId = webSocketService.getAllOnlineAgents()
                             .stream().findFirst().map(AgentRegistration::getDeviceId).orElse(null);
@@ -350,7 +345,7 @@ public class EmuInstanceService {
                     .filter(a -> userId.equals(a.getUserId()))
                     .collect(Collectors.toList());
                 log.info("未指定 deviceId, 按用户 {} 过滤 Agent, 匹配 {} 个", userId, targetAgents.size());
-                // 不再回退到其他用户的Agent，防止跨商户操作
+                // 严格匹配当前商户的Agent
                 if (targetAgents.isEmpty()) {
                     log.warn("未找到当前用户的在线 Agent, userId={}", userId);
                 }
@@ -941,30 +936,13 @@ public class EmuInstanceService {
         
         log.info("startInstance 开始: index={}, deviceId={}, merchantId={}, userId={}", index, deviceId, merchantId, userId);
 
-        // 查询模拟器: 优先 merchantId+userId, 后台线程无 SecurityContext 时 fallback 到 deviceId
+        // 严格按 merchantId+userId+instanceIndex 查询，不允许任何回退
         EmuInstance instance = null;
         if (merchantId != null && userId != null) {
             instance = instanceRepository.findByMerchantIdAndUserIdAndInstanceIndex(merchantId, userId, index).orElse(null);
         }
-        // fallback 2: merchantId alone（异步线程无 SecurityContext 但 merchantId 从别处补全了）
-        if (instance == null && merchantId != null) {
-            instance = instanceRepository.findByMerchantIdAndInstanceIndex(merchantId, index).orElse(null);
-        }
-        // fallback 3: userId alone
-        if (instance == null && userId != null) {
-            List<EmuInstance> byUser = instanceRepository.findByUserId(userId);
-            for (EmuInstance e : byUser) {
-                if (e.getInstanceIndex() != null && e.getInstanceIndex().equals(index)) {
-                    instance = e; break;
-                }
-            }
-        }
-        // fallback 4: deviceId
-        if (instance == null && deviceId != null && !deviceId.isEmpty()) {
-            instance = instanceRepository.findByDeviceIdAndInstanceIndex(deviceId, index).orElse(null);
-        }
         if (instance == null) {
-            throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%s, userId=%s, deviceId=%s)", index, merchantId, userId, deviceId));
+            throw new RuntimeException(String.format("模拟器 #%d 不存在 (merchantId=%s, userId=%s)，数据隔离查询不到该模拟器", index, merchantId, userId));
         }
 
 

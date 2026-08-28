@@ -55,18 +55,15 @@ public class GuildService {
         return guildServerRepository.save(server);
     }
 
-    /** 获取商户下的所有服务器 */
+    /** 获取商户下的所有服务器 - 严格按商户隔离，不允许任何回退 */
     public List<GuildServer> listGuildServers(Long merchantId, Long discordAccountId) {
+        if (merchantId == null) {
+            throw new IllegalArgumentException("商户ID不能为空");
+        }
         if (discordAccountId != null) {
-            if (merchantId != null) {
-                return guildServerRepository.findByMerchantIdAndDiscordAccountId(merchantId, discordAccountId);
-            }
-            return guildServerRepository.findByDiscordAccountId(discordAccountId);
+            return guildServerRepository.findByMerchantIdAndDiscordAccountId(merchantId, discordAccountId);
         }
-        if (merchantId != null) {
-            return guildServerRepository.findByMerchantId(merchantId);
-        }
-        return guildServerRepository.findAll();
+        return guildServerRepository.findByMerchantId(merchantId);
     }
 
     /** 删除服务器配置 */
