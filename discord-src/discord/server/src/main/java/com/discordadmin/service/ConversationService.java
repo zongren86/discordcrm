@@ -97,10 +97,20 @@ public class ConversationService {
 
     @Transactional
     public void handleInbound(InboundMessage inbound) {
-        if (messageRepository.findByDiscordMessageId(inbound.discordMessageId()).isPresent()) {
-            log.info("[INBOUND] 跳过重复消息: discordMsgId={} accountId={}", inbound.discordMessageId(), inbound.discordAccountId());
+        if (inbound.discordMessageId() == null || inbound.discordMessageId().isBlank()) {
+            log.warn("[INBOUND] 消息ID为空，跳过处理: accountId={}", inbound.discordAccountId());
             return;
         }
+        
+        // 1. 全局去重检查：任何会话中已存在该 discordMessageId 的消息则跳过
+        // 这是防止并发重复的第一道防线
+        synchronized (inbound.discordMessageId().intern()) {
+            if (messageRepository.findByDiscordMessageId(inbound.discordMessageId()).isPresent()) {
+                log.info("[INBOUND] 跳过重复消息: discordMsgId={} accountId={}", inbound.discordMessageId(), inbound.discordAccountId());
+                return;
+            }
+        }
+        
         log.info("[INBOUND] 开始入库: discordMsgId={} accountId={} messageType={} author={} isVoice={} audioUrlPresent={}",
                 inbound.discordMessageId(), inbound.discordAccountId(), inbound.messageType(),
                 inbound.authorUsername(), "voice".equals(inbound.messageType()),
@@ -119,20 +129,29 @@ public class ConversationService {
         }
         final DiscordUser savedUser = discordUserRepository.save(user);
 
-        Conversation conversation = conversationRepository.findByChannelId(inbound.channelId())
-                .orElseGet(() -> {
-                    Conversation c = new Conversation();
-                    c.setDiscordUser(savedUser);
-                    c.setChannelId(inbound.channelId());
-                    c.setType(inbound.isDirectMessage() ? Conversation.ConversationType.DM : Conversation.ConversationType.GUILD_TEXT);
-                    if (inbound.discordAccountId() != null) {
-                        Long ownerAgentId = findOwnerAgentIdByDiscordAccountId(inbound.discordAccountId());
-                        if (ownerAgentId != null) {
-                            c.setOwnerAgentId(ownerAgentId);
-                        }
-                    }
-                    return c;
-                });
+        // 2. 优先使用账号+频道ID查找会话，确保同一会话归属于同一账号
+        Conversation conversation = null;
+        if (inbound.discordAccountId() != null) {
+            conversation = conversationRepository.findByChannelIdAndDiscordAccount_Id(inbound.channelId(), inbound.discordAccountId()).orElse(null);
+        }
+        // 如果没找到，退回到仅按 channelId 查找
+        if (conversation == null) {
+            conversation = conversationRepository.findByChannelId(inbound.channelId()).orElse(null);
+        }
+        // 仍然没找到则创建新会话
+        if (conversation == null) {
+            Conversation c = new Conversation();
+            c.setDiscordUser(savedUser);
+            c.setChannelId(inbound.channelId());
+            c.setType(inbound.isDirectMessage() ? Conversation.ConversationType.DM : Conversation.ConversationType.GUILD_TEXT);
+            if (inbound.discordAccountId() != null) {
+                Long ownerAgentId = findOwnerAgentIdByDiscordAccountId(inbound.discordAccountId());
+                if (ownerAgentId != null) {
+                    c.setOwnerAgentId(ownerAgentId);
+                }
+            }
+            conversation = c;
+        }
         if (conversation.getDiscordAccount() == null && inbound.discordAccountId() != null) {
             final Conversation target = conversation;
             discordAccountRepository.findById(inbound.discordAccountId())
