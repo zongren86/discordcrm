@@ -368,7 +368,7 @@ public class AgentServerController {
                 if (Files.exists(cfgFile)) {
                     String json = Files.readString(cfgFile);
                     // 简单正则提 version —— 避免引入 JSON 解析依赖
-                    java.util.regex.Matcher m = java.util.regex.Pattern.compile(""version"\s*:\s*"([^"]+)"").matcher(json);
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\"version\\"\\s*:\\s*\\"([^\\"]+)\\"").matcher(json);
                     if (m.find()) return m.group(1);
                 }
             }
