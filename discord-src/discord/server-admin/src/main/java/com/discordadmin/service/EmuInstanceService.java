@@ -1031,7 +1031,6 @@ public class EmuInstanceService {
         });
 
         instance.setStatus(EmuInstance.EmuStatus.RUNNING);
-        instance.setAutoRunning(false);
         instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());
         instanceRepository.save(instance);
@@ -1147,7 +1146,6 @@ public class EmuInstanceService {
         });
 
         instance.setStatus(EmuInstance.EmuStatus.RUNNING);
-        instance.setAutoRunning(false);
         instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());
         instanceRepository.save(instance);
@@ -1220,7 +1218,6 @@ public class EmuInstanceService {
         });
 
         instance.setStatus(EmuInstance.EmuStatus.STOPPED);
-        instance.setAutoRunning(false);
         instance.setUpdatedAt(Instant.now());
         instanceRepository.save(instance);
 
@@ -1295,7 +1292,6 @@ public class EmuInstanceService {
         });
 
         instance.setStatus(EmuInstance.EmuStatus.RUNNING);
-        instance.setAutoRunning(false);
         instance.setLastError(null);
         instance.setUpdatedAt(Instant.now());
         instanceRepository.save(instance);
@@ -1352,7 +1348,6 @@ public class EmuInstanceService {
                         if (inst != null) {
                             if (success) {
                                 inst.setStatus(EmuInstance.EmuStatus.RUNNING);
-                                inst.setAutoRunning(false);
                                 inst.setLastError(null);
                                 successCount++;
                                 log.info("模拟器 #{} 启动成功", idx);
@@ -1442,7 +1437,6 @@ public class EmuInstanceService {
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         for (EmuInstance inst : instances) {
             inst.setStatus(EmuInstance.EmuStatus.STOPPED);
-            inst.setAutoRunning(false);
             inst.setUpdatedAt(Instant.now());
             instanceRepository.save(inst);
         }
