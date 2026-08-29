@@ -561,8 +561,7 @@ public class EmuAutoAddDispatcher {
         if (pending == null || pending.isEmpty()) {
             writeResult(dbIndex, merchantId, userId, false,
                     false, "号池为空，没有待添加好友", null, null, null, startTs);
-            // 号池空了停止该模拟器，避免反复启动
-            stopAutoRunning(dbIndex, merchantId, userId);
+            // 号池空是临时状态，保留 autoRunning=true，等新数据采集后继续调度
             scheduleNextAndClose(dbIndex, merchantId, userId, cfg, false);
             return;
         }
@@ -682,7 +681,7 @@ public class EmuAutoAddDispatcher {
     }
 
     private void safeUpdateLastError(int dbIndex, Long merchantId, Long userId, String msg) {
-        try { stopAutoRunning(dbIndex, merchantId, userId);
+        try {
             EmuInstance e = refresh(dbIndex, merchantId, userId);
             if (e != null) {
                 e.setLastError(truncate(msg, 512));

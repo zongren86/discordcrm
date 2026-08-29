@@ -562,9 +562,10 @@
             <span v-else style="color: #909399">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="下次添加时间" width="110">
+        <el-table-column label="下次添加时间" width="160">
           <template #default="{ row }">
-            <span v-if="row.nextAddAt && row.status === 'RUNNING' && row.autoRunning" style="color: #409eff; font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
+            <span v-if="row.nextAddAt != null" style="color: #409eff; font-size: 12px; font-family: monospace">{{ formatCountdown(row.nextAddAt) }}</span>
+            <span v-else-if="row.autoRunning" style="color: #e6a23c; font-size: 12px; font-family: monospace">排程中...</span>
             <span v-else style="color: #909399; font-size: 12px">-</span>
           </template>
         </el-table-column>
@@ -2524,8 +2525,8 @@ function statusTagType(status) {
 
 function formatCountdown(timestamp) {
   if (!timestamp || timestamp <= 0) return '-'
-  const diff = Math.max(0, Math.floor((timestamp - now.value) / 1000))
-  if (diff <= 0) return '00:00:00'
+  const diff = Math.floor((timestamp - now.value) / 1000)
+  if (diff <= 0) return '即将开始'
   const h = Math.floor(diff / 3600)
   const m = Math.floor((diff % 3600) / 60)
   const s = diff % 60
