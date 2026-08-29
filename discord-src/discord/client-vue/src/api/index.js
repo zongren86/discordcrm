@@ -616,3 +616,10 @@ export function resetAgentServerToken(id) {
 export function deleteAgentServer(id) {
   return http.delete(`/agent-servers/${id}`)
 }
+// === 代理任务 ===
+export function createAgentTask(agentServerId, type, extra = {}) {
+  return http.post('/agent-servers/tasks', { agentServerId, type, ...extra })
+}
+export function getAgentTask(taskId) {
+  return http.get(`/agent-servers/tasks/${taskId}`)
+}

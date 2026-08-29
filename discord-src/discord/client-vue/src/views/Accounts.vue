@@ -381,7 +381,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Upload, Refresh, Edit, Delete, Search, OfficeBuilding, Download, Key, Picture, Monitor } from '@element-plus/icons-vue'
-import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountFriends, listMerchants, refreshAccountToken, refreshAccountAvatar, listAgentServers } from '@/api'
+import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountFriends, listMerchants, refreshAccountToken, refreshAccountAvatar, listAgentServers, createAgentTask, getAgentTask } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useAccountsStore } from '@/stores/accounts'
 
@@ -567,10 +567,7 @@ async function startAgentCapture() {
   agentDialog.starting = true
   console.log('[AgentCapture] 开始创建任务，agentServerId=', agentDialog.form.agentServerId)
   try {
-    const resp = await api.post('/agent-servers/tasks', {
-      agentServerId: agentDialog.form.agentServerId,
-      type: 'CAPTURE_DISCORD_ACCOUNT'
-    })
+    const resp = await createAgentTask(agentDialog.form.agentServerId, 'CAPTURE_DISCORD_ACCOUNT')
     console.log('[AgentCapture] 任务创建成功 resp=', resp)
     const taskId = resp.id
     const agent = agentDialog.servers.find(s => s.id === agentDialog.form.agentServerId)
@@ -602,7 +599,7 @@ async function startAgentCapture() {
 async function pollAgentTask() {
   if (!agentResultDialog.taskId) return
   try {
-    const resp = await api.get(`/agent-servers/tasks/${agentResultDialog.taskId}`)
+    const resp = await getAgentTask(agentResultDialog.taskId)
     const status = resp.status
     if (status === 'RUNNING') {
       agentResultDialog.step = 2
