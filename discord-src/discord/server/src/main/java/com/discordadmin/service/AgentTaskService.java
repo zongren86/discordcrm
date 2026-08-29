@@ -157,9 +157,34 @@ public class AgentTaskService {
         return account;
     }
 
-    /** 查询任务详情 */
+    /** 查询任务详情（基础） */
     public Optional<AgentTask> findById(Long id) {
         return agentTaskRepository.findById(id);
+    }
+
+    /** 查询任务详情 + 预取 discordAccount（LAZY 关联） */
+    @Transactional(readOnly = true)
+    public java.util.Map<String, Object> findTaskDetail(Long id) {
+        return agentTaskRepository.findById(id).map(t -> {
+            java.util.Map<String, Object> resp = new java.util.HashMap<>();
+            resp.put("id", t.getId());
+            resp.put("type", t.getType());
+            resp.put("status", t.getStatus());
+            resp.put("result", t.getResult());
+            resp.put("createdAt", t.getCreatedAt());
+            // 在事务内访问 LAZY 关联 —— 不会炸
+            if (t.getDiscordAccount() != null) {
+                com.discordadmin.entity.DiscordAccount a = t.getDiscordAccount();
+                java.util.Map<String, Object> acct = new java.util.HashMap<>();
+                acct.put("id", a.getId());
+                acct.put("name", a.getName());
+                acct.put("discordId", a.getDiscordId());
+                acct.put("browserProfilePath", a.getBrowserProfilePath());
+                acct.put("agentServerId", a.getAgentServerId());
+                resp.put("discordAccount", acct);
+            }
+            return resp;
+        }).orElse(null);
     }
 
     /** agent 用 token 取消自己的任务 */

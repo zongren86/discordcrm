@@ -179,29 +179,12 @@ public class AgentServerController {
         }
     }
 
-    /** 查询任务详情（扩展：返回 discordAccount 关联） */
+    /** 查询任务详情 */
     @GetMapping("/tasks/{id}")
     public ResponseEntity<?> getTask(@PathVariable Long id) {
-        return agentTaskService.findById(id)
-                .map(t -> {
-                    Map<String, Object> resp = new HashMap<>();
-                    resp.put("id", t.getId());
-                    resp.put("type", t.getType());
-                    resp.put("status", t.getStatus());
-                    resp.put("result", t.getResult());
-                    resp.put("createdAt", t.getCreatedAt());
-                    if (t.getDiscordAccount() != null) {
-                        Map<String, Object> acct = new HashMap<>();
-                        acct.put("id", t.getDiscordAccount().getId());
-                        acct.put("name", t.getDiscordAccount().getName());
-                        acct.put("discordId", t.getDiscordAccount().getDiscordId());
-                        acct.put("browserProfilePath", t.getDiscordAccount().getBrowserProfilePath());
-                        acct.put("agentServerId", t.getDiscordAccount().getAgentServerId());
-                        resp.put("discordAccount", acct);
-                    }
-                    return ResponseEntity.ok(resp);
-                })
-                .orElse(ResponseEntity.notFound().build());
+        Map<String, Object> detail = agentTaskService.findTaskDetail(id);
+        if (detail == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(detail);
     }
 
     private String safeJson(Object obj) {
