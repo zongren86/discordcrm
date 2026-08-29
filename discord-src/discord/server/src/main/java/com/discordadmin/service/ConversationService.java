@@ -97,10 +97,20 @@ public class ConversationService {
 
     @Transactional
     public void handleInbound(InboundMessage inbound) {
-        if (messageRepository.findByDiscordMessageId(inbound.discordMessageId()).isPresent()) {
-            log.info("[INBOUND] 跳过重复消息: discordMsgId={} accountId={}", inbound.discordMessageId(), inbound.discordAccountId());
+        if (inbound.discordMessageId() == null || inbound.discordMessageId().isBlank()) {
+            log.warn("[INBOUND] 消息ID为空，跳过处理: accountId={}", inbound.discordAccountId());
             return;
         }
+        
+        // 1. 全局去重检查：任何会话中已存在该 discordMessageId 的消息则跳过
+        // 这是防止并发重复的第一道防线
+        synchronized (inbound.discordMessageId().intern()) {
+            if (messageRepository.findByDiscordMessageId(inbound.discordMessageId()).isPresent()) {
+                log.info("[INBOUND] 跳过重复消息: discordMsgId={} accountId={}", inbound.discordMessageId(), inbound.discordAccountId());
+                return;
+            }
+        }
+        
         log.info("[INBOUND] 开始入库: discordMsgId={} accountId={} messageType={} author={} isVoice={} audioUrlPresent={}",
                 inbound.discordMessageId(), inbound.discordAccountId(), inbound.messageType(),
                 inbound.authorUsername(), "voice".equals(inbound.messageType()),
@@ -119,20 +129,29 @@ public class ConversationService {
         }
         final DiscordUser savedUser = discordUserRepository.save(user);
 
-        Conversation conversation = conversationRepository.findByChannelId(inbound.channelId())
-                .orElseGet(() -> {
-                    Conversation c = new Conversation();
-                    c.setDiscordUser(savedUser);
-                    c.setChannelId(inbound.channelId());
-                    c.setType(inbound.isDirectMessage() ? Conversation.ConversationType.DM : Conversation.ConversationType.GUILD_TEXT);
-                    if (inbound.discordAccountId() != null) {
-                        Long ownerAgentId = findOwnerAgentIdByDiscordAccountId(inbound.discordAccountId());
-                        if (ownerAgentId != null) {
-                            c.setOwnerAgentId(ownerAgentId);
-                        }
-                    }
-                    return c;
-                });
+        // 2. 优先使用账号+频道ID查找会话，确保同一会话归属于同一账号
+        Conversation conversation = null;
+        if (inbound.discordAccountId() != null) {
+            conversation = conversationRepository.findByChannelIdAndDiscordAccount_Id(inbound.channelId(), inbound.discordAccountId()).orElse(null);
+        }
+        // 如果没找到，退回到仅按 channelId 查找
+        if (conversation == null) {
+            conversation = conversationRepository.findByChannelId(inbound.channelId()).orElse(null);
+        }
+        // 仍然没找到则创建新会话
+        if (conversation == null) {
+            Conversation c = new Conversation();
+            c.setDiscordUser(savedUser);
+            c.setChannelId(inbound.channelId());
+            c.setType(inbound.isDirectMessage() ? Conversation.ConversationType.DM : Conversation.ConversationType.GUILD_TEXT);
+            if (inbound.discordAccountId() != null) {
+                Long ownerAgentId = findOwnerAgentIdByDiscordAccountId(inbound.discordAccountId());
+                if (ownerAgentId != null) {
+                    c.setOwnerAgentId(ownerAgentId);
+                }
+            }
+            conversation = c;
+        }
         if (conversation.getDiscordAccount() == null && inbound.discordAccountId() != null) {
             final Conversation target = conversation;
             discordAccountRepository.findById(inbound.discordAccountId())
@@ -556,28 +575,36 @@ public class ConversationService {
         // 普通用户：按merchantId和分配账号过滤（ownerAgentId=自己的 + 分配账号下的）
         if (currentAgentId != null) {
             Set<Long> assignedAccountIds = getAssignedAccountIds(currentAgentId);
-            if (assignedAccountIds.isEmpty()) {
-                return List.of();
-            }
-            List<Long> accountIdList = new ArrayList<>(assignedAccountIds);
-
-            // 如果指定了accountId但不是分配的账号，返回空
-            if (accountId != null && !assignedAccountIds.contains(accountId)) {
-                return List.of();
-            }
 
             Conversation.Stage stageEnum = null;
             if (stage != null && !stage.isBlank()) {
                 stageEnum = Conversation.Stage.valueOf(stage.toUpperCase());
             }
 
-            // 如果指定了accountId，用单账号查询；否则用账号列表查询
-            if (accountId != null) {
-                return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
-                        merchantId, List.of(accountId), stageEnum, currentAgentId);
+            // 如果指定了accountId但不在分配列表中，返回空
+            if (accountId != null && !assignedAccountIds.contains(accountId)) {
+                return List.of();
+            }
+
+            // 有分配账号：用ownerAgentId OR accountIds的条件查询
+            if (!assignedAccountIds.isEmpty()) {
+                List<Long> accountIdList = new ArrayList<>(assignedAccountIds);
+                if (accountId != null) {
+                    return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
+                            merchantId, List.of(accountId), stageEnum, currentAgentId);
+                } else {
+                    return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
+                            merchantId, accountIdList, stageEnum, currentAgentId);
+                }
+            }
+
+            // 没有分配账号：只能看ownerAgentId=自己的会话（按merchantId+ownerAgentId查）
+            if (stageEnum != null) {
+                return conversationRepository.findByMerchantIdAndOwnerAgentIdAndStageOrderByLastMessageAtDesc(
+                        merchantId, currentAgentId, stageEnum);
             } else {
-                return conversationRepository.findByMerchantIdAndAccountIdsAndStage(
-                        merchantId, accountIdList, stageEnum, currentAgentId);
+                return conversationRepository.findByMerchantIdAndOwnerAgentIdOrderByLastMessageAtDesc(
+                        merchantId, currentAgentId);
             }
         }
 
@@ -585,6 +612,7 @@ public class ConversationService {
         return List.of();
     }
 
+    @Transactional(readOnly = true)
     public Conversation loadOwnedConversation(Long id) {
         Conversation conversation = conversationRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
@@ -619,6 +647,7 @@ public class ConversationService {
         throw new AccessDeniedException("无权访问该会话");
     }
 
+    @Transactional(readOnly = true)
     public List<MessageDto> listMessages(Long id) {
         loadOwnedConversation(id);
         return messageService.listMessages(id).stream()
@@ -652,8 +681,12 @@ public class ConversationService {
                                    Integer audioDuration, String audioFileName, String senderName,
                                    java.util.List<java.util.Map<String, String>> attachments) {
         loadOwnedConversation(id);
-        return MessageDto.from(messageService.sendReply(id, content, targetLanguage,
-                messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName, attachments));
+        Message msg = messageService.sendReply(id, content, targetLanguage,
+                messageType, audioData, audioMimeType, audioDuration, audioFileName, senderName, attachments);
+        if (msg == null) {
+            throw new IllegalStateException("消息发送失败：内容为空或附件发送失败");
+        }
+        return MessageDto.from(msg);
     }
 
     public MessageDto sendGifMessage(Long id, String gifUrl, String title) {

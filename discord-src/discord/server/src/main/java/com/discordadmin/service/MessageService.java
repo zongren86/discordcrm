@@ -339,7 +339,7 @@ public class MessageService {
         }
 
         String textToSend = content;
-        if (!isVoiceMessage && content != null && !content.isBlank()) {
+        if (!isVoiceMessage && content != null && !content.isBlank() && !isPureNumber(content)) {
             textToSend = translationServiceFactory.translate(content, targetLang, merchantId)
                     .orElse(content);
         } else if (isVoiceMessage) {
@@ -356,51 +356,27 @@ public class MessageService {
                         conversation.getDiscordAccount().getId())
                 .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
 
-        String discordMessageId = null;
+        String discordMessageId;
         String discordAttachmentUrl = null;
-        if (account.getAccountType() == DiscordAccount.AccountType.USER) {
-            try {
-                if (isVoiceMessage) {
-                    byte[] audioBytes = java.util.Base64.getDecoder().decode(audioData);
-                    // Discord 原生语音消息要求文件名必须以 voice-message. 开头
-                    // 官方客户端默认扩展名 ogg，这里统一规范化
-                    String fileName = normalizeVoiceFileName(audioFileName, audioMimeType);
-                    String mimeType = normalizeVoiceMimeType(audioMimeType);
-                    // 语音消息 content 必须为空，客户端才会自动显示原生语音条
-                    String discordContent = "";
-                    com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
-                            account.getToken(), conversation.getChannelId(), discordContent,
-                            fileName, audioBytes, mimeType, audioDuration, null);
-                    discordMessageId = resp.path("id").asText(null);
-                    discordAttachmentUrl = extractAttachmentUrl(resp);
-                } else {
-                    discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
-                }
-            } catch (Exception e) {
-                if (e.getMessage() != null && (e.getMessage().contains("401") || e.getMessage().contains("Unauthorized"))) {
-                    log.error("账号 [{}] token 已失效，无法发送消息", account.getName());
-                    throw new IllegalStateException("账号「" + account.getName() + "」的 Discord 授权已失效，请重新登录该账号", e);
-                }
-                throw new IllegalStateException("消息发送失败: " + e.getMessage(), e);
-            }
-        } else {
+        try {
             if (isVoiceMessage) {
                 byte[] audioBytes = java.util.Base64.getDecoder().decode(audioData);
                 String fileName = normalizeVoiceFileName(audioFileName, audioMimeType);
                 String mimeType = normalizeVoiceMimeType(audioMimeType);
-                try {
-                    com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
-                            account.getToken(), conversation.getChannelId(), "",
-                            fileName, audioBytes, mimeType, audioDuration, null);
-                    discordMessageId = resp.path("id").asText(null);
-                    discordAttachmentUrl = extractAttachmentUrl(resp);
-                } catch (Exception e) {
-                    log.warn("Bot账号发送语音消息失败，尝试纯文本: {}", e.getMessage());
-                    discordBotManager.sendMessage(account.getId(), conversation, textToSend);
-                }
+                com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
+                        account.getToken(), conversation.getChannelId(), "",
+                        fileName, audioBytes, mimeType, audioDuration, null);
+                discordMessageId = resp.path("id").asText(null);
+                discordAttachmentUrl = extractAttachmentUrl(resp);
             } else {
-                discordBotManager.sendMessage(account.getId(), conversation, textToSend);
+                discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
             }
+        } catch (Exception e) {
+            if (e.getMessage() != null && (e.getMessage().contains("401") || e.getMessage().contains("Unauthorized"))) {
+                log.error("账号 [{}] token 已失效，无法发送消息", account.getName());
+                throw new IllegalStateException("账号「" + account.getName() + "」的 Discord 授权已失效，请重新登录该账号", e);
+            }
+            throw new IllegalStateException("消息发送失败: " + e.getMessage(), e);
         }
 
         Message message = new Message();
@@ -429,12 +405,32 @@ public class MessageService {
         message.setDiscordCreatedAt(now);
         message.setCreatedAt(now);
         if (discordMessageId != null) {
-            message.setDiscordMessageId(discordMessageId);
+            // Check for duplicate before saving to avoid unique constraint violation
+            Optional<Message> existingMsg = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
+            if (existingMsg.isPresent()) {
+                log.warn("消息已存在，跳过保存: conversationId={}, discordMessageId={}", conversationId, discordMessageId);
+                // Update existing message instead of creating duplicate
+                Message existing = existingMsg.get();
+                existing.setContent(message.getContent());
+                existing.setTranslatedContent(message.getTranslatedContent());
+                existing.setDiscordCreatedAt(message.getDiscordCreatedAt());
+                if (!isVoiceMessage && !textToSend.equals(content)) {
+                    existing.setTranslatedContent(textToSend);
+                }
+                message = messageRepository.save(existing);
+            } else {
+                message.setDiscordMessageId(discordMessageId);
+                if (!isVoiceMessage && !textToSend.equals(content)) {
+                    message.setTranslatedContent(textToSend);
+                }
+                message = messageRepository.save(message);
+            }
+        } else {
+            if (!isVoiceMessage && !textToSend.equals(content)) {
+                message.setTranslatedContent(textToSend);
+            }
+            message = messageRepository.save(message);
         }
-        if (!isVoiceMessage && !textToSend.equals(content)) {
-            message.setTranslatedContent(textToSend);
-        }
-        message = messageRepository.save(message);
 
         // 语音消息：自动触发 ASR 转写（后台用户也可以手动点，不依赖这个自动流程）
         // INBOUND：转写+自动翻译成中文；OUTBOUND：只转写原文（用户发的原文，翻译看发送前已处理）
@@ -530,8 +526,8 @@ public class MessageService {
                             conversation.getDiscordAccount().getId())
                     .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
 
-            StringBuilder attachmentDesc = new StringBuilder();
             java.util.List<java.util.Map<String, String>> sentAttachments = new java.util.ArrayList<>();
+            String discordMessageId = null;
 
             for (java.util.Map<String, String> att : attachments) {
                 String url = att.get("url");
@@ -561,11 +557,22 @@ public class MessageService {
                         String mimeType = contentType != null ? contentType : "application/octet-stream";
                         String name = fileName != null ? fileName : "attachment";
                         
-                        // 发送到 Discord
+                        // 发送到 Discord，并获取 API 响应
                         if (account.getAccountType() == DiscordAccount.AccountType.USER) {
-                            discordUserClient.sendMessageWithFile(
+                            com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
                                     account.getToken(), conversation.getChannelId(), "",
                                     name, fileBytes, mimeType, null, null);
+                            // 获取 discordMessageId（只取最后一个附件对应的消息ID）
+                            if (resp != null && resp.path("id").isTextual()) {
+                                discordMessageId = resp.path("id").asText();
+                            }
+                            // 使用 Discord CDN 返回的真实附件 URL（更可靠，跨设备可访问）
+                            if (resp != null && resp.path("attachments").isArray() && resp.path("attachments").size() > 0) {
+                                String cdnUrl = resp.path("attachments").get(0).path("url").asText(null);
+                                if (cdnUrl != null && !cdnUrl.isBlank()) {
+                                    url = cdnUrl;
+                                }
+                            }
                         } else {
                             log.warn("Bot 账号暂不支持文件附件发送");
                         }
@@ -576,7 +583,6 @@ public class MessageService {
                         sent.put("contentType", mimeType);
                         sent.put("size", String.valueOf(fileBytes.length));
                         sentAttachments.add(sent);
-                        // 不再在消息内容中添加 [附件:文件名] 文本，改为由前端附件区域渲染
                     }
                 } catch (Exception e) {
                     log.error("发送附件失败: {}", e.getMessage());
@@ -588,12 +594,24 @@ public class MessageService {
                 Message attMsg = new Message();
                 attMsg.setConversation(conversation);
                 attMsg.setDirection(Message.Direction.OUTBOUND);
-                attMsg.setSenderName(agentDisplayName != null ? agentDisplayName : "我");
-                // 附件消息内容设为空字符串，附件信息由 attachmentsJson 传递给前端渲染
+                attMsg.setSenderName(account.getName());
                 attMsg.setContent("");
                 attMsg.setAttachmentsJson(toJson(sentAttachments));
+                attMsg.setTranslatedContent("");
+                attMsg.setDiscordCreatedAt(Instant.now());
                 attMsg.setMessageType("attachment");
                 attMsg.setCreatedAt(Instant.now());
+                
+                // 如果拿到了 discordMessageId，先检查是否已存在（Gateway 可能已经入库）
+                if (discordMessageId != null) {
+                    Optional<Message> existingMsg = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
+                    if (existingMsg.isPresent()) {
+                        log.info("附件消息已由 Gateway 入库，跳过: discordMessageId={}", discordMessageId);
+                        return existingMsg.get();
+                    }
+                    attMsg.setDiscordMessageId(discordMessageId);
+                }
+                
                 Message savedAtt = messageRepository.save(attMsg);
                 
                 // 推送到前端
@@ -1134,6 +1152,15 @@ public class MessageService {
             if (c >= '\u4e00' && c <= '\u9fff') return true;
         }
         return false;
+    }
+
+    /**
+     * 检测文本是否为纯数字（可包含小数点、正负号等数学符号）
+     * 纯数字不应该被翻译
+     */
+    private boolean isPureNumber(String text) {
+        if (text == null || text.trim().isEmpty()) return false;
+        return text.trim().matches("[\\d\\s.,;:!?+\\-*/()\\[\\]{}]+");
     }
 
     /**

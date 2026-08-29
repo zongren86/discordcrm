@@ -123,6 +123,12 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
     /** 按商户ID和ownerAgentId查询会话 */
     List<Conversation> findByMerchantIdAndOwnerAgentId(Long merchantId, Long ownerAgentId);
 
+    /** 按商户ID和ownerAgentId查询会话（按最后消息时间倒序） */
+    List<Conversation> findByMerchantIdAndOwnerAgentIdOrderByLastMessageAtDesc(Long merchantId, Long ownerAgentId);
+
+    /** 按商户ID+ownerAgentId+阶段查询会话（按最后消息时间倒序） */
+    List<Conversation> findByMerchantIdAndOwnerAgentIdAndStageOrderByLastMessageAtDesc(Long merchantId, Long ownerAgentId, Conversation.Stage stage);
+
     /** 按账号ID查找会话（平台管理员用） */
     List<Conversation> findByDiscordAccount_IdOrderByLastMessageAtDesc(Long accountId);
 

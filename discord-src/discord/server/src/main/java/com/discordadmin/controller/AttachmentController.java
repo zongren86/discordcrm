@@ -68,9 +68,12 @@ public class AttachmentController {
             }
             File file = path.toFile();
             String contentType = Files.probeContentType(path);
+            // 添加 CORS 头，允许前端跨域加载图片
             return ResponseEntity.ok()
                     .contentType(MediaType.parseMediaType(contentType != null ? contentType : "application/octet-stream"))
                     .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + file.getName() + "\"")
+                    .header(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                    .header(HttpHeaders.CACHE_CONTROL, "max-age=3600")
                     .body(new FileSystemResource(file));
         } catch (IOException e) {
             return ResponseEntity.internalServerError().build();

@@ -203,7 +203,7 @@
               <el-form-item label="选择客服">
                 <el-select v-model="assignForm.agentId" placeholder="请选择客服" style="width:100%" :loading="agentsLoading">
                   <el-option v-for="a in agents" :key="a.id" :value="a.id"
-                    :label="`${a.displayName || a.username} (${a.role})`" />
+                    :label="`${a.displayName || a.username} (${a.roleLabel})`" />
                 </el-select>
               </el-form-item>
             </el-form>
@@ -221,7 +221,7 @@
               <el-form-item label="目标客服">
                 <el-select v-model="transferForm.agentId" placeholder="选择要转移给的客服" style="width:100%" :loading="agentsLoading">
                   <el-option v-for="a in agents" :key="a.id" :value="a.id"
-                    :label="`${a.displayName || a.username} (${a.role})`" />
+                    :label="`${a.displayName || a.username} (${a.roleLabel})`" />
                 </el-select>
               </el-form-item>
               <el-form-item label="转移原因">
@@ -358,7 +358,7 @@
                   <span class="msg-time">{{ formatTime(msg.createdAt) }}</span>
                   <span v-if="msg.editedAt" class="msg-edited">(已编辑)</span>
                 </div>
-                <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted, 'bubble-media-only': !msg.isDeleted && (isGifMsg(msg) || isStickerMsg(msg)) }]">
+                <div :class="['msg-bubble', msg.direction === 'OUTBOUND' ? 'bubble-out' : 'bubble-in', { 'bubble-deleted': msg.isDeleted, 'bubble-media-only': !msg.isDeleted && isMediaMsg(msg) }]">
                   <!-- 非GIF附件区域（排除GIF，由专门的GIF区域渲染） -->
                   <div v-if="nonGifAttachments(msg).length" class="msg-attachments">
                     <div v-for="att in nonGifAttachments(msg)" :key="att.url" class="attachment-item">
@@ -410,7 +410,7 @@
                           <div class="asr-toggle-link" @click="toggleOriginalBelow(msg)">
                             {{ originalBelowExpanded[msg.id] ? '收起原文' : '查看原文' }}
                           </div>
-                          <div v-show="originalBelowExpanded[msg.id]" class="asr-original-text">{{ msg.asrText }}</div>
+                          <div v-show="originalBelowExpanded[msg.id]" class="asr-original-text">{{ msg.asrTranslated || msg.asrText }}</div>
                         </div>
                       </div>
                     </div>
@@ -532,11 +532,12 @@
 
                   <div v-if="!msg.isDeleted && !isVoiceMsg(msg) && !isGifMsg(msg) && !isStickerMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
 
-                  <!-- 图片附件渲染 -->
-                  <div v-if="!msg.isDeleted && imageAttachmentsOf(msg).length > 0" class="msg-image-attachments">
+                  <!-- 图片附件渲染（gif消息已由GIF区域渲染，这里跳过避免重复） -->
+                  <div v-if="!msg.isDeleted && !isGifMsg(msg) && !isStickerMsg(msg) && imageAttachmentsOf(msg).length > 0" class="msg-image-attachments">
                     <img v-for="(img, i) in imageAttachmentsOf(msg)" :key="i"
-                         :src="img.url" class="msg-image-attachment"
-                         @click="openMediaPreview(img.url)" />
+                         :src="resolveAttachmentUrl(img.url)" class="msg-image-attachment"
+                         @click="openMediaPreview(resolveAttachmentUrl(img.url))"
+                         @error="onImageError($event)" />
                   </div>
 
                   <div v-else-if="msg.isDeleted" class="msg-deleted-tip">[消息已删除]</div>
@@ -554,7 +555,7 @@
                       {{ originalExpandedSet[msg.id] ? '收起原文' : `查看原文 (${(originalContentOf(msg) || '').length})` }}
                       <el-icon class="arrow-icon" :class="{ flip: originalExpandedSet[msg.id] }"><ArrowDown /></el-icon>
                     </el-button>
-                    <div v-show="originalExpandedSet[msg.id]" class="original-text">原文：{{ originalContentOf(msg) }}</div>
+                    <div v-show="originalExpandedSet[msg.id]" class="original-text">译文：{{ originalContentOf(msg) }}</div>
                   </div>
 
                   <div v-if="canTranslateInbound(msg)" class="msg-translate-wrap">
@@ -678,11 +679,15 @@
         </div>
 
         <!-- 输入区 -->
-        <div class="input-area">
+        <div class="input-area"
+             @dragover.prevent
+             @dragenter.prevent
+             @drop.prevent="onInputDrop"
+             @paste.prevent="onInputPaste">
           <div class="input-hint" v-if="inputHint">
             <el-icon><InfoFilled /></el-icon>
             <span>{{ inputHint }}</span>
-            <span class="shortcut-hint">（Alt+W 翻译 · Alt+E 漏斗 · Alt+R AI建议）</span>
+            <span class="shortcut-hint">（Alt/Cmd+W 翻译）</span>
           </div>
 
           <div v-if="showAiPanel" class="ai-panel">
@@ -844,9 +849,9 @@
               </el-button>
             </div>
 
-            <el-input v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
+            <el-input ref="chatInputRef" v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
               :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
-              resize="none" @keydown="onInputKeydown" class="msg-input" />
+              resize="none" class="msg-input" />
             <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
               :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
               @click="send">
@@ -1396,7 +1401,12 @@ const filteredConversations = computed(() => {
     list = list.filter(c => c.stage !== 'CHURNED')
   }
   if (selectedAccountId.value) {
-    list = list.filter(c => (c.discordAccountId || c.accountId) === selectedAccountId.value)
+    const selId = Number(selectedAccountId.value) || selectedAccountId.value
+    list = list.filter(c => {
+      const rawId = c.discordAccountId != null ? c.discordAccountId : c.accountId
+      const accId = Number(rawId) || rawId
+      return accId == selId
+    })
   }
   if (selectedStage.value) {
     list = list.filter(c => c.stage === selectedStage.value)
@@ -1467,7 +1477,7 @@ const accountOptionsForFilter = computed(() => {
   // 从会话列表中收集所有账号
   const accountMap = new Map()
   for (const c of conversations.conversations) {
-    if (c.discordAccountId) {
+    if (c.discordAccountId != null) {
       const name = c.discordAccountName || c.discordAccount?.name || c.accountName || `账号#${c.discordAccountId}`
       if (!accountMap.has(c.discordAccountId)) {
         // 从accounts store获取tokenValid，默认为true
@@ -1573,6 +1583,8 @@ const hasMore = computed(() =>
 
 const inputHint = computed(() => {
   if (!inputText.value.trim()) return ''
+  // 纯数字不显示翻译提示
+  if (/^[\d\s.,;:!?\-+/\\*()\[\]{}'"]+$/.test(inputText.value.trim())) return ''
   if (containsChinese(inputText.value)) {
     const targetName = LANGUAGE_NAMES[targetLang.value] || targetLang.value
     return `检测到中文，发送时将自动翻译为${targetName}`
@@ -1608,6 +1620,9 @@ const presenceLabel = computed(() => {
 })
 
 function containsChinese(text) {
+  if (!text || !text.trim()) return false
+  // 纯数字不翻译
+  if (/^[\d\s.,;:!?\-+/\\*()\[\]{}'"]+$/.test(text.trim())) return false
   return /[\u4e00-\u9fa5]/.test(text || '')
 }
 
@@ -1696,8 +1711,8 @@ function senderNameOf(msg) {
 function displayContentOf(msg) {
   if (msg?.messageType === 'voice') return ''
   if (isGifMsg(msg)) return ''
-  if (msg.direction === 'OUTBOUND') return msg.translatedContent || msg.content || ''
-  return msg.translatedContent || msg.content || ''
+  // 默认显示原文（翻译前内容），"查看原文"展开后显示翻译后的内容
+  return msg.content || msg.translatedContent || ''
 }
 
 function isGifMsg(msg) {
@@ -1736,6 +1751,22 @@ function isGifMsg(msg) {
       /\.(gif|webp|mp4|webm|png|jpg|jpeg)(\?|#|$)/i.test(content)
   }
   return false
+}
+
+
+/** 判断是否为纯图片消息（只有图片附件，无实质文本内容） */
+function isImageOnlyMsg(msg) {
+  if (!msg) return false
+  const imgs = imageAttachmentsOf(msg)
+  if (imgs.length === 0) return false
+  const text = msg.content?.trim() || ''
+  const isPlaceholderText = text === '[图片]' || text === '[GIF]' || text === '[语音消息]' || text === '[Sticker]'
+  return !text || isPlaceholderText
+}
+
+/** 判断是否为媒体消息（GIF/Sticker/纯图片），用于移除气泡背景 */
+function isMediaMsg(msg) {
+  return isGifMsg(msg) || isStickerMsg(msg) || isImageOnlyMsg(msg)
 }
 
 function gifUrlOf(msg) {
@@ -2250,6 +2281,30 @@ function handleStickerDownload(sticker) {
   }
 }
 
+
+/** 解析附件 URL - 处理相对路径和 localhost 问题 */
+function resolveAttachmentUrl(url) {
+  if (!url) return ''
+  // 如果是相对路径，添加后端基础 URL
+  if (url.startsWith('/')) {
+    const base = window.location.origin
+    return url
+  }
+  // 如果是 localhost 但前端不在 localhost，替换为当前域名
+  if (url.includes('localhost:8090') && !window.location.hostname.includes('localhost')) {
+    return url.replace('localhost:8090', window.location.hostname + ':8090')
+  }
+  return url
+}
+
+/** 图片加载错误处理 */
+function onImageError(e) {
+  if (e.target) {
+    e.target.style.opacity = '0.3'
+    e.target.style.background = '#eee'
+    e.target.alt = '图片加载失败'
+  }
+}
 /** 判断是否图片附件 */
 function isImageAttachment(att) {
   if (!att) return false
@@ -2296,7 +2351,7 @@ function hasOriginal(msg) {
   return !!(msg.translatedContent && msg.content && msg.translatedContent !== msg.content)
 }
 
-function originalContentOf(msg) { return msg.content || '' }
+function originalContentOf(msg) { return msg.translatedContent || msg.content || '' }
 
 function toggleOriginal(msgId) {
   if (originalExpandedSet.value[msgId]) delete originalExpandedSet.value[msgId]
@@ -2417,9 +2472,9 @@ function asrStatusIconClass(msg) {
 }
 
 function asrDisplayText(msg) {
-  // 优先显示译文，没有译文时显示原文
-  if (hasAsrTranslated(msg)) return msg.asrTranslated
+  // 默认显示原文（asrText），"查看原文"展开后显示翻译后的内容（asrTranslated）
   if (hasAsrText(msg)) return msg.asrText
+  if (hasAsrTranslated(msg)) return msg.asrTranslated
   return ''
 }
 
@@ -3159,30 +3214,152 @@ function jumpToBottom() {
   scrollToBottom({ force: true })
 }
 
+
+/** 拖拽文件到输入区 */
+async function onInputDrop(e) {
+  const files = Array.from(e.dataTransfer?.files || [])
+  if (files.length === 0) return
+  for (const file of files) {
+    try {
+      const res = await uploadAttachment(file)
+      if (res?.success) {
+        pendingAttachments.value.push({
+          name: res.filename || file.name,
+          url: res.url,
+          size: res.size,
+          contentType: res.contentType
+        })
+      } else {
+        pendingAttachments.value.push({
+          name: file.name,
+          url: URL.createObjectURL(file),
+          size: file.size,
+          contentType: file.type,
+          local: true
+        })
+      }
+    } catch (err) {
+      pendingAttachments.value.push({
+        name: file.name,
+        url: URL.createObjectURL(file),
+        size: file.size,
+        contentType: file.type,
+        local: true
+      })
+    }
+  }
+  ElMessage.success(`已添加 ${files.length} 个文件`)
+}
+
+/** 粘贴文件到输入区 */
+async function onInputPaste(e) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  const files = []
+  for (const item of items) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile()
+      if (file) files.push(file)
+    }
+  }
+  if (files.length === 0) return
+  e.preventDefault()
+  for (const file of files) {
+    try {
+      const res = await uploadAttachment(file)
+      if (res?.success) {
+        pendingAttachments.value.push({
+          name: res.filename || file.name,
+          url: res.url,
+          size: res.size,
+          contentType: res.contentType
+        })
+      } else {
+        pendingAttachments.value.push({
+          name: file.name,
+          url: URL.createObjectURL(file),
+          size: file.size,
+          contentType: file.type,
+          local: true
+        })
+      }
+    } catch (err) {
+      pendingAttachments.value.push({
+        name: file.name,
+        url: URL.createObjectURL(file),
+        size: file.size,
+        contentType: file.type,
+        local: true
+      })
+    }
+  }
+  ElMessage.success(`已添加 ${files.length} 个文件`)
+}
+/** 全局键盘监听 — 用 e.code 确保跨平台可靠 */
+function handleGlobalKeydown(e) {
+  console.log('[GLOBAL KEY] code=', e.code, 'key=', e.key, 'alt=', e.altKey, 'meta=', e.metaKey)
+  const isAltOrCmd = e.altKey || e.metaKey
+  
+  // Alt+W (Windows) / Cmd+W (Mac) — 翻译输入框
+  if (isAltOrCmd && e.code === 'KeyW') {
+    console.log('[GLOBAL] Alt/Cmd+W matched!')
+    e.preventDefault()
+    e.stopPropagation()
+    if (inputText.value.trim()) {
+      doTranslateInput()
+    } else {
+      ElMessage.warning('请先输入要翻译的内容')
+    }
+    return
+  }
+  
+  // 注意: Enter 发送已移到 onInputKeydown (textarea 原生 DOM 绑定)
+  // 不能在这里全局监听 Enter，否则和 textarea 上的 keydown 重复触发 send()
+}
+
 function onInputKeydown(e) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  // Alt+W / Cmd+W — 已由全局 handleGlobalKeydown 统一处理
+  if (e.altKey || e.metaKey) return
+  
+  if (e.code === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     send()
-  } else if (e.altKey && e.key.toLowerCase() === 'w') {
-    e.preventDefault()
-    ElMessage.info('正在批量翻译...')
-    const inboundMsgs = conversations.currentMessages.filter(m => m.direction === 'INBOUND' && canTranslateInbound(m))
-    for (const m of inboundMsgs) {
-      translateMsg(m)
-    }
-  } else if (e.altKey && e.key.toLowerCase() === 'e') {
+  } else if (e.altKey && e.code === 'KeyE') {
     e.preventDefault()
     ElMessageBox.prompt('输入漏斗阶段 (PROSPECT/NEW/CONVERTED/CHURNED/ARCHIVED)',
       '快速修改漏斗', { inputValue: currentStage.value || '' }).then(({ value }) => {
       if (value) updateStageSilently(value.toUpperCase())
     }).catch(() => {})
-  } else if (e.altKey && e.key.toLowerCase() === 'r') {
+  } else if (e.altKey && e.code === 'KeyR') {
     e.preventDefault()
     toggleAiPanel()
   }
 }
 
+/** 翻译输入框内容（纯数字跳过） */
+function doTranslateInput() {
+  const text = inputText.value.trim()
+  if (!text) {
+    ElMessage.warning('请先输入要翻译的内容')
+    return
+  }
+  if (/^[\d\s.,;:!?\-+/\*()\[\]{}'"]+$/.test(text)) {
+    ElMessage.info('纯数字无需翻译')
+    return
+  }
+  translateAndReplaceInput(text)
+}
+
+let _lastSendTs = 0
 async function send() {
+  // 防重入锁: 150ms 内重复调用直接返回（解决 Enter 重复触发问题）
+  const now = Date.now()
+  if (now - _lastSendTs < 150) {
+    console.warn('[send] 防重入: 距上次发送仅', now - _lastSendTs, 'ms，跳过')
+    return
+  }
+  _lastSendTs = now
+
   const text = inputText.value.trim()
   if (!text && !replyToMsg.value && pendingAttachments.value.length === 0) return
   if (!conversations.currentConversationId) {
@@ -3252,6 +3429,8 @@ watch(() => conversations.currentMessages.length, (cnt) => {
 })
 
 watch(() => conversations.currentConversationId, async (newId, oldId) => {
+  await nextTick()
+  bindTextareaKeydown()
   replyToMsg.value = null
   userChangedTargetLang = false
   firstMessageDetectedLang = null  // 切换会话时重置首次检测缓存
@@ -4193,6 +4372,30 @@ async function translateCurrentMsg() {
 }
 
 /** 请求翻译预览 - 调用后端翻译API获取真实翻译结果 */
+/** 直接翻译输入框内容并替换（用于快捷键 Alt+W/Cmd+W） */
+async function translateAndReplaceInput(text) {
+  if (!text) return
+  console.log('[DEBUG translateAndReplaceInput] text=', text, 'targetLang=', targetLang.value)
+  const loading = ElLoading.service({ text: '翻译中...', background: 'rgba(0,0,0,0.5)' })
+  try {
+    const result = await translateText(text, targetLang.value)
+    console.log('[DEBUG translateAndReplaceInput] result=', JSON.stringify(result?.data || result).substring(0, 200))
+    if (result && result.data && result.data.translatedText) {
+      inputText.value = result.data.translatedText
+      console.log('[DEBUG] inputText set to:', inputText.value)
+      ElMessage.success('已翻译，可继续编辑或发送')
+    } else {
+      console.warn('[DEBUG] translate result missing translatedText:', result)
+      ElMessage.warning('翻译失败，请重试')
+    }
+  } catch (e) {
+    console.error('[DEBUG] translate error:', e)
+    ElMessage.error('翻译失败: ' + (e?.response?.data?.message || e.message || ''))
+  } finally {
+    loading.close()
+  }
+}
+
 async function requestTranslationPreview() {
   const text = inputText.value.trim()
   if (!text) {
@@ -4250,7 +4453,25 @@ async function onAISettingsUpdated(event) {
   }
 }
 
+/** 给真正的 textarea DOM 元素绑定原生 keydown（Element Plus 的事件转发不可靠） */
+function bindTextareaKeydown() {
+  const allTextareas = document.querySelectorAll('.msg-input textarea.el-textarea__inner')
+  allTextareas.forEach(ta => {
+    // 移除旧的（防止重复绑定）
+    ta.removeEventListener('keydown', onInputKeydown)
+    ta.addEventListener('keydown', onInputKeydown)
+    console.log('[DEBUG bindTextareaKeydown] bound to textarea:', ta)
+  })
+}
+
 onMounted(async () => {
+
+  // 添加全局键盘监听（确保 Alt/Cmd+W 翻译快捷键可靠工作）
+  // 确保 DOM 渲染完成后再绑定原生 keydown（Element Plus 事件转发不可靠）
+  await nextTick()
+  bindTextareaKeydown()
+
+  window.addEventListener('keydown', handleGlobalKeydown);
   // 添加滚动监听
   document.addEventListener('scroll', handleScroll, true);
   try { await accounts.fetchAccounts() } catch (e) {}
@@ -4273,6 +4494,11 @@ watch(() => accounts.accounts.length, async (newLen, oldLen) => {
 })
 
 onUnmounted(() => {
+  // 移除 textarea 原生键盘监听
+  const allTextareas = document.querySelectorAll('.msg-input textarea.el-textarea__inner')
+  allTextareas.forEach(ta => ta.removeEventListener('keydown', onInputKeydown))
+  // 移除全局键盘监听
+  window.removeEventListener('keydown', handleGlobalKeydown);
   // 移除滚动监听
   document.removeEventListener('scroll', handleScroll, true);
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
@@ -5571,8 +5797,12 @@ video.msg-gif-img {
   margin-bottom: 6px;
   padding: 0 2px;
 }
+.input-hint .el-icon {
+  font-size: 12px;
+}
 
 .shortcut-hint {
+  font-size: 12px;
   color: var(--color-text-3);
   margin-left: auto;
 }

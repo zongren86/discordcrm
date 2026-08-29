@@ -110,6 +110,7 @@ public class DiscordAccountService {
         this.transactionManager = transactionManager;
     }
 
+    @Transactional(readOnly = true)
     public List<AccountDto> listAccounts(String keyword, String status) {
         Long merchantId = SecurityUtils.currentMerchantId();
         boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();

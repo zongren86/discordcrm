@@ -51,9 +51,16 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="所属账号" width="180">
+        <el-table-column label="所属账号" width="200">
           <template #default="{ row }">
-            <el-tag size="small" type="info" effect="plain">{{ row.accountName || row.accountDiscordName || '-' }}</el-tag>
+            <div class="account-cell">
+              <el-tag size="small" type="info" effect="plain" class="account-name-tag">{{ row.accountName || row.accountDiscordName || '-' }}</el-tag>
+              <div class="account-token-status">
+                <el-tag v-if="row.accountTokenValid === true" size="small" type="success" effect="plain">有效</el-tag>
+                <el-tag v-else-if="row.accountTokenValid === false" size="small" type="danger" effect="plain">失效</el-tag>
+                <el-tag v-else size="small" type="info" effect="plain">未知</el-tag>
+              </div>
+            </div>
           </template>
         </el-table-column>
 
@@ -297,9 +304,9 @@
             </div>
             <div class="stat-info">
               <div class="stat-values">
-                <span class="stat-current">{{ currentProgressTask.membersUnique || 0 }}</span>
+                <span class="stat-current">{{ currentProgressTask.totalRespondedMembers || 0 }}</span>
                 <span class="stat-sep">/</span>
-                <span class="stat-total">{{ currentProgressTask.maxMembers || 0 }}</span>
+                <span class="stat-total">{{ currentProgressTask.maxRequests || 0 }}</span>
               </div>
               <div class="stat-label">已采集 / 总采集数</div>
             </div>
@@ -1192,7 +1199,7 @@ async function openProgressDialog(server, taskId = null) {
           taskId: tempTaskId,
           // 计算 maxRequests 和 maxMembers（从已请求数推算）
           maxRequests: latestTask.requestsSent || 1000,
-          maxMembers: latestTask.membersUnique || 0
+          maxMembers: latestTask.maxMembers || 0
         })
       } else {
         // 没有历史记录，显示空状态
@@ -1256,7 +1263,15 @@ function startTaskPolling(taskId, serverId) {
       
       if (task) {
         consecutiveErrors = 0
-        progressTasksMap.set(taskId, task)
+        // 使用 Object.assign 合并更新，确保 Vue 响应性正确触发
+        const existingTask = progressTasksMap.get(taskId)
+        if (existingTask) {
+          Object.assign(existingTask, task)
+          // 触发 Map 的响应性更新
+          progressTasksMap.set(taskId, existingTask)
+        } else {
+          progressTasksMap.set(taskId, task)
+        }
         if (task.status === 'COMPLETED' || task.status === 'FAILED' || task.status === 'DONE' || task.status === 'ERROR') {
           stopTaskPolling(taskId, serverId)
           progressDialog.stopping = false
