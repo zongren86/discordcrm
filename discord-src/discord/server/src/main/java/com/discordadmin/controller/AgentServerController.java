@@ -224,15 +224,64 @@ public class AgentServerController {
         result.put("filename", "crm_agent-v0.1.0.zip");
         result.put("requiresNode", ">=18");
         result.put("requiresPlaywright", "chromium");
-        result.put("steps", List.of(
-                Map.of("step", 1, "title", "解压安装包", "desc", "将 crm_agent-v0.1.0.zip 解压到任意目录，如 ~/crm_agent"),
-                Map.of("step", 2, "title", "安装依赖", "desc", "进入目录执行: npm install"),
-                Map.of("step", 3, "title", "安装浏览器", "desc", "执行: npx playwright install chromium（首次必做，~180MB）"),
-                Map.of("step", 4, "title", "配置节点", "desc", "复制 config.example.json 为 config.json，填入后端地址 + 节点 token"),
-                Map.of("step", 5, "title", "启动 Agent", "desc", "执行: node src/index.js，看到 [就绪] 等待任务... 即启动成功"),
-                Map.of("step", 6, "title", "验证在线", "desc", "回到后台「代理管理」页面，节点状态应为在线")
+        result.put("envCheck", List.of(
+                Map.of("name", "Node.js", "command", "node -v", "minVersion", "18", "installHelp", "https://nodejs.org/"),
+                Map.of("name", "npm", "command", "npm -v", "minVersion", "8", "installHelp", "随 Node.js 一起安装"),
+                Map.of("name", "Playwright", "command", "npx playwright --version", "minVersion", "latest", "installHelp", "由 npm install 自动安装")
         ));
-        result.put("configTemplate", "{\n" +
+        result.put("steps", List.of(
+                Map.of("step", 1, "title", "解压安装包",
+                        "desc", "将 crm_agent-v0.1.0.zip 解压到任意目录",
+                        "code",                         "unzip crm_agent-v0.1.0.zip\n" +
+                        "mv crm_agent ~/crm_agent\n" +
+                        "cd ~/crm_agent"),
+                Map.of("step", 2, "title", "安装依赖",
+                        "desc", "国内用户建议先配置淘宝镜像加速",
+                        "code",                         "npm config set registry https://registry.npmmirror.com\n" +
+                        "npm install"),
+                Map.of("step", 3, "title", "安装 Playwright Chromium",
+                        "desc", "首次必做，下载约 180MB",
+                        "code",                         "# 临时用镜像下载（推荐）\n" +
+                        "PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright \\\n" +
+                        "  npx playwright install chromium\n" +
+                        "\n" +
+                        "# 或直接下载（慢）\n" +
+                        "npx playwright install chromium"),
+                Map.of("step", 4, "title", "复制并编辑配置",
+                        "desc", "复制模板为 config.json，修改 3 个核心字段",
+                        "code",                         "# macOS/Linux\n" +
+                        "cp config.example.json config.json\n" +
+                        "\n" +
+                        "# Windows\n" +
+                        "copy config.example.json config.json\n" +
+                        "\n" +
+                        "# 然后编辑 config.json，修改：\n" +
+                        "#   serverUrl:  后端地址 http://x.x.x.x:8090/api\n" +
+                        "#   agentName:  节点名称（需与前端一致）\n" +
+                        "#   token:      前端生成的 token"),
+                Map.of("step", 5, "title", "启动 Agent",
+                        "desc", "前台运行（调试）或后台守护（生产）",
+                        "code",                         "# 前台运行（推荐先调试，看实时日志）\n" +
+                        "node src/index.js\n" +
+                        "\n" +
+                        "# 后台守护（稳定后推荐）\n" +
+                        "# macOS/Linux:\n" +
+                        "nohup node src/index.js > agent.log 2>&1 &\n" +
+                        "# Windows PowerShell:\n" +
+                        "Start-Process node -ArgumentList 'src/index.js' -RedirectStandardOutput 'agent.log'\n" +
+                        "\n" +
+                        "# 停止\n" +
+                        "kill $(pgrep -f 'node src/index.js')   # macOS/Linux\n" +
+                        "Stop-Process -Name node -Force          # Windows"),
+                Map.of("step", 6, "title", "验证在线",
+                        "desc", "看到 [就绪] 等待任务... 且前端节点变绿即成功",
+                        "code",                         "# 看实时日志\n" +
+                        "tail -f agent.log              # macOS/Linux\n" +
+                        "Get-Content agent.log -Wait    # Windows\n" +
+                        "\n" +
+                        "# 或前端代理管理页面直接看状态")
+        ));
+        result.put("configTemplate",                 "{\n" +
                 "  \"serverUrl\": \"http://127.0.0.1:8090/api\",\n" +
                 "  \"agentName\": \"crm-agent-01\",\n" +
                 "  \"token\": \"在此粘贴前端生成的token\",\n" +
@@ -244,10 +293,14 @@ public class AgentServerController {
                 "    \"userDataDir\": \"./data/browser-profile\"\n" +
                 "  }\n" +
                 "}");
+        result.put("notes", List.of(
+                "serverUrl 必须含 /api 后缀，如 http://192.168.0.110:8090/api",
+                "首次启动 Chromium 会弹浏览器窗口，请在其中完成 Discord 登录",
+                "Windows 用户用 PowerShell/cmd 执行，不要用 Git Bash",
+                "国内用户务必配置 npm 和 Playwright 镜像，否则下载会超时"
+        ));
         return ResponseEntity.ok(result);
     }
-
-    /** 定位 crm_agent 源码目录 */
     private Path resolveAgentSourceDir() {
         // 1. 用显式配置
         if (agentSourceDir != null && !agentSourceDir.isBlank()) {
@@ -314,39 +367,109 @@ public class AgentServerController {
     }
 
     private String buildInstallReadme() {
-        return "==============================================\n" +
-                "  crm_agent v0.1.0 — 安装说明\n" +
+        return                 "==============================================\n" +
+                "  crm_agent v0.1.0 — 完整安装说明\n" +
                 "==============================================\n" +
                 "\n" +
-                "【1. 环境要求】\n" +
-                "  - Node.js >= 18  (https://nodejs.org/)\n" +
-                "  - macOS / Linux / Windows\n" +
+                "【环境要求】\n" +
+                "  Node.js >= 18   https://nodejs.org/\n" +
+                "  npm >= 8        （随 Node.js 安装）\n" +
+                "  macOS / Linux / Windows\n" +
                 "\n" +
-                "【2. 安装依赖】\n" +
-                "  cd crm_agent\n" +
+                "【环境检测】\n" +
+                "  node -v                    # 应 >= 18.x\n" +
+                "  npm -v                     # 应 >= 8.x\n" +
+                "  npx playwright --version   # 应能正常输出版本\n" +
+                "\n" +
+                "【国内加速（强烈推荐）】\n" +
+                "  # npm 淘宝镜像\n" +
+                "  npm config set registry https://registry.npmmirror.com\n" +
+                "\n" +
+                "  # Playwright Chromium 镜像（临时用）\n" +
+                "  PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install chromium\n" +
+                "\n" +
+                "  # 或永久生效，加到 ~/.zshrc / ~/.bashrc：\n" +
+                "  export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright\n" +
+                "\n" +
+                "【Step 1 — 解压】\n" +
+                "  macOS/Linux:  unzip crm_agent-v0.1.0.zip && cd crm_agent\n" +
+                "  Windows PS:   Expand-Archive crm_agent-v0.1.0.zip . ; cd crm_agent\n" +
+                "\n" +
+                "【Step 2 — npm install】\n" +
                 "  npm install\n" +
                 "\n" +
-                "【3. 安装 Playwright Chromium】\n" +
+                "【Step 3 — npx playwright install chromium（首次必做，~180MB）】\n" +
+                "  # 已配置镜像：\n" +
                 "  npx playwright install chromium\n" +
-                "  （首次必做，~180MB 下载）\n" +
+                "  # 没配置镜像就用下面这个：\n" +
+                "  PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install chromium\n" +
                 "\n" +
-                "【4. 配置节点】\n" +
-                "  cp config.example.json config.json\n" +
-                "  然后编辑 config.json：\n" +
-                "    serverUrl  = 后端 API 地址，如 http://127.0.0.1:8090/api\n" +
-                "    agentName  = 节点名称（需与前端创建时一致）\n" +
-                "    token      = 前端「代理管理」页面生成的 token\n" +
+                "【Step 4 — 配置 config.json】\n" +
+                "  cp config.example.json config.json          # macOS/Linux\n" +
+                "  copy config.example.json config.json        # Windows\n" +
                 "\n" +
-                "【5. 启动】\n" +
+                "  然后编辑 config.json，关键字段：\n" +
+                "  +------------------------------------------------------+\n" +
+                "  | serverUrl  后端 API 地址，必须含 /api 后缀           |\n" +
+                "  |            本机: http://127.0.0.1:8090/api           |\n" +
+                "  |            局域网: http://192.168.0.110:8090/api     |\n" +
+                "  | agentName  节点名称（需与前端代理管理创建时一致）    |\n" +
+                "  | token      前端代理管理页面生成的 token               |\n" +
+                "  | headless   false=显示浏览器窗口（推荐首次调试用）     |\n" +
+                "  +------------------------------------------------------+\n" +
+                "\n" +
+                "  完整示例：\n" +
+                "  {\n" +
+                "    \"serverUrl\": \"http://192.168.0.110:8090/api\",\n" +
+                "    \"agentName\": \"crm-agent-01\",\n" +
+                "    \"token\": \"abc123def456...\",\n" +
+                "    \"heartbeatIntervalMs\": 30000,\n" +
+                "    \"pollIntervalMs\": 5000,\n" +
+                "    \"browser\": {\n" +
+                "      \"headless\": false,\n" +
+                "      \"type\": \"chromium\",\n" +
+                "      \"userDataDir\": \"./data/browser-profile\"\n" +
+                "    }\n" +
+                "  }\n" +
+                "\n" +
+                "【Step 5 — 启动】\n" +
+                "  # 前台运行（推荐先用这个，能看到实时日志）\n" +
                 "  node src/index.js\n" +
-                "  看到 [就绪] 等待任务... 即启动成功\n" +
+                "  # 成功标志：\n" +
+                "  #   [就绪] 等待任务...\n" +
+                "  #   前端代理管理页面节点变 在线\n" +
                 "\n" +
-                "【6. 验证】\n" +
-                "  回到后台「代理管理」页面，节点状态应为在线\n" +
+                "  # 后台守护运行（稳定后推荐）\n" +
+                "  # macOS/Linux:\n" +
+                "    nohup node src/index.js > agent.log 2>&1 &\n" +
+                "  # Windows PowerShell:\n" +
+                "    Start-Process node -ArgumentList 'src/index.js' -RedirectStandardOutput 'agent.log'\n" +
                 "\n" +
-                "【7. 后台启动（可选）】\n" +
-                "  nohup node src/index.js > agent.log 2>&1 &\n" +
-                "\n";
+                "  # 查看日志 / 停止\n" +
+                "    tail -f agent.log                 # macOS/Linux\n" +
+                "    Get-Content agent.log -Wait       # Windows\n" +
+                "    kill $(pgrep -f 'node src/index.js')   # macOS/Linux 停止\n" +
+                "    Stop-Process -Name node -Force          # Windows 停止\n" +
+                "\n" +
+                "【常见问题 FAQ】\n" +
+                "  Q: npm install 很慢？\n" +
+                "  A: npm config set registry https://registry.npmmirror.com\n" +
+                "\n" +
+                "  Q: playwright download 超时？\n" +
+                "  A: PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install chromium\n" +
+                "\n" +
+                "  Q: 前端节点一直离线？\n" +
+                "  A: curl http://127.0.0.1:8090/api/agent-servers/heartbeat -X POST -H 'Content-Type: application/json' -d '{\\\"token\\\":\\\"你的token\\\"}'\n" +
+                "     看是否返回成功。检查 token 是否正确、后端 8090 是否可达。\n" +
+                "\n" +
+                "  Q: macOS 提示 Chromium 无法打开？\n" +
+                "  A: 系统设置 -> 隐私与安全 -> 允许 Chromium 运行\n" +
+                "\n" +
+                "  Q: Windows 上 Playwright 有兼容问题？\n" +
+                "  A: 用 PowerShell 或 cmd 执行，不要用 Git Bash\n" +
+                "\n" +
+                "  Q: Windows 上后台运行后找不到进程？\n" +
+                "  A: Get-Process node;  Stop-Process -Id <PID>\n" +
+                "";
     }
-
 }
