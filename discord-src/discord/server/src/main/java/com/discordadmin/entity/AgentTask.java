@@ -1,5 +1,6 @@
 package com.discordadmin.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -29,6 +30,7 @@ public class AgentTask {
     private String type;
 
     /** 分配给哪个代理节点 */
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "agent_server_id")
     private AgentServer agentServer;
@@ -50,6 +52,7 @@ public class AgentTask {
     private Long createdByUserId;
 
     /** 关联 DiscordAccount（如果任务结果已存为账号） */
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "discord_account_id")
     private DiscordAccount discordAccount;

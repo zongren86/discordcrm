@@ -25,10 +25,10 @@ public class DiscordAccountDtos {
                                       String avatar) {
     }
 
-    public record BatchLoginItem(String email, String password) {
+    public record BatchImportItem(String email, String password) {
     }
 
-    public record BatchImportRequest(List<BatchLoginItem> accounts) {
+    public record BatchImportRequest(List<BatchImportItem> accounts) {
     }
 
     public record BatchImportResultItem(String email, String password, boolean success, String message, String accountName) {
@@ -45,7 +45,11 @@ public class DiscordAccountDtos {
                               String email, String remark, Long merchantId,
                               String agentName, String agentUsername, Long agentId,
                               String tokenExpiresAt, String tokenCheckedAt,
-                              Long accountNumberId, Integer accountCustomNo) {
+                              Long accountNumberId, Integer accountCustomNo,
+                              String browserProfilePath, Long discordAgentServerId) {
+
+        // ===== 所有重载都自动从 entity 取 browserProfilePath/agentServerId =====
+
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting) {
             return from(a, connected, connecting, true, 0L, 0L, 0L, null, null, null, null, null);
         }
@@ -62,11 +66,13 @@ public class DiscordAccountDtos {
                     agentName, agentUsername, agentId, null, null);
         }
 
+        /** 所有 Service 调用最终都走到这里 —— 12 参数 */
         public static AccountDto from(DiscordAccount a, boolean connected, boolean connecting,
                                       boolean tokenValid, Long friendCount, Long conversationCount, Long messageCount,
                                       String agentName, String agentUsername, Long agentId,
                                       Long accountNumberId, Integer accountCustomNo) {
-            return new AccountDto(a.getId(), a.getName(), maskToken(a.getToken()),
+            return new AccountDto(
+                    a.getId(), a.getName(), maskToken(a.getToken()),
                     a.getAccountType() != null ? a.getAccountType().name() : "BOT",
                     a.getDiscordId(), a.getDiscordName(), a.getAvatarUrl(),
                     a.getStatus() != null ? a.getStatus().name() : null,
@@ -78,7 +84,9 @@ public class DiscordAccountDtos {
                     agentName, agentUsername, agentId,
                     a.getTokenExpiresAt() != null ? a.getTokenExpiresAt().toString() : null,
                     a.getTokenCheckedAt() != null ? a.getTokenCheckedAt().toString() : null,
-                    accountNumberId, accountCustomNo);
+                    accountNumberId, accountCustomNo,
+                    a.getBrowserProfilePath(), a.getAgentServerId()
+            );
         }
 
         private static String maskToken(String token) {
