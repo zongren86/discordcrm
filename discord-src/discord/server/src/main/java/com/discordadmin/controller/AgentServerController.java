@@ -359,23 +359,34 @@ public class AgentServerController {
         return null;
     }
 
+
     private String readAgentVersion() {
         try {
             Path sourceDir = resolveAgentSourceDir();
             if (sourceDir != null) {
-                // 优先从 config.json 的 version 字段读（单一配置源）
+                // 从 config.json 的 version 字段读（单一配置源）
                 Path cfgFile = sourceDir.resolve("config.json");
                 if (Files.exists(cfgFile)) {
                     String json = Files.readString(cfgFile);
-                    // 简单正则提 version —— 避免引入 JSON 解析依赖
-                    java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\"version\\"\\s*:\\s*\\"([^\\"]+)\\"").matcher(json);
-                    if (m.find()) return m.group(1);
+                    // 找 "version": "xxx" —— 简单字符串解析
+                    int idx = json.indexOf("\"version\"");
+                    if (idx >= 0) {
+                        int colon = json.indexOf(':', idx + 1);
+                        if (colon > 0) {
+                            int q1 = json.indexOf('"', colon + 1);
+                            if (q1 > 0) {
+                                int q2 = json.indexOf('"', q1 + 1);
+                                if (q2 > q1) {
+                                    return json.substring(q1 + 1, q2);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         } catch (Exception ignored) {}
         return "1.1.0";
     }
-
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
     private byte[] buildZip(Path sourceDir) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
