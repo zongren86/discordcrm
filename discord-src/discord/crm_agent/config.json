@@ -1,0 +1,16 @@
+{
+  "serverUrl": "http://127.0.0.1:8090/api",
+  "agentName": "crm-agent-local-test",
+  "token": "PIrw5ZPjPGu6HVMRDWSI1vTueIzszHvso56q7f8PYuY",
+  "heartbeatIntervalMs": 30000,
+  "pollIntervalMs": 5000,
+  "browser": {
+    "headless": false,
+    "type": "chromium",
+    "userDataDir": "./data/browser-profile",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    }
+  }
+}

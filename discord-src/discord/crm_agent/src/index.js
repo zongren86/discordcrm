@@ -110,7 +110,7 @@ async function main() {
   await heartbeat();
 
   // 定时器
-  setInterval(heartbeat, cfg.heartbeatIntervalMs || 30000);
+  setInterval(heartbeat, cfg.heartbeatIntervalMs || 5000);
   setInterval(pollTask, cfg.pollIntervalMs || 5000);
 
   console.log('[就绪] 等待任务...');

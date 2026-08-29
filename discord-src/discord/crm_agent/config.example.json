@@ -2,7 +2,7 @@
   "serverUrl": "http://127.0.0.1:8090",
   "agentName": "crm-agent-01",
   "token": "从管理后台复制的节点token",
-  "heartbeatIntervalMs": 30000,
+  "heartbeatIntervalMs": 5000,
   "pollIntervalMs": 5000,
   "browser": {
     "headless": false,

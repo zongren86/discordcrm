@@ -49,11 +49,11 @@ public class AgentServerController {
             m.put("token", "******");
             m.put("serverAddress", s.getServerAddress());
             m.put("merchantId", s.getMerchantId());
-            // 动态计算在线状态：心跳间隔 30s，超过 90s 没心跳 = OFFLINE
+            // 动态计算在线状态：心跳间隔 5s，超过 15s 没心跳 = OFFLINE
             String dynStatus = "OFFLINE";
             if (s.getLastSeenAt() != null) {
                 long secSince = Duration.between(s.getLastSeenAt(), Instant.now()).getSeconds();
-                if (secSince < 90) dynStatus = "ONLINE";
+                if (secSince < 15) dynStatus = "ONLINE";
             }
             m.put("status", dynStatus);
             if (s.getLastSeenAt() != null) {
