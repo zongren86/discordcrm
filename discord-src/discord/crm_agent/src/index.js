@@ -3,8 +3,7 @@ const { captureDiscordAccount, launchBrowserOnly } = require('./browser');
 const fs = require('fs');
 const path = require('path');
 
-let AGENT_VERSION = 'unknown';
-try { AGENT_VERSION = fs.readFileSync(path.join(__dirname, '..', 'VERSION'), 'utf8').trim(); } catch {}
+const AGENT_VERSION = cfg.version || 'unknown';
 
 console.log(`[启动] crm_agent v${AGENT_VERSION}`);
 console.log(`[配置] serverUrl=${cfg.serverUrl}  agentName=${cfg.agentName || '(未命名)'}`);

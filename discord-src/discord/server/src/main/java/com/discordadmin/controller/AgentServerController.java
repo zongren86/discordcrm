@@ -363,13 +363,17 @@ public class AgentServerController {
         try {
             Path sourceDir = resolveAgentSourceDir();
             if (sourceDir != null) {
-                Path vFile = sourceDir.resolve("VERSION");
-                if (Files.exists(vFile)) {
-                    return Files.readString(vFile).trim();
+                // 优先从 config.json 的 version 字段读（单一配置源）
+                Path cfgFile = sourceDir.resolve("config.json");
+                if (Files.exists(cfgFile)) {
+                    String json = Files.readString(cfgFile);
+                    // 简单正则提 version —— 避免引入 JSON 解析依赖
+                    java.util.regex.Matcher m = java.util.regex.Pattern.compile(""version"\s*:\s*"([^"]+)"").matcher(json);
+                    if (m.find()) return m.group(1);
                 }
             }
         } catch (Exception ignored) {}
-        return "1.0.0";
+        return "1.1.0";
     }
 
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */

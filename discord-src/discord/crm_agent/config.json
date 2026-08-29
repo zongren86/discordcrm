@@ -8,6 +8,10 @@
     "headless": false,
     "type": "chromium",
     "userDataDir": "./data/browser-profile",
-    "viewport": { "width": 1280, "height": 800 }
-  }
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    }
+  },
+  "version": "1.1.0"
 }
