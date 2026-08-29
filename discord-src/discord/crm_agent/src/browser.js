@@ -40,15 +40,19 @@ function getInitScript() {
 }
 
 /**
- * 检测浏览器是否还活着（用 SingletonLock 文件）
+ * 用 Playwright 原生 API 检测浏览器是否还活着
+ * context.isClosed() 返回 true = 用户手动关了浏览器
  */
-function isBrowserAlive(userDataDir) {
-  const lockFile = path.join(userDataDir, 'SingletonLock');
-  if (!fs.existsSync(lockFile)) return false;
-  // Windows 上 SingletonLock 是 socket 文件，存在且被占用 = 活着
+function isContextAlive(context) {
+  if (!context) return false;
   try {
-    const stat = fs.statSync(lockFile);
-    return stat.size > 0 || Date.now() - stat.atimeMs < 30000;
+    // BrowserContext.isClosed() —— Playwright 原生方法
+    if (typeof context.isClosed === 'function') {
+      return !context.isClosed();
+    }
+    // 兼容：尝试访问 pages()，如果 context 已关闭会抛异常
+    const pages = context.pages();
+    return pages && pages.length >= 0;
   } catch {
     return false;
   }
@@ -85,7 +89,7 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   const page = context.pages()[0] || await context.newPage();
   await page.addInitScript(getInitScript());
 
-  // 打开 Discord（如果还没登录会跳到登录页）
+  // 打开 Discord
   try {
     await page.goto('https://discord.com/channels/@me', { waitUntil: 'domcontentloaded', timeout: 15000 });
   } catch {
@@ -214,9 +218,9 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       throw err;
     }
 
-    // 2. 检测浏览器是否还活着（用户可能主动关了）
-    if (!isBrowserAlive(userDataDir)) {
-      console.log('[Browser] ❌ 浏览器已关闭');
+    // 2. 用 Playwright 原生 API 检测浏览器是否还活着
+    if (!isContextAlive(context)) {
+      console.log('[Browser] ❌ 浏览器已关闭（context.isClosed()=true）');
       const err = new Error('用户关闭了浏览器');
       err.code = 'BROWSER_CLOSED';
       throw err;
@@ -243,7 +247,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
     }
 
     if (result.token && result.userId) {
-      // 登录成功，不自动关浏览器（让用户看到"保存中"提示）
+      // 登录成功
       result.browserProfilePath = userDataDir;
       console.log('[Browser] 🎉 采集成功，profile 已持久化，等待后端保存确认...');
       return result;
