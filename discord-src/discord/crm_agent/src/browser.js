@@ -209,6 +209,11 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
     await new Promise(r => setTimeout(r, 2000));
     scanCount++;
 
+    const contextAlive = isContextAlive(context);
+    if (scanCount <= 3 || scanCount % 10 === 0) {
+      console.log(`[Browser] 扫描#${scanCount}  contextAlive=${contextAlive}  hasToken=${!!result.token}  hasUser=${!!result.userId}`);
+    }
+
     // 1. 检测取消
     if (taskId && http && await checkCancelled(http, taskId)) {
       console.log('[Browser] ❌ 任务已被取消');
