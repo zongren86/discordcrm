@@ -26,6 +26,7 @@ async function heartbeat() {
   try {
     await http.post('/agent-servers/heartbeat', {
       token: cfg.token,
+      name: cfg.agentName,
       serverAddress: cfg.publicAddress || '',
       nodeVersion: process.version,
       browserType: (cfg.browser && cfg.browser.type) || 'chromium',

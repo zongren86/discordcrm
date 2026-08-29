@@ -184,8 +184,10 @@ public class AgentServerController {
             return ResponseEntity.status(401).body(Map.of("error", "缺少 token"));
         }
         try {
+            String name = body.get("name");
             AgentServer server = agentServerService.heartbeat(
                     token,
+                    name,
                     body.get("serverAddress"),
                     body.get("nodeVersion"),
                     body.get("browserType")

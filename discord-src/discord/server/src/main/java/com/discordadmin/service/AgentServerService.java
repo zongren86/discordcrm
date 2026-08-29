@@ -71,9 +71,13 @@ public class AgentServerService {
 
     /** agent 心跳上报 */
     @Transactional
-    public AgentServer heartbeat(String token, String serverAddress, String nodeVersion, String browserType) {
+    public AgentServer heartbeat(String token, String name, String serverAddress, String nodeVersion, String browserType) {
         AgentServer server = agentServerRepository.findByToken(token)
                 .orElseThrow(() -> new IllegalArgumentException("无效 token"));
+        // 新增：同时校验 agentName 和 token 匹配
+        if (name != null && !name.isBlank() && !name.equals(server.getName())) {
+            throw new IllegalArgumentException("代理名称不匹配！token 属于节点「" + server.getName() + "」，但 config.json 里写的是「" + name + "」");
+        }
         server.setStatus("ONLINE");
         server.setLastSeenAt(Instant.now());
         if (serverAddress != null) server.setServerAddress(serverAddress);
