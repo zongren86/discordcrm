@@ -166,7 +166,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Download } from '@element-plus/icons-vue'
 import {
@@ -193,12 +193,14 @@ const packageDialogVisible = ref(false)
 const packageInfo = ref(null)
 const downloading = ref(false)
 
-async function loadList() {
-  loading.value = true
+const _pollTimer = ref(null)
+
+async function loadList(silent = false) {
+  if (!silent) loading.value = true
   try {
     servers.value = await listAgentServers()
   } catch (e) {
-    ElMessage.error('加载失败')
+    if (!silent) ElMessage.error('加载失败')
   } finally {
     loading.value = false
   }
@@ -306,7 +308,18 @@ async function downloadZip() {
   }
 }
 
-onMounted(loadList)
+onMounted(() => {
+  loadList()
+  // 每 10s 静默刷新状态
+  _pollTimer.value = setInterval(() => loadList(true), 10000)
+})
+
+onBeforeUnmount(() => {
+  if (_pollTimer.value) {
+    clearInterval(_pollTimer.value)
+    _pollTimer.value = null
+  }
+})
 </script>
 
 <style scoped>
