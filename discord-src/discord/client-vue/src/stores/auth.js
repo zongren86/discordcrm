@@ -2,13 +2,19 @@ import { defineStore } from 'pinia'
 import { login, getAgentInfo, http } from '@/api'
 
 export const useAuthStore = defineStore('auth', {
-  state: () => ({
-    token: localStorage.getItem('crm_token') || '',
-    agent: JSON.parse(localStorage.getItem('crm_auth') || 'null'),
-    permissions: JSON.parse(localStorage.getItem('crm_permissions') || '[]'),
-    menuPaths: JSON.parse(localStorage.getItem('crm_menu_paths') || '[]'),
-    _ready: false
-  }),
+  state: () => {
+    const safeParse = (str, fallback) => {
+      try { return JSON.parse(str || JSON.stringify(fallback)) }
+      catch { return fallback }
+    }
+    return {
+      token: localStorage.getItem('crm_token') || '',
+      agent: safeParse(localStorage.getItem('crm_auth'), null),
+      permissions: safeParse(localStorage.getItem('crm_permissions'), []),
+      menuPaths: safeParse(localStorage.getItem('crm_menu_paths'), []),
+      _ready: false
+    }
+  },
   getters: {
     isLoggedIn: (state) => !!state.token && !!state.agent,
     isReady: (state) => state._ready,

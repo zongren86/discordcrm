@@ -1204,6 +1204,23 @@ emuApi.interceptors.request.use(config => {
   }
   return config
 })
+emuApi.interceptors.response.use(
+  r => r,
+  (error) => {
+    const status = error?.response?.status
+    const data = error?.response?.data
+    const msg = data?.message || data?.error || error.message || '请求失败'
+    // 401 统一处理
+    if (status === 401) {
+      localStorage.removeItem('crm_token')
+      ElMessage.warning('登录已过期，请重新登录')
+    } else {
+      console.warn('[emuApi]', error.config?.url, '→', status, msg)
+      ElMessage.error(msg)
+    }
+    return Promise.reject(error)
+  }
+)
 
 const friendApi = axios.create({ baseURL: '/api', timeout: 60000 })
 friendApi.interceptors.request.use(config => {
@@ -1213,6 +1230,22 @@ friendApi.interceptors.request.use(config => {
   }
   return config
 })
+friendApi.interceptors.response.use(
+  r => r,
+  (error) => {
+    const status = error?.response?.status
+    const data = error?.response?.data
+    const msg = data?.message || data?.error || error.message || '请求失败'
+    if (status === 401) {
+      localStorage.removeItem('crm_token')
+      ElMessage.warning('登录已过期，请重新登录')
+    } else {
+      console.warn('[friendApi]', error.config?.url, '→', status, msg)
+      ElMessage.error(msg)
+    }
+    return Promise.reject(error)
+  }
+)
 
 const sortedEmulators = computed(() => {
   // 按序号(index)从小到大排序，保证最早创建/编号最小的排在最上面

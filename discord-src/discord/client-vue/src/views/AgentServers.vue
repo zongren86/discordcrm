@@ -281,8 +281,13 @@ async function openPackageDialog() {
     const resp = await fetch('/api/agent-servers/package-info', {
       headers: { 'Authorization': 'Bearer ' + localStorage.getItem('crm_token') }
     })
-    if (resp.ok) packageInfo.value = await resp.json()
-  } catch (e) { /* ignore */ }
+    if (!resp.ok) throw new Error('HTTP ' + resp.status)
+    packageInfo.value = await resp.json()
+  } catch (e) {
+    console.error('[AgentServers] 获取包信息失败:', e)
+    ElMessage.error('获取 Agent 包信息失败，请检查后端服务')
+    packageDialogVisible.value = false
+  }
 }
 
 async function downloadZip() {
@@ -302,7 +307,12 @@ async function downloadZip() {
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   } catch (e) {
-    ElMessage.error('下载失败: ' + e.message)
+    console.error('[AgentServers] 下载失败:', e)
+    if (e.message?.includes('HTTP')) {
+      ElMessage.error('下载失败：服务器 ' + e.message)
+    } else {
+      ElMessage.error('下载失败：网络错误或后端服务不可用')
+    }
   } finally {
     downloading.value = false
   }
