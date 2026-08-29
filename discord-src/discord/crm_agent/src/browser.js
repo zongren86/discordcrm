@@ -4,26 +4,79 @@
  */
 const { chromium } = require('playwright');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
+
+/** 清理残留 Chromium 进程（Windows/Linux/Mac） */
+function killOrphanChromium() {
+  try {
+    const { execSync } = require('child_process');
+    const isWin = os.platform() === 'win32';
+    if (isWin) {
+      // Windows 上只杀 playwright 启动的残留（用 --remote-debugging-pipe 标记的）
+      // 避免杀到用户自己的 Chrome
+      try { execSync('taskkill /F /IM chrome.exe /T 2>nul', { stdio: 'ignore' }); } catch {}
+      try { execSync('taskkill /F /IM chromium.exe /T 2>nul', { stdio: 'ignore' }); } catch {}
+    } else {
+      // Mac/Linux
+      try { execSync('pkill -f "chrome.exe.*remote-debugging-pipe" 2>/dev/null', { stdio: 'ignore' }); } catch {}
+      try { execSync('pkill -f "chromium.*remote-debugging-pipe" 2>/dev/null', { stdio: 'ignore' }); } catch {}
+    }
+    console.log('[Browser] 已清理残留浏览器进程');
+  } catch {}
+}
 
 /**
  * 启动浏览器并采集一个 Discord 用户
- * @returns {Promise<{token:string, userId:string, username:string, email:string|null, avatarUrl:string|null, raw:object}>}
  */
 async function captureDiscordAccount(browserConfig = {}) {
-  const userDataDir = browserConfig.userDataDir
-    ? path.resolve(browserConfig.userDataDir)
-    : null;
+  // 清理残留
+  killOrphanChromium();
+  await new Promise(r => setTimeout(r, 1000));
 
-  console.log('[Browser] 启动 Chromium...');
-  const browser = await chromium.launchPersistentContext(
-    userDataDir || path.join(__dirname, '..', 'data', 'browser-temp'),
-    {
-      headless: browserConfig.headless ?? false,
-      viewport: browserConfig.viewport || { width: 1280, height: 800 },
-      args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
-      ignoreHTTPSErrors: true,
+  // 每次用独立的临时 userDataDir，避免冲突
+  let userDataDir;
+  if (browserConfig.userDataDir) {
+    userDataDir = path.resolve(browserConfig.userDataDir);
+  } else {
+    userDataDir = path.join(os.tmpdir(), `crm-agent-profile-${Date.now()}`);
+  }
+  
+  // 确保目录存在且干净
+  try {
+    if (fs.existsSync(userDataDir)) {
+      // 只清理临时目录，不清理用户指定的目录
+      if (!browserConfig.userDataDir) {
+        fs.rmSync(userDataDir, { recursive: true, force: true });
+      }
     }
-  );
+    fs.mkdirSync(userDataDir, { recursive: true });
+  } catch (e) {
+    console.warn('[Browser] userDataDir 清理失败，继续尝试:', e.message);
+  }
+
+  console.log(`[Browser] 启动 Chromium... (profile=${userDataDir})`);
+
+  let browser;
+  try {
+    browser = await chromium.launchPersistentContext(
+      userDataDir,
+      {
+        headless: browserConfig.headless ?? false,
+        viewport: browserConfig.viewport || { width: 1280, height: 800 },
+        args: [
+          '--no-sandbox',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+        ],
+        ignoreHTTPSErrors: true,
+      }
+    );
+  } catch (launchErr) {
+    console.error('[Browser] 启动失败:', launchErr.message.split('\n')[0]);
+    throw new Error(`浏览器启动失败: ${launchErr.message.split('\n')[0]}`);
+  }
 
   const page = browser.pages()[0] || await browser.newPage();
 
@@ -33,9 +86,17 @@ async function captureDiscordAccount(browserConfig = {}) {
   });
 
   console.log('[Browser] 打开 Discord 登录页...');
-  await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded' });
+  try {
+    await page.goto('https://discord.com/login', { 
+      waitUntil: 'domcontentloaded',
+      timeout: 30000 
+    });
+  } catch (navErr) {
+    console.error('[Browser] 导航失败:', navErr.message.split('\n')[0]);
+    try { await browser.close(); } catch {}
+    throw new Error(`无法打开 Discord 登录页（网络问题？）: ${navErr.message.split('\n')[0]}`);
+  }
 
-  // 采集结果容器
   const result = {
     token: null,
     userId: null,
@@ -45,12 +106,9 @@ async function captureDiscordAccount(browserConfig = {}) {
     raw: null,
   };
 
-  // 方法1：监听 localStorage 里的 token
   const checkToken = async () => {
     try {
       const token = await page.evaluate(() => {
-        // Discord 把 token 存在 localStorage.token 或用加密形式
-        // 简化处理：遍历所有 key 找包含 MFA/DTOKEN/TOKEN/Authorization 的
         const keys = Object.keys(localStorage);
         for (const k of keys) {
           const v = localStorage.getItem(k);
@@ -58,13 +116,10 @@ async function captureDiscordAccount(browserConfig = {}) {
           if (v.length > 200 && (v.startsWith('MTIz') || v.startsWith('OTA') || v.startsWith('NzI'))) {
             return v;
           }
-          // 有的版本存在 token 字段
           if (k.toLowerCase() === 'token' || k.toLowerCase().includes('token')) {
             return v;
           }
         }
-        // 新版可能在 window.__token 之类的地方
-        // 尝试从 localStorage 找任何看起来像 JWT 的东西
         for (const k of keys) {
           const v = localStorage.getItem(k);
           if (v && v.split('.').length === 3 && v.length > 50) return v;
@@ -78,9 +133,7 @@ async function captureDiscordAccount(browserConfig = {}) {
     } catch (e) { /* ignore */ }
 
     try {
-      // 方法2：直接调用 /users/@me API（需要先设置 Authorization）
       const userInfo = await page.evaluate(async () => {
-        // 从 localStorage 找 token
         let token = null;
         const keys = Object.keys(localStorage);
         for (const k of keys) {
@@ -110,11 +163,9 @@ async function captureDiscordAccount(browserConfig = {}) {
     } catch (e) { /* ignore */ }
   };
 
-  // 定期检查（登录后几秒钟 token 就会出现）
   const intervalId = setInterval(checkToken, 2000);
 
-  // 等待直到同时有 token 和 userId，或者超时
-  const timeoutMs = 5 * 60 * 1000; // 5 分钟
+  const timeoutMs = 5 * 60 * 1000;
   const deadline = Date.now() + timeoutMs;
 
   console.log('[Browser] 等待用户登录 Discord... (最多 5 分钟)');
@@ -126,18 +177,15 @@ async function captureDiscordAccount(browserConfig = {}) {
   }
 
   clearInterval(intervalId);
-
-  // 最终再检查一次
   await checkToken();
 
   if (!result.token || !result.userId) {
-    await browser.close();
+    try { await browser.close(); } catch {}
     throw new Error('采集超时或用户信息不完整，请确认已在 Discord 页面完成登录');
   }
 
   console.log(`[Browser] 采集完成: ${result.username} (${result.userId})`);
-  console.log('[Browser] 关闭浏览器');
-  await browser.close();
+  try { await browser.close(); } catch {}
 
   return result;
 }
