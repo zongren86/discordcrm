@@ -14,6 +14,10 @@
           <el-icon><Plus /></el-icon>
           <span>手工添加</span>
         </el-button>
+        <el-button type="warning" @click="openAgentDialog">
+          <el-icon><Monitor /></el-icon>
+          <span>代理模式添加</span>
+        </el-button>
       </div>
     </div>
 
@@ -241,6 +245,78 @@
       </template>
     </el-dialog>
 
+    <!-- 代理模式添加账号：选择代理节点 -->
+    <el-dialog v-model="agentDialog.visible" title="代理模式添加账号" width="520px" :close-on-click-modal="false">
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom:16px;">
+        <template #title>
+          通过已部署的 crm_agent 代理服务器，自动打开浏览器让您在 Discord 上登录，登录成功后自动采集账号信息保存到系统。
+        </template>
+      </el-alert>
+      <el-form :model="agentDialog.form" label-width="100px">
+        <el-form-item label="选择代理" required>
+          <el-select v-model="agentDialog.form.agentServerId" placeholder="请选择代理节点" filterable style="width:100%;" :loading="agentDialog.loadingServers">
+            <el-option v-for="s in agentDialog.servers" :key="s.id" :label="`${s.name} (${s.status === 'ONLINE' ? '在线' : '离线'})`" :value="s.id" :disabled="s.status !== 'ONLINE'" />
+          </el-select>
+          <div v-if="agentDialog.servers.length === 0 && !agentDialog.loadingServers" style="margin-top:8px;font-size:12px;color:var(--color-text-3);">
+            还没有代理节点？请到左侧菜单「代理管理」先新增一个。
+          </div>
+          <div v-if="agentDialog.onlineCount === 0 && agentDialog.servers.length > 0" style="margin-top:8px;font-size:12px;color:var(--color-warning);">
+            当前没有在线的代理节点，请先启动 crm_agent 程序。
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="agentDialog.visible = false">取消</el-button>
+        <el-button type="primary" :loading="agentDialog.starting" :disabled="!agentDialog.form.agentServerId" @click="startAgentCapture">
+          <el-icon><Monitor /></el-icon> 启动浏览器监控
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 代理采集进度 -->
+    <el-dialog v-model="agentResultDialog.visible" title="浏览器监控中" width="560px" :close-on-click-modal="false">
+      <div class="agent-progress">
+        <el-steps :active="agentResultDialog.step" align-center>
+          <el-step title="任务创建" />
+          <el-step title="浏览器已启动" />
+          <el-step title="等待登录" />
+          <el-step title="采集完成" />
+        </el-steps>
+        <div style="margin-top:20px;">
+          <el-alert v-if="agentResultDialog.status === 'RUNNING'" type="info" show-icon :closable="false">
+            <template #title>
+              请在 <b>{{ agentResultDialog.agentName }}</b> 代理弹出的浏览器中登录 Discord 账号。
+              <br />登录成功后系统会自动检测并保存，无需手动操作。
+              <br /><span style="font-size:12px;opacity:.75;">超时时间 5 分钟</span>
+            </template>
+          </el-alert>
+          <el-alert v-else-if="agentResultDialog.status === 'SUCCESS'" type="success" show-icon :closable="false">
+            <template #title>
+              <b>✅ 采集成功！</b>
+              <br />用户：<b>{{ agentResultDialog.result?.username || '-' }}</b>
+              <br />Discord ID：<code>{{ agentResultDialog.result?.discordId || '-' }}</code>
+              <br />Email：{{ agentResultDialog.result?.email || '-' }}
+            </template>
+          </el-alert>
+          <el-alert v-else-if="agentResultDialog.status === 'FAILED'" type="error" show-icon :closable="false">
+            <template #title>
+              <b>❌ 采集失败</b>
+              <br />原因：{{ agentResultDialog.error || '超时或用户信息不完整' }}
+            </template>
+          </el-alert>
+        </div>
+        <div style="margin-top:16px;text-align:center;">
+          <el-progress v-if="agentResultDialog.status === 'RUNNING'" :percentage="agentResultDialog.progress" :indeterminate="true" />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="closeAgentResultDialog">
+          {{ agentResultDialog.status === 'RUNNING' ? '取消' : '关闭' }}
+        </el-button>
+        <el-button v-if="agentResultDialog.status === 'SUCCESS'" type="primary" @click="closeAgentResultDialog">完成</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 批量导入 USER 账号 -->
     <el-dialog v-model="batchDialog.visible" title="批量导入 USER 账号（邮箱|密码 每行一个）" width="560px" @close="resetBatchDialog">
       <el-alert type="info" :closable="false" show-icon title="每行格式：邮箱|密码，例如 user1@example.com|mypassword123" style="margin-bottom:16px;" />
@@ -304,8 +380,8 @@
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Upload, Refresh, Edit, Delete, Search, OfficeBuilding, Download, Key, Picture } from '@element-plus/icons-vue'
-import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountFriends, listMerchants, refreshAccountToken, refreshAccountAvatar } from '@/api'
+import { Plus, Upload, Refresh, Edit, Delete, Search, OfficeBuilding, Download, Key, Picture, Monitor } from '@element-plus/icons-vue'
+import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountFriends, listMerchants, refreshAccountToken, refreshAccountAvatar, listAgentServers } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useAccountsStore } from '@/stores/accounts'
 
@@ -448,6 +524,121 @@ function openEdit(acc) {
     merchantId: merchantDisabled.value ? (acc.merchantId || defaultMerchantId.value) : (acc.merchantId || null),
     discordId: acc.discordId || ''
   }
+}
+
+// ===== 代理模式添加账号 =====
+const agentDialog = reactive({
+  visible: false,
+  loadingServers: false,
+  starting: false,
+  servers: [],
+  form: { agentServerId: null },
+  onlineCount: computed(() => agentDialog.servers.filter(s => s.status === 'ONLINE').length)
+})
+
+const agentResultDialog = reactive({
+  visible: false,
+  agentName: '',
+  taskId: null,
+  status: '',
+  result: null,
+  error: '',
+  step: 0,
+  progress: 0,
+  _pollTimer: null,
+})
+
+async function openAgentDialog() {
+  agentDialog.visible = true
+  agentDialog.loadingServers = true
+  agentDialog.form.agentServerId = null
+  try {
+    agentDialog.servers = await listAgentServers() || []
+  } catch (e) {
+    ElMessage.error('加载代理节点失败')
+    agentDialog.servers = []
+  } finally {
+    agentDialog.loadingServers = false
+  }
+}
+
+async function startAgentCapture() {
+  if (!agentDialog.form.agentServerId) return
+  agentDialog.starting = true
+  try {
+    const resp = await api.post('/agent-servers/tasks', {
+      agentServerId: agentDialog.form.agentServerId,
+      type: 'CAPTURE_DISCORD_ACCOUNT'
+    })
+    const taskId = resp.id
+    const agent = agentDialog.servers.find(s => s.id === agentDialog.form.agentServerId)
+
+    agentDialog.visible = false
+    agentResultDialog.visible = true
+    agentResultDialog.taskId = taskId
+    agentResultDialog.agentName = agent?.name || ''
+    agentResultDialog.status = 'RUNNING'
+    agentResultDialog.step = 1
+    agentResultDialog.result = null
+    agentResultDialog.error = ''
+    agentResultDialog.progress = 0
+
+    await new Promise(r => setTimeout(r, 1500))
+    await pollAgentTask()
+    agentResultDialog._pollTimer = setInterval(pollAgentTask, 3000)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.error || '创建任务失败')
+  } finally {
+    agentDialog.starting = false
+  }
+}
+
+async function pollAgentTask() {
+  if (!agentResultDialog.taskId) return
+  try {
+    const resp = await api.get(`/agent-servers/tasks/${agentResultDialog.taskId}`)
+    const status = resp.status
+    if (status === 'RUNNING') {
+      agentResultDialog.step = 2
+      agentResultDialog.progress = Math.min(90, agentResultDialog.progress + 5)
+    } else if (status === 'SUCCESS') {
+      agentResultDialog.step = 3
+      agentResultDialog.progress = 100
+      agentResultDialog.status = 'SUCCESS'
+      try {
+        const parsed = typeof resp.result === 'string' ? JSON.parse(resp.result) : resp.result
+        agentResultDialog.result = parsed
+      } catch {
+        agentResultDialog.result = { username: '(已保存)', discordId: '-' }
+      }
+      stopAgentPolling()
+      await fetchAccounts()
+      const u = agentResultDialog.result?.username || '新账号'
+      ElMessage.success(`✅ 代理采集成功：${u}，已添加到账号列表`)
+    } else if (status === 'FAILED') {
+      agentResultDialog.status = 'FAILED'
+      agentResultDialog.step = 3
+      try {
+        const parsed = typeof resp.result === 'string' ? JSON.parse(resp.result) : resp.result
+        agentResultDialog.error = parsed?.error || resp.result || '未知错误'
+      } catch {
+        agentResultDialog.error = resp.result || '未知错误'
+      }
+      stopAgentPolling()
+    }
+  } catch (e) {}
+}
+
+function stopAgentPolling() {
+  if (agentResultDialog._pollTimer) {
+    clearInterval(agentResultDialog._pollTimer)
+    agentResultDialog._pollTimer = null
+  }
+}
+
+function closeAgentResultDialog() {
+  stopAgentPolling()
+  agentResultDialog.visible = false
 }
 
 const botDialog = reactive({
