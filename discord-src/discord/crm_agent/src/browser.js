@@ -7,22 +7,32 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-/** 清理残留 Chromium 进程（Windows/Linux/Mac） */
-function killOrphanChromium() {
+/** 
+ * 安全检测残留 Playwright Chromium（不杀用户自己的 Chrome！）
+ * Playwright 启动的浏览器有以下特征：
+ *   - 命令行包含 --playwright
+ *   - 或命令行 user-data-dir 指向临时目录
+ * 用户自己的 Chrome 绝对不碰
+ */
+function checkPlaywrightOrphans() {
   try {
     const { execSync } = require('child_process');
     const isWin = os.platform() === 'win32';
+    let cmd;
     if (isWin) {
-      // Windows 上只杀 playwright 启动的残留（用 --remote-debugging-pipe 标记的）
-      // 避免杀到用户自己的 Chrome
-      try { execSync('taskkill /F /IM chrome.exe /T 2>nul', { stdio: 'ignore' }); } catch {}
-      try { execSync('taskkill /F /IM chromium.exe /T 2>nul', { stdio: 'ignore' }); } catch {}
+      // Windows: 只找带 playwright 特征的 chrome.exe，绝不杀
+      cmd = 'wmic process where "name='chrome.exe' and commandline like '%--playwright%'" get processid 2>nul';
     } else {
-      // Mac/Linux
-      try { execSync('pkill -f "chrome.exe.*remote-debugging-pipe" 2>/dev/null', { stdio: 'ignore' }); } catch {}
-      try { execSync('pkill -f "chromium.*remote-debugging-pipe" 2>/dev/null', { stdio: 'ignore' }); } catch {}
+      cmd = 'pgrep -f "chromium.*playwright" 2>/dev/null || true';
     }
-    console.log('[Browser] 已清理残留浏览器进程');
+    try {
+      const out = execSync(cmd, { encoding: 'utf8', timeout: 3000 }).trim();
+      if (out && out.split('
+').filter(Boolean).length > 0) {
+        console.warn('[Browser] 检测到残留的 Playwright Chromium，建议手动关闭后重试');
+      }
+    } catch {}
+    // 只读检测，不杀任何进程！
   } catch {}
 }
 
@@ -31,7 +41,7 @@ function killOrphanChromium() {
  */
 async function captureDiscordAccount(browserConfig = {}) {
   // 清理残留
-  killOrphanChromium();
+  checkPlaywrightOrphans();
   await new Promise(r => setTimeout(r, 1000));
 
   // 每次用独立的临时 userDataDir，避免冲突

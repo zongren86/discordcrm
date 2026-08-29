@@ -565,11 +565,13 @@ async function openAgentDialog() {
 async function startAgentCapture() {
   if (!agentDialog.form.agentServerId) return
   agentDialog.starting = true
+  console.log('[AgentCapture] 开始创建任务，agentServerId=', agentDialog.form.agentServerId)
   try {
     const resp = await api.post('/agent-servers/tasks', {
       agentServerId: agentDialog.form.agentServerId,
       type: 'CAPTURE_DISCORD_ACCOUNT'
     })
+    console.log('[AgentCapture] 任务创建成功 resp=', resp)
     const taskId = resp.id
     const agent = agentDialog.servers.find(s => s.id === agentDialog.form.agentServerId)
 
@@ -587,7 +589,11 @@ async function startAgentCapture() {
     await pollAgentTask()
     agentResultDialog._pollTimer = setInterval(pollAgentTask, 3000)
   } catch (e) {
-    ElMessage.error(e?.response?.data?.error || '创建任务失败')
+    console.error('[AgentCapture] 创建失败，完整错误=', e)
+    console.error('[AgentCapture] response=', e?.response)
+    console.error('[AgentCapture] response.data=', e?.response?.data)
+    console.error('[AgentCapture] response.status=', e?.response?.status)
+    ElMessage.error(e?.response?.data?.error || e?.response?.data?.message || e?.message || '创建任务失败')
   } finally {
     agentDialog.starting = false
   }
