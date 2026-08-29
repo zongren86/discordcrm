@@ -1,0 +1,155 @@
+package com.discordadmin.service;
+
+import com.discordadmin.entity.AgentServer;
+import com.discordadmin.entity.AgentTask;
+import com.discordadmin.entity.DiscordAccount;
+import com.discordadmin.entity.DiscordAccount.AccountStatus;
+import com.discordadmin.entity.DiscordAccount.AccountType;
+import com.discordadmin.repository.AgentServerRepository;
+import com.discordadmin.repository.AgentTaskRepository;
+import com.discordadmin.repository.DiscordAccountRepository;
+import com.discordadmin.security.SecurityUtils;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.Map;
+import java.util.Optional;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class AgentTaskService {
+
+    private final AgentTaskRepository agentTaskRepository;
+    private final AgentServerRepository agentServerRepository;
+    private final DiscordAccountRepository discordAccountRepository;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * 创建一个待执行任务（由前端调用）
+     */
+    @Transactional
+    public AgentTask createTask(Long agentServerId, String type, String paramsJson) {
+        AgentServer server = agentServerRepository.findById(agentServerId)
+                .orElseThrow(() -> new IllegalArgumentException("代理节点不存在 id=" + agentServerId));
+
+        AgentTask task = new AgentTask();
+        task.setType(type);
+        task.setAgentServer(server);
+        task.setStatus("PENDING");
+        task.setParams(paramsJson);
+        task.setCreatedAt(Instant.now());
+        task.setUpdatedAt(Instant.now());
+        Long userId = SecurityUtils.currentUserId();
+        task.setCreatedByUserId(userId);
+
+        AgentTask saved = agentTaskRepository.save(task);
+        log.info("创建 agent task id={}, type={}, serverId={}", saved.getId(), type, agentServerId);
+        return saved;
+    }
+
+    /**
+     * agent poll —— 拉取下一个待执行任务并标记 RUNNING
+     */
+    @Transactional
+    public Optional<AgentTask> pollNext(String token, String agentName) {
+        AgentServer server = agentServerRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("无效 token"));
+
+        // 优先取 RUNNING 的（agent 之前崩了未清理的），否则 PENDING
+        Optional<AgentTask> task = agentTaskRepository
+                .findFirstByAgentServerAndStatusOrderByCreatedAtAsc(server, "RUNNING");
+        if (task.isEmpty()) {
+            task = agentTaskRepository
+                    .findFirstByAgentServerAndStatusOrderByCreatedAtAsc(server, "PENDING");
+        }
+        task.ifPresent(t -> {
+            t.setStatus("RUNNING");
+            t.setUpdatedAt(Instant.now());
+            agentTaskRepository.save(t);
+        });
+        return task;
+    }
+
+    /**
+     * agent report —— 回传任务结果
+     * 对 CAPTURE_DISCORD_ACCOUNT 类型：自动把抓到的用户保存为 DiscordAccount
+     */
+    @Transactional
+    public AgentTask reportTask(String token, Long taskId, String status, Map<String, Object> resultMap) {
+        AgentServer server = agentServerRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("无效 token"));
+
+        AgentTask task = agentTaskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException("任务不存在 id=" + taskId));
+
+        String agentId = task.getAgentServer() != null ? String.valueOf(task.getAgentServer().getId()) : "-";
+        if (!agentId.equals(String.valueOf(server.getId()))) {
+            throw new IllegalArgumentException("任务不属于当前代理节点");
+        }
+
+        try {
+            task.setResult(objectMapper.writeValueAsString(resultMap));
+        } catch (JsonProcessingException e) {
+            task.setResult("{\"error\":\"序列化失败\"}");
+        }
+        task.setStatus(status);
+        task.setUpdatedAt(Instant.now());
+
+        // SUCCESS 时对 CAPTURE_DISCORD_ACCOUNT 做后处理：保存 DiscordAccount
+        if ("SUCCESS".equals(status) && "CAPTURE_DISCORD_ACCOUNT".equals(task.getType()) && resultMap != null) {
+            try {
+                DiscordAccount account = upsertCapturedAccount(resultMap, server.getMerchantId());
+                task.setDiscordAccount(account);
+                log.info("任务 id={} 成功，关联账号 id={}, username={}", taskId, account.getId(), account.getName());
+            } catch (Exception e) {
+                log.error("任务后处理（保存账号）失败: {}", e.getMessage());
+                task.setStatus("FAILED");
+                task.setResult("{\"error\":\"保存账号失败: " + e.getMessage() + "\", \"raw\": " + task.getResult() + "}");
+            }
+        }
+
+        return agentTaskRepository.save(task);
+    }
+
+    /**
+     * 把 agent 回传的用户数据存为 DiscordAccount（upsert by discordId）
+     */
+    private DiscordAccount upsertCapturedAccount(Map<String, Object> result, Long merchantId) {
+        String discordId = (String) result.get("discordId");
+        String username = (String) result.get("username");
+        String email = (String) result.get("email");
+        String token = (String) result.get("token");
+        String avatarUrl = (String) result.get("avatarUrl");
+
+        DiscordAccount account;
+        if (discordId != null) {
+            Optional<DiscordAccount> existing = discordAccountRepository.findByDiscordId(discordId);
+            account = existing.orElseGet(DiscordAccount::new);
+        } else {
+            account = new DiscordAccount();
+        }
+
+        if (username != null) account.setName(username);
+        if (email != null) account.setEmail(email);
+        if (token != null) account.setToken(token);
+        if (discordId != null) account.setDiscordId(discordId);
+        if (merchantId != null) account.setMerchantId(merchantId);
+        account.setAccountType(AccountType.USER);
+        if (account.getStatus() == null) account.setStatus(AccountStatus.ACTIVE);
+
+        account = discordAccountRepository.save(account);
+        log.info("保存代理采集的账号 id={}, discordId={}, username={}", account.getId(), discordId, username);
+        return account;
+    }
+
+    /** 查询任务详情 */
+    public Optional<AgentTask> findById(Long id) {
+        return agentTaskRepository.findById(id);
+    }
+}

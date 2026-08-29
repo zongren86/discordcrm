@@ -602,3 +602,17 @@ export function getAgentGuide() {
 export function downloadAgentPackage() {
   return http.get('/emu/agent/download-package', { responseType: 'blob' })
 }
+
+// === 代理服务器节点 ===
+export function listAgentServers() {
+  return http.get('/agent-servers')
+}
+export function createAgentServer(name, notes) {
+  return http.post('/agent-servers', { name, notes })
+}
+export function resetAgentServerToken(id) {
+  return http.post(`/agent-servers/${id}/reset-token`)
+}
+export function deleteAgentServer(id) {
+  return http.delete(`/agent-servers/${id}`)
+}
