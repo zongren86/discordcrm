@@ -104,7 +104,7 @@ public class AgentTaskService {
         // SUCCESS 时对 CAPTURE_DISCORD_ACCOUNT 做后处理：保存 DiscordAccount
         if ("SUCCESS".equals(status) && "CAPTURE_DISCORD_ACCOUNT".equals(task.getType()) && resultMap != null) {
             try {
-                DiscordAccount account = upsertCapturedAccount(resultMap, server.getMerchantId());
+                DiscordAccount account = upsertCapturedAccount(resultMap, server.getMerchantId(), server);
                 task.setDiscordAccount(account);
                 log.info("任务 id={} 成功，关联账号 id={}, username={}", taskId, account.getId(), account.getName());
             } catch (Exception e) {
@@ -120,12 +120,13 @@ public class AgentTaskService {
     /**
      * 把 agent 回传的用户数据存为 DiscordAccount（upsert by discordId）
      */
-    private DiscordAccount upsertCapturedAccount(Map<String, Object> result, Long merchantId) {
+    private DiscordAccount upsertCapturedAccount(Map<String, Object> result, Long merchantId, AgentServer server) {
         String discordId = (String) result.get("discordId");
         String username = (String) result.get("username");
         String email = (String) result.get("email");
         String token = (String) result.get("token");
         String avatarUrl = (String) result.get("avatarUrl");
+        String browserProfilePath = (String) result.get("browserProfilePath");
 
         DiscordAccount account;
         if (discordId != null) {
@@ -142,14 +143,52 @@ public class AgentTaskService {
         if (merchantId != null) account.setMerchantId(merchantId);
         account.setAccountType(AccountType.USER);
         if (account.getStatus() == null) account.setStatus(AccountStatus.ACTIVE);
+        // 持久化 profile 路径 + agent 关联
+        if (browserProfilePath != null && !browserProfilePath.isBlank()) {
+            account.setBrowserProfilePath(browserProfilePath);
+        }
+        if (server != null) {
+            account.setAgentServerId(server.getId());
+        }
 
         account = discordAccountRepository.save(account);
-        log.info("保存代理采集的账号 id={}, discordId={}, username={}", account.getId(), discordId, username);
+        log.info("保存代理采集的账号 id={}, discordId={}, username={}, profile={}",
+                account.getId(), discordId, username, browserProfilePath);
         return account;
     }
 
     /** 查询任务详情 */
     public Optional<AgentTask> findById(Long id) {
         return agentTaskRepository.findById(id);
+    }
+
+    /** agent 用 token 取消自己的任务 */
+    @Transactional
+    public AgentTask cancelByAgent(String token, Long taskId) {
+        AgentServer server = agentServerRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("无效 token"));
+        AgentTask task = agentTaskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException("任务不存在 id=" + taskId));
+        if (task.getAgentServer() == null || !task.getAgentServer().getId().equals(server.getId())) {
+            throw new IllegalArgumentException("任务不属于当前代理节点");
+        }
+        task.setStatus("CANCELLED");
+        task.setResult("{\"error\":\"agent_cancelled\"}");
+        task.setUpdatedAt(Instant.now());
+        return agentTaskRepository.save(task);
+    }
+
+    /** 前端用户取消任务 */
+    @Transactional
+    public AgentTask cancelByUser(Long taskId) {
+        AgentTask task = agentTaskRepository.findById(taskId)
+                .orElseThrow(() -> new IllegalArgumentException("任务不存在 id=" + taskId));
+        if ("SUCCESS".equals(task.getStatus()) || "FAILED".equals(task.getStatus()) || "CANCELLED".equals(task.getStatus())) {
+            throw new IllegalArgumentException("任务已结束，无法取消");
+        }
+        task.setStatus("CANCELLED");
+        task.setResult("{\"error\":\"user_cancelled\"}");
+        task.setUpdatedAt(Instant.now());
+        return agentTaskRepository.save(task);
     }
 }

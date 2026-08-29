@@ -81,6 +81,14 @@ public class DiscordAccount {
     @Column(name = "token_valid")
     private Boolean tokenValid = true;
 
+    /** 持久化浏览器 profile 路径（crm_agent 用来唤起已登录浏览器） */
+    @Column(name = "browser_profile_path", length = 512)
+    private String browserProfilePath;
+
+    /** 关联的代理节点 id（哪个 agent 采集的这个账号） */
+    @Column(name = "agent_server_id")
+    private Long agentServerId;
+
     @ManyToMany(mappedBy = "discordAccounts")
     @JsonIgnore
     private Set<Agent> agents = new HashSet<>();

@@ -155,17 +155,52 @@ public class AgentServerController {
         }
     }
 
-    /** 查询任务详情（前端轮询用） */
+    /** agent 取消自己的任务（免登录，token 认证） */
+    @PostMapping("/tasks/{id}/cancel-by-agent")
+    public ResponseEntity<Map<String, Object>> cancelByAgent(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        String token = body.get("token");
+        if (token == null) return ResponseEntity.status(401).body(Map.of("error", "缺少 token"));
+        try {
+            AgentTask task = agentTaskService.cancelByAgent(token, id);
+            return ResponseEntity.ok(Map.of("id", task.getId(), "status", task.getStatus()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(401).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /** 前端用户取消任务（需要登录 JWT） */
+    @PostMapping("/tasks/{id}/cancel")
+    public ResponseEntity<Map<String, Object>> cancelByUser(@PathVariable Long id) {
+        try {
+            AgentTask task = agentTaskService.cancelByUser(id);
+            return ResponseEntity.ok(Map.of("id", task.getId(), "status", task.getStatus()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /** 查询任务详情（扩展：返回 discordAccount 关联） */
     @GetMapping("/tasks/{id}")
     public ResponseEntity<?> getTask(@PathVariable Long id) {
         return agentTaskService.findById(id)
-                .map(t -> ResponseEntity.ok(Map.of(
-                        "id", t.getId(),
-                        "type", t.getType(),
-                        "status", t.getStatus(),
-                        "result", t.getResult(),
-                        "createdAt", t.getCreatedAt()
-                )))
+                .map(t -> {
+                    Map<String, Object> resp = new HashMap<>();
+                    resp.put("id", t.getId());
+                    resp.put("type", t.getType());
+                    resp.put("status", t.getStatus());
+                    resp.put("result", t.getResult());
+                    resp.put("createdAt", t.getCreatedAt());
+                    if (t.getDiscordAccount() != null) {
+                        Map<String, Object> acct = new HashMap<>();
+                        acct.put("id", t.getDiscordAccount().getId());
+                        acct.put("name", t.getDiscordAccount().getName());
+                        acct.put("discordId", t.getDiscordAccount().getDiscordId());
+                        acct.put("browserProfilePath", t.getDiscordAccount().getBrowserProfilePath());
+                        acct.put("agentServerId", t.getDiscordAccount().getAgentServerId());
+                        resp.put("discordAccount", acct);
+                    }
+                    return ResponseEntity.ok(resp);
+                })
                 .orElse(ResponseEntity.notFound().build());
     }
 
