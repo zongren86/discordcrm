@@ -22,6 +22,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.time.Instant;
+import java.time.Duration;
 
 @RestController
 @RequestMapping("/api/agent-servers")
@@ -47,7 +49,17 @@ public class AgentServerController {
             m.put("token", "******");
             m.put("serverAddress", s.getServerAddress());
             m.put("merchantId", s.getMerchantId());
-            m.put("status", s.getStatus());
+            // 动态计算在线状态：心跳间隔 30s，超过 90s 没心跳 = OFFLINE
+            String dynStatus = "OFFLINE";
+            if (s.getLastSeenAt() != null) {
+                long secSince = Duration.between(s.getLastSeenAt(), Instant.now()).getSeconds();
+                if (secSince < 90) dynStatus = "ONLINE";
+            }
+            m.put("status", dynStatus);
+            if (s.getLastSeenAt() != null) {
+                long secSince = Duration.between(s.getLastSeenAt(), Instant.now()).getSeconds();
+                m.put("secSinceLastHeartbeat", secSince);
+            }
             m.put("nodeVersion", s.getNodeVersion());
             m.put("browserType", s.getBrowserType());
             m.put("notes", s.getNotes());
