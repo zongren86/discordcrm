@@ -7,13 +7,6 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-/** 
- * 安全检测残留 Playwright Chromium（不杀用户自己的 Chrome！）
- * Playwright 启动的浏览器有以下特征：
- *   - 命令行包含 --playwright
- *   - 或命令行 user-data-dir 指向临时目录
- * 用户自己的 Chrome 绝对不碰
- */
 function checkPlaywrightOrphans() {
   try {
     const { execSync } = require('child_process');
@@ -34,29 +27,19 @@ function checkPlaywrightOrphans() {
   } catch {}
 }
 
-/**
- * 启动浏览器并采集一个 Discord 用户
- */
 async function captureDiscordAccount(browserConfig = {}) {
-  // 清理残留
   checkPlaywrightOrphans();
   await new Promise(r => setTimeout(r, 1000));
 
-  // 每次用独立的临时 userDataDir，避免冲突
   let userDataDir;
   if (browserConfig.userDataDir) {
     userDataDir = path.resolve(browserConfig.userDataDir);
   } else {
     userDataDir = path.join(os.tmpdir(), `crm-agent-profile-${Date.now()}`);
   }
-  
-  // 确保目录存在且干净
   try {
     if (fs.existsSync(userDataDir)) {
-      // 只清理临时目录，不清理用户指定的目录
-      if (!browserConfig.userDataDir) {
-        fs.rmSync(userDataDir, { recursive: true, force: true });
-      }
+      fs.rmSync(userDataDir, { recursive: true, force: true });
     }
     fs.mkdirSync(userDataDir, { recursive: true });
   } catch (e) {
@@ -83,53 +66,45 @@ async function captureDiscordAccount(browserConfig = {}) {
           '--no-default-browser-check',
           '--disable-background-networking',
           '--disable-sync',
-          '--metrics-recording-only',
-          '--password-store=basic',
-          '--use-mock-keychain',
           '--disable-breakpad',
+          '--no-title-update',
+          '--no-window-animation',
         ],
         ignoreHTTPSErrors: true,
       }
     );
   } catch (launchErr) {
     console.error('[Browser] 启动失败:', launchErr.message.split('\n')[0]);
-    throw new Error(`浏览器启动失败: ${launchErr.message.split('\n')[0]}`);
+    throw new Error('浏览器启动失败: ' + launchErr.message.split('\n')[0]);
   }
 
   const page = browser.pages()[0] || await browser.newPage();
 
-  // 屏蔽所有自动化检测
   await page.addInitScript(() => {
-    // 1. webdriver
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-
-    // 2. chrome runtime
     Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
     Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
     window.chrome = { runtime: {} };
-
-    // 3. 覆盖 permissions
     const originalQuery = window.navigator.permissions.query;
     window.navigator.permissions.query = (parameters) => (
       parameters.name === 'notifications'
         ? Promise.resolve({ state: Notification.permission })
         : originalQuery(parameters)
     );
-
-    // 4. 覆盖 WebGL vendor
-    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    // 去掉标题里的 "— 由 Chrome 自动测试软件控制"
+    try { document.title = document.title.replace(/[—-]\s*Chrome.*Automation.*$/i, ''); } catch {}
   });
 
   console.log('[Browser] 打开 Discord 登录页...');
   try {
-    await page.goto('https://discord.com/login', { 
+    await page.goto('https://discord.com/login', {
       waitUntil: 'domcontentloaded',
-      timeout: 30000 
+      timeout: 30000
     });
   } catch (navErr) {
     console.error('[Browser] 导航失败:', navErr.message.split('\n')[0]);
     try { await browser.close(); } catch {}
-    throw new Error(`无法打开 Discord 登录页（网络问题？）: ${navErr.message.split('\n')[0]}`);
+    throw new Error('无法打开 Discord 登录页（网络问题？）: ' + navErr.message.split('\n')[0]);
   }
 
   const result = {
@@ -141,87 +116,136 @@ async function captureDiscordAccount(browserConfig = {}) {
     raw: null,
   };
 
-  const checkToken = async () => {
-    try {
-      const token = await page.evaluate(() => {
-        const keys = Object.keys(localStorage);
+  // === 核心改进：多层 token 检测 ===
+  const findTokenInStorage = async () => {
+    return await page.evaluate(async () => {
+      // 1. localStorage
+      let token = null;
+      const scan = (storage) => {
+        const keys = Object.keys(storage);
         for (const k of keys) {
-          const v = localStorage.getItem(k);
-          if (!v) continue;
-          if (v.length > 200 && (v.startsWith('MTIz') || v.startsWith('OTA') || v.startsWith('NzI'))) {
-            return v;
+          const v = storage.getItem(k);
+          if (!v || v.length < 20) continue;
+          // Discord token: 3段 base64 JWT 或很长的字符串
+          if (v.split('.').length === 3 && v.length > 50) {
+            token = v;
+            return true;
           }
-          if (k.toLowerCase() === 'token' || k.toLowerCase().includes('token')) {
-            return v;
+          if (k.toLowerCase().includes('token') || k.toLowerCase().includes('auth')) {
+            if (v.length > 20) { token = v; return true; }
           }
         }
-        for (const k of keys) {
-          const v = localStorage.getItem(k);
-          if (v && v.split('.').length === 3 && v.length > 50) return v;
-        }
-        return null;
-      });
-      if (token && token !== result.token) {
-        result.token = token;
-        console.log('[Browser] 捕获到 token (localStorage)');
-      }
-    } catch (e) { /* ignore */ }
+        return false;
+      };
+      scan(localStorage) || scan(sessionStorage);
 
-    try {
-      const userInfo = await page.evaluate(async () => {
-        let token = null;
-        const keys = Object.keys(localStorage);
-        for (const k of keys) {
-          const v = localStorage.getItem(k);
-          if (!v) continue;
-          if (v.split('.').length === 3 && v.length > 50) { token = v; break; }
-        }
-        if (!token) return null;
+      // 2. IndexedDB（Discord 新版可能存这里）
+      if (!token) {
         try {
-          const resp = await fetch('https://discord.com/api/users/@me', {
-            headers: { Authorization: token }
-          });
-          if (resp.ok) return await resp.json();
-        } catch (e) {}
-        return null;
-      });
-      if (userInfo) {
-        result.userId = userInfo.id;
-        result.username = userInfo.username || userInfo.global_name;
-        result.email = userInfo.email || null;
-        if (userInfo.avatar) {
-          result.avatarUrl = `https://cdn.discordapp.com/avatars/${userInfo.id}/${userInfo.avatar}.png`;
-        }
-        result.raw = userInfo;
-        console.log(`[Browser] 捕获到用户: ${result.username} (${result.userId})`);
+          const dbs = await indexedDB.databases();
+          for (const db of dbs) {
+            if (!db.name) continue;
+            try {
+              await new Promise((resolve) => {
+                const req = indexedDB.open(db.name);
+                req.onsuccess = () => {
+                  try {
+                    const tx = req.result.transaction(req.result.objectStoreNames[0], 'readonly');
+                    const store = tx.objectStore(req.result.objectStoreNames[0]);
+                    const all = store.getAll();
+                    all.onsuccess = () => {
+                      const items = all.result || [];
+                      for (const item of items) {
+                        const str = typeof item === 'string' ? item : JSON.stringify(item);
+                        // 找 JWT 格式的 token
+                        const match = str.match(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}/);
+                        if (match) { token = match[0]; break; }
+                      }
+                    };
+                  } catch {}
+                  resolve();
+                };
+                req.onerror = () => resolve();
+              });
+            } catch {}
+            if (token) break;
+          }
+        } catch {}
       }
-    } catch (e) { /* ignore */ }
+      return token;
+    });
   };
 
-  const intervalId = setInterval(checkToken, 2000);
+  const fetchUserInfo = async (token) => {
+    try {
+      const resp = await page.evaluate(async (t) => {
+        try {
+          const r = await fetch('https://discord.com/api/users/@me', {
+            headers: { Authorization: t }
+          });
+          if (r.ok) return { ok: true, data: await r.json() };
+          return { ok: false, status: r.status };
+        } catch (e) {
+          return { ok: false, error: e.message };
+        }
+      }, token);
+      if (resp && resp.ok) return resp.data;
+    } catch {}
+    return null;
+  };
 
+  let scanCount = 0;
+  const checkAll = async () => {
+    scanCount++;
+    const token = await findTokenInStorage();
+    if (token && token !== result.token) {
+      result.token = token;
+      console.log(`[Browser] 扫描#${scanCount} 找到 token (${token.length} chars)`);
+    }
+    if (result.token && !result.userId) {
+      const user = await fetchUserInfo(result.token);
+      if (user) {
+        result.userId = user.id;
+        result.username = user.username || user.global_name || user.display_name;
+        result.email = user.email || null;
+        if (user.avatar) {
+          result.avatarUrl = `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`;
+        }
+        result.raw = user;
+        console.log(`[Browser] ✅ 捕获到用户: ${result.username} (${result.userId})`);
+      } else {
+        console.log(`[Browser] 扫描#${scanCount} token 存在但 fetch @me 失败`);
+      }
+    }
+  };
+
+  console.log('[Browser] 等待用户登录 Discord... (最多 5 分钟)');
   const timeoutMs = 5 * 60 * 1000;
   const deadline = Date.now() + timeoutMs;
 
-  console.log('[Browser] 等待用户登录 Discord... (最多 5 分钟)');
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 1000));
+    await new Promise(r => setTimeout(r, 2000));
+    await checkAll();
     if (result.token && result.userId && result.username) {
+      console.log('[Browser] ✅ 采集条件满足，退出等待');
       break;
     }
   }
 
-  clearInterval(intervalId);
-  await checkToken();
+  // 最终再检一次
+  await checkAll();
 
   if (!result.token || !result.userId) {
+    console.error('[Browser] ❌ 采集失败');
+    console.error(`  token: ${result.token ? '有 (' + result.token.length + ' chars)' : '无'}`);
+    console.error(`  userId: ${result.userId || '无'}`);
+    console.error(`  username: ${result.username || '无'}`);
     try { await browser.close(); } catch {}
     throw new Error('采集超时或用户信息不完整，请确认已在 Discord 页面完成登录');
   }
 
-  console.log(`[Browser] 采集完成: ${result.username} (${result.userId})`);
+  console.log(`[Browser] 🎉 采集完成: ${result.username} (${result.userId})`);
   try { await browser.close(); } catch {}
-
   return result;
 }
 
