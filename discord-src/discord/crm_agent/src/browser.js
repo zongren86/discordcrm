@@ -79,6 +79,16 @@ async function captureDiscordAccount(browserConfig = {}) {
           '--disable-blink-features=AutomationControlled',
           '--disable-dev-shm-usage',
           '--disable-gpu',
+          '--disable-infobars',
+          '--disable-features=AutomationControlled',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--disable-background-networking',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--password-store=basic',
+          '--use-mock-keychain',
+          '--disable-breakpad',
         ],
         ignoreHTTPSErrors: true,
       }
@@ -90,9 +100,26 @@ async function captureDiscordAccount(browserConfig = {}) {
 
   const page = browser.pages()[0] || await browser.newPage();
 
-  // 屏蔽 webdriver 检测
+  // 屏蔽所有自动化检测
   await page.addInitScript(() => {
+    // 1. webdriver
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+    // 2. chrome runtime
+    Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+    window.chrome = { runtime: {} };
+
+    // 3. 覆盖 permissions
+    const originalQuery = window.navigator.permissions.query;
+    window.navigator.permissions.query = (parameters) => (
+      parameters.name === 'notifications'
+        ? Promise.resolve({ state: Notification.permission })
+        : originalQuery(parameters)
+    );
+
+    // 4. 覆盖 WebGL vendor
+    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
   });
 
   console.log('[Browser] 打开 Discord 登录页...');
