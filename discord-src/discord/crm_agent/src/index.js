@@ -15,6 +15,7 @@ let running = true;
 let busy = false;
 
 // ==== 心跳 ====
+let heartbeatOk = false;
 async function heartbeat() {
   try {
     await http.post('/agent-servers/heartbeat', {
@@ -23,9 +24,17 @@ async function heartbeat() {
       nodeVersion: process.version,
       browserType: (cfg.browser && cfg.browser.type) || 'chromium',
     });
-    // console.log('[心跳] OK');
+    if (!heartbeatOk) {
+      heartbeatOk = true;
+      console.log('[心跳] ✅ 注册成功，节点已上线');
+    }
   } catch (e) {
-    console.error('[心跳] 失败，请检查 token 和 serverUrl');
+    const status = e.response?.status;
+    if (status === 401) {
+      console.error('[心跳] ❌ Token 无效！请在前端「配置→代理管理」复制正确的 token 到 config.json');
+    } else {
+      console.error('[心跳] ❌ 失败，请检查 serverUrl 和 token');
+    }
   }
 }
 
@@ -42,9 +51,13 @@ async function pollTask() {
       await executeTask(task);
     }
   } catch (e) {
-    // 404 / 没有任务 → 正常静默
-    if (e.response?.status !== 404) {
-      console.error('[轮询] 异常:', e.message);
+    const status = e.response?.status;
+    if (status === 404) {
+      // 无任务，正常静默
+    } else if (status === 401) {
+      console.error('[轮询] ❌ Token 无效，请检查 config.json');
+    } else {
+      console.error('[轮询] 异常:', status, e.message);
     }
   }
 }
