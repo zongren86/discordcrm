@@ -1,5 +1,6 @@
 server:
   port: 8090
+  address: 0.0.0.0
   tomcat:
     # 通用安全下限，prod/local profile 会覆盖
     max-threads: 80
