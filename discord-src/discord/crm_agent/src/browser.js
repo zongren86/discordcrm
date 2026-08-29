@@ -20,19 +20,17 @@ function checkPlaywrightOrphans() {
     const isWin = os.platform() === 'win32';
     let cmd;
     if (isWin) {
-      // Windows: 只找带 playwright 特征的 chrome.exe，绝不杀
-      cmd = 'wmic process where "name='chrome.exe' and commandline like '%--playwright%'" get processid 2>nul';
+      cmd = 'tasklist /FI "IMAGENAME eq chrome.exe" /FO CSV 2>nul';
     } else {
-      cmd = 'pgrep -f "chromium.*playwright" 2>/dev/null || true';
+      cmd = "pgrep -f 'chromium.*playwright' 2>/dev/null || true";
     }
     try {
       const out = execSync(cmd, { encoding: 'utf8', timeout: 3000 }).trim();
-      if (out && out.split('
-').filter(Boolean).length > 0) {
-        console.warn('[Browser] 检测到残留的 Playwright Chromium，建议手动关闭后重试');
+      const lines = out.split('\n').filter(Boolean);
+      if (lines.length > 1) {
+        console.log('[Browser] chrome.exe 运行中（不会杀用户浏览器）');
       }
     } catch {}
-    // 只读检测，不杀任何进程！
   } catch {}
 }
 
