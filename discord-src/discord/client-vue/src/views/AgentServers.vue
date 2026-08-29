@@ -6,6 +6,9 @@
         <p class="page-desc">管理 crm_agent 代理服务器节点，用于浏览器自动登录采集 Discord 用户</p>
       </div>
       <div class="header-actions">
+        <el-button @click="openPackageDialog">
+          <el-icon><Download /></el-icon> 下载Agent包
+        </el-button>
         <el-button type="primary" @click="openCreateDialog">
           <el-icon><Plus /></el-icon> 新增节点
         </el-button>
@@ -127,13 +130,45 @@
         <el-button type="primary" @click="resetTokenDialogVisible = false">我已复制</el-button>
       </div>
     </el-dialog>
+
+    <!-- 下载 Agent 包弹窗 -->
+    <el-dialog v-model="packageDialogVisible" title="下载 crm_agent 安装包" width="640px">
+      <div class="package-section">
+        <div class="package-download-row">
+          <div class="package-download-info">
+            <div class="pkg-title">crm_agent v{{ packageInfo?.version || '0.1.0' }}</div>
+            <div class="pkg-meta">
+              <el-tag size="small" type="info" effect="plain">Node >= {{ packageInfo?.requiresNode || '18' }}</el-tag>
+              <el-tag size="small" type="info" effect="plain">Playwright {{ packageInfo?.requiresPlaywright || 'chromium' }}</el-tag>
+              <el-tag size="small" type="success" effect="plain">ZIP 源码包</el-tag>
+            </div>
+          </div>
+          <el-button type="success" @click="downloadZip" :loading="downloading">
+            <el-icon><Download /></el-icon> 立即下载
+          </el-button>
+        </div>
+
+        <el-divider content-position="left">安装步骤</el-divider>
+
+        <el-steps direction="vertical" :active="0" simple>
+          <el-step v-for="(s, i) in packageInfo?.steps || []" :key="i"
+            :title="s.title" :description="s.desc" :status="'wait'" />
+        </el-steps>
+
+        <el-divider content-position="left">配置模板</el-divider>
+        <pre class="config-preview">{{ packageInfo?.configTemplate || '' }}</pre>
+      </div>
+      <template #footer>
+        <el-button @click="packageDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Download } from '@element-plus/icons-vue'
 import {
   listAgentServers,
   createAgentServer,
@@ -153,6 +188,10 @@ const createdResult = ref(null)
 
 const resetTokenDialogVisible = ref(false)
 const resetTokenResult = ref(null)
+
+const packageDialogVisible = ref(false)
+const packageInfo = ref(null)
+const downloading = ref(false)
 
 async function loadList() {
   loading.value = true
@@ -234,6 +273,39 @@ function formatTime(isoStr) {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+async function openPackageDialog() {
+  packageDialogVisible.value = true
+  try {
+    const resp = await fetch('/api/agent-servers/package-info', {
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('crm_token') }
+    })
+    if (resp.ok) packageInfo.value = await resp.json()
+  } catch (e) { /* ignore */ }
+}
+
+async function downloadZip() {
+  downloading.value = true
+  try {
+    const resp = await fetch('/api/agent-servers/package', {
+      headers: { 'Authorization': 'Bearer ' + localStorage.getItem('crm_token') }
+    })
+    if (!resp.ok) throw new Error('下载失败')
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = packageInfo.value?.filename || 'crm_agent-v0.1.0.zip'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error('下载失败: ' + e.message)
+  } finally {
+    downloading.value = false
+  }
+}
+
 onMounted(loadList)
 </script>
 
@@ -247,4 +319,10 @@ onMounted(loadList)
 .address { font-family: monospace; color: var(--color-text-2, #aaa); font-size: 13px; }
 .text-muted { color: var(--color-text-3, #666); }
 .notes-text { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.package-section { padding: 4px 0; }
+.package-download-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: var(--el-fill-color-light, #f5f7fa); border-radius: 8px; margin-bottom: 4px; }
+.package-download-info { display: flex; flex-direction: column; gap: 6px; }
+.pkg-title { font-size: 16px; font-weight: 600; }
+.pkg-meta { display: flex; gap: 6px; flex-wrap: wrap; }
+.config-preview { background: var(--el-fill-color-light, #f5f7fa); border-radius: 6px; padding: 12px; font-size: 12px; font-family: Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-all; margin: 0; max-height: 280px; overflow: auto; color: var(--el-text-color-primary, #303133); }
 </style>

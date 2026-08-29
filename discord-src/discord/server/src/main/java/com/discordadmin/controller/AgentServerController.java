@@ -8,6 +8,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
+import org.springframework.beans.factory.annotation.Value;
+import java.io.*;
+import java.nio.file.*;
+import java.util.stream.*;
+import java.util.zip.*;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -23,6 +31,9 @@ public class AgentServerController {
 
     private final AgentServerService agentServerService;
     private final AgentTaskService agentTaskService;
+
+    @Value("${app.agent-source-dir:}")
+    private String agentSourceDir;
     private final ObjectMapper objectMapper;
 
     /** 节点列表（隐藏 token） */
@@ -177,4 +188,165 @@ public class AgentServerController {
             return ResponseEntity.status(401).body(Map.of("error", e.getMessage()));
         }
     }
+    // ============ crm_agent 包下载 ============
+
+    /** 下载 crm_agent 完整包（动态打包源码） */
+    @GetMapping("/package")
+    public ResponseEntity<Resource> downloadAgentPackage() {
+        try {
+            Path sourceDir = resolveAgentSourceDir();
+            if (sourceDir == null || !Files.isDirectory(sourceDir)) {
+                return ResponseEntity.status(500).body(null);
+            }
+            byte[] zipBytes = buildZip(sourceDir);
+            ByteArrayResource resource = new ByteArrayResource(zipBytes);
+            String filename = "crm_agent-v0.1.0.zip";
+            return ResponseEntity.ok()
+                    .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
+                    .contentType(org.springframework.http.MediaType.parseMediaType("application/zip"))
+                    .contentLength(zipBytes.length)
+                    .body(resource);
+        } catch (Exception e) {
+            log.error("打包 agent 包失败", e);
+            return ResponseEntity.status(500).body(null);
+        }
+    }
+
+    /** 获取包信息 + 安装说明 */
+    @GetMapping("/package-info")
+    public ResponseEntity<Map<String, Object>> packageInfo(HttpServletRequest request) {
+        String baseUrl = request.getScheme() + "://" + request.getServerName()
+                + ((request.getServerPort() == 80 || request.getServerPort() == 443) ? "" : ":" + request.getServerPort())
+                + request.getContextPath();
+        Map<String, Object> result = new HashMap<>();
+        result.put("version", "0.1.0");
+        result.put("downloadUrl", baseUrl + "/api/agent-servers/package");
+        result.put("filename", "crm_agent-v0.1.0.zip");
+        result.put("requiresNode", ">=18");
+        result.put("requiresPlaywright", "chromium");
+        result.put("steps", List.of(
+                Map.of("step", 1, "title", "解压安装包", "desc", "将 crm_agent-v0.1.0.zip 解压到任意目录，如 ~/crm_agent"),
+                Map.of("step", 2, "title", "安装依赖", "desc", "进入目录执行: npm install"),
+                Map.of("step", 3, "title", "安装浏览器", "desc", "执行: npx playwright install chromium（首次必做，~180MB）"),
+                Map.of("step", 4, "title", "配置节点", "desc", "复制 config.example.json 为 config.json，填入后端地址 + 节点 token"),
+                Map.of("step", 5, "title", "启动 Agent", "desc", "执行: node src/index.js，看到 [就绪] 等待任务... 即启动成功"),
+                Map.of("step", 6, "title", "验证在线", "desc", "回到后台「代理管理」页面，节点状态应为在线")
+        ));
+        result.put("configTemplate", "{\n" +
+                "  \"serverUrl\": \"http://127.0.0.1:8090/api\",\n" +
+                "  \"agentName\": \"crm-agent-01\",\n" +
+                "  \"token\": \"在此粘贴前端生成的token\",\n" +
+                "  \"heartbeatIntervalMs\": 30000,\n" +
+                "  \"pollIntervalMs\": 5000,\n" +
+                "  \"browser\": {\n" +
+                "    \"headless\": false,\n" +
+                "    \"type\": \"chromium\",\n" +
+                "    \"userDataDir\": \"./data/browser-profile\"\n" +
+                "  }\n" +
+                "}");
+        return ResponseEntity.ok(result);
+    }
+
+    /** 定位 crm_agent 源码目录 */
+    private Path resolveAgentSourceDir() {
+        // 1. 用显式配置
+        if (agentSourceDir != null && !agentSourceDir.isBlank()) {
+            Path p = Paths.get(agentSourceDir);
+            if (Files.isDirectory(p)) return p;
+        }
+        // 2. 自动推断：从 user.dir 向上找 crm_agent
+        try {
+            Path cwd = Paths.get(System.getProperty("user.dir")).toAbsolutePath();
+            for (Path p = cwd; p != null; p = p.getParent()) {
+                Path candidate = p.resolve("crm_agent");
+                if (Files.isDirectory(candidate) && Files.exists(candidate.resolve("package.json"))) {
+                    return candidate;
+                }
+            }
+            // 同级别兄弟目录
+            if (cwd.getParent() != null) {
+                Path sibling = cwd.getParent().resolve("crm_agent");
+                if (Files.isDirectory(sibling)) return sibling;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
+    private byte[] buildZip(Path sourceDir) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            String baseName = "crm_agent";
+            try (Stream<Path> walk = Files.walk(sourceDir)) {
+                walk.forEach(p -> {
+                    try {
+                        Path rel = sourceDir.relativize(p);
+                        String relStr = rel.toString().replace('\\', '/');
+                        // 排除目录
+                        String[] skipDirs = {"node_modules", "data", ".git", ".idea", ".vscode", "__pycache__"};
+                        for (String skip : skipDirs) {
+                            if (relStr.equals(skip) || relStr.startsWith(skip + "/")) return;
+                        }
+                        // 排除文件
+                        String[] skipFiles = {".DS_Store", "package-lock.json", "config.json"};
+                        for (String skip : skipFiles) {
+                            if (relStr.equals(skip)) return;
+                        }
+                        // 排除隐藏文件
+                        if (relStr.startsWith(".")) return;
+                        // 空目录跳过
+                        if (Files.isDirectory(p)) return;
+
+                        String entryName = baseName + "/" + relStr;
+                        zos.putNextEntry(new ZipEntry(entryName));
+                        Files.copy(p, zos);
+                        zos.closeEntry();
+                    } catch (Exception ignored) {}
+                });
+            }
+            // 追加安装说明 README_INSTALL.txt
+            String readme = buildInstallReadme();
+            zos.putNextEntry(new ZipEntry(baseName + "/README_INSTALL.txt"));
+            zos.write(readme.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+        return baos.toByteArray();
+    }
+
+    private String buildInstallReadme() {
+        return "==============================================\n" +
+                "  crm_agent v0.1.0 — 安装说明\n" +
+                "==============================================\n" +
+                "\n" +
+                "【1. 环境要求】\n" +
+                "  - Node.js >= 18  (https://nodejs.org/)\n" +
+                "  - macOS / Linux / Windows\n" +
+                "\n" +
+                "【2. 安装依赖】\n" +
+                "  cd crm_agent\n" +
+                "  npm install\n" +
+                "\n" +
+                "【3. 安装 Playwright Chromium】\n" +
+                "  npx playwright install chromium\n" +
+                "  （首次必做，~180MB 下载）\n" +
+                "\n" +
+                "【4. 配置节点】\n" +
+                "  cp config.example.json config.json\n" +
+                "  然后编辑 config.json：\n" +
+                "    serverUrl  = 后端 API 地址，如 http://127.0.0.1:8090/api\n" +
+                "    agentName  = 节点名称（需与前端创建时一致）\n" +
+                "    token      = 前端「代理管理」页面生成的 token\n" +
+                "\n" +
+                "【5. 启动】\n" +
+                "  node src/index.js\n" +
+                "  看到 [就绪] 等待任务... 即启动成功\n" +
+                "\n" +
+                "【6. 验证】\n" +
+                "  回到后台「代理管理」页面，节点状态应为在线\n" +
+                "\n" +
+                "【7. 后台启动（可选）】\n" +
+                "  nohup node src/index.js > agent.log 2>&1 &\n" +
+                "\n";
+    }
+
 }
