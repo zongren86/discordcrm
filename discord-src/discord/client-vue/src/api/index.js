@@ -623,3 +623,6 @@ export function createAgentTask(agentServerId, type, extra = {}) {
 export function getAgentTask(taskId) {
   return http.get(`/agent-servers/tasks/${taskId}`)
 }
+export function cancelAgentTask(taskId) {
+  return http.post(`/agent-servers/tasks/${taskId}/cancel`)
+}

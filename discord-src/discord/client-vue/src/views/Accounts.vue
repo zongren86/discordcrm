@@ -106,6 +106,17 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="浏览器" width="100" align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.browserProfilePath && row.agentServerId"
+              link type="primary"
+              @click="launchBrowser(row)"
+            >唤起</el-button>
+            <span v-else style="color:var(--color-text-3);font-size:12px;">—</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="状态" width="120" align="center">
           <template #default="{ row }">
             <div class="status-cell">
@@ -304,16 +315,26 @@
               <br />原因：{{ agentResultDialog.error || '超时或用户信息不完整' }}
             </template>
           </el-alert>
+          <el-alert v-else-if="agentResultDialog.status === 'CANCELLED'" type="warning" show-icon :closable="false">
+            <template #title>
+              <b>🚫 任务已取消</b>
+              <br />您取消了登录或关闭了浏览器。
+            </template>
+          </el-alert>
         </div>
         <div style="margin-top:16px;text-align:center;">
           <el-progress v-if="agentResultDialog.status === 'RUNNING'" :percentage="agentResultDialog.progress" :indeterminate="true" />
         </div>
       </div>
       <template #footer>
-        <el-button @click="closeAgentResultDialog">
-          {{ agentResultDialog.status === 'RUNNING' ? '取消' : '关闭' }}
-        </el-button>
-        <el-button v-if="agentResultDialog.status === 'SUCCESS'" type="primary" @click="closeAgentResultDialog">完成</el-button>
+        <template v-if="agentResultDialog.status === 'RUNNING'">
+          <el-button @click="cancelAgentCapture" type="danger" :loading="agentResultDialog.cancelling">取消登录</el-button>
+          <el-button @click="closeAgentResultDialog">关闭弹窗</el-button>
+        </template>
+        <template v-else>
+          <el-button @click="closeAgentResultDialog">关闭</el-button>
+          <el-button v-if="agentResultDialog.status === 'SUCCESS'" type="primary" @click="closeAgentResultDialog">完成</el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -381,7 +402,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Upload, Refresh, Edit, Delete, Search, OfficeBuilding, Download, Key, Picture, Monitor } from '@element-plus/icons-vue'
-import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountFriends, listMerchants, refreshAccountToken, refreshAccountAvatar, listAgentServers, createAgentTask, getAgentTask } from '@/api'
+import { listAccounts, createAccount, upsertAccountByDiscordId, updateAccount, deleteAccount, batchImport, syncAccountFriends, listMerchants, refreshAccountToken, refreshAccountAvatar, listAgentServers, createAgentTask, getAgentTask, cancelAgentTask } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import { useAccountsStore } from '@/stores/accounts'
 
@@ -545,8 +566,26 @@ const agentResultDialog = reactive({
   error: '',
   step: 0,
   progress: 0,
+  cancelling: false,
   _pollTimer: null,
 })
+
+async function launchBrowser(account) {
+  if (!account.agentServerId || !account.browserProfilePath) {
+    ElMessage.warning('该账号未关联浏览器 profile')
+    return
+  }
+  try {
+    ElMessage.info('正在唤起浏览器...请在代理弹出的窗口查看')
+    await createAgentTask(account.agentServerId, 'LAUNCH_BROWSER', {
+      browserProfilePath: account.browserProfilePath,
+      accountId: account.id,
+    })
+    // agent 会在下次 poll 时拿到这个任务并打开浏览器
+  } catch (e) {
+    ElMessage.error('唤起失败: ' + (e?.response?.data?.error || e?.message || '未知错误'))
+  }
+}
 
 async function openAgentDialog() {
   agentDialog.visible = true
@@ -605,7 +644,7 @@ async function pollAgentTask() {
       agentResultDialog.step = 2
       agentResultDialog.progress = Math.min(90, agentResultDialog.progress + 5)
     } else if (status === 'SUCCESS') {
-      agentResultDialog.step = 3
+      agentResultDialog.step = 4
       agentResultDialog.progress = 100
       agentResultDialog.status = 'SUCCESS'
       try {
@@ -617,16 +656,23 @@ async function pollAgentTask() {
       stopAgentPolling()
       await fetchAccounts()
       const u = agentResultDialog.result?.username || '新账号'
-      ElMessage.success(`✅ 代理采集成功：${u}，已添加到账号列表`)
+      ElMessage.success('✅ 代理采集成功：' + u + '，已添加到账号列表')
+      // 3 秒后自动关闭弹窗（提示账号已保存）
+      setTimeout(() => { agentResultDialog.visible = false }, 3000)
     } else if (status === 'FAILED') {
       agentResultDialog.status = 'FAILED'
-      agentResultDialog.step = 3
+      agentResultDialog.step = 4
       try {
         const parsed = typeof resp.result === 'string' ? JSON.parse(resp.result) : resp.result
         agentResultDialog.error = parsed?.error || resp.result || '未知错误'
       } catch {
         agentResultDialog.error = resp.result || '未知错误'
       }
+      stopAgentPolling()
+    } else if (status === 'CANCELLED') {
+      agentResultDialog.status = 'CANCELLED'
+      agentResultDialog.step = 3
+      agentResultDialog.error = '任务已取消'
       stopAgentPolling()
     }
   } catch (e) {}
@@ -636,6 +682,20 @@ function stopAgentPolling() {
   if (agentResultDialog._pollTimer) {
     clearInterval(agentResultDialog._pollTimer)
     agentResultDialog._pollTimer = null
+  }
+}
+
+async function cancelAgentCapture() {
+  if (!agentResultDialog.taskId || agentResultDialog.status !== 'RUNNING') return
+  agentResultDialog.cancelling = true
+  try {
+    await cancelAgentTask(agentResultDialog.taskId)
+    ElMessage.info('已通知 agent 停止，请稍等...')
+    // 等下一轮 poll 到 CANCELLED 状态
+  } catch (e) {
+    ElMessage.warning('取消请求失败，但 agent 会在下次轮询时发现任务已取消')
+  } finally {
+    agentResultDialog.cancelling = false
   }
 }
 
