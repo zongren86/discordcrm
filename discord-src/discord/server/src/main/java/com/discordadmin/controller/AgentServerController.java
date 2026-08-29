@@ -212,7 +212,7 @@ public class AgentServerController {
             }
             byte[] zipBytes = buildZip(sourceDir);
             ByteArrayResource resource = new ByteArrayResource(zipBytes);
-            String filename = "crm_agent-v0.1.0.zip";
+            String filename = "crm_agent-v" + readAgentVersion() + ".zip";
             return ResponseEntity.ok()
                     .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
                     .contentType(org.springframework.http.MediaType.parseMediaType("application/zip"))
@@ -230,10 +230,12 @@ public class AgentServerController {
         String baseUrl = request.getScheme() + "://" + request.getServerName()
                 + ((request.getServerPort() == 80 || request.getServerPort() == 443) ? "" : ":" + request.getServerPort())
                 + request.getContextPath();
+        String agentVer = readAgentVersion();
+        String zipName = "crm_agent-v" + agentVer + ".zip";
         Map<String, Object> result = new HashMap<>();
-        result.put("version", "0.1.0");
+        result.put("version", agentVer);
         result.put("downloadUrl", baseUrl + "/api/agent-servers/package");
-        result.put("filename", "crm_agent-v0.1.0.zip");
+        result.put("filename", zipName);
         result.put("requiresNode", ">=18");
         result.put("requiresPlaywright", "chromium");
         result.put("envCheck", List.of(
@@ -243,8 +245,8 @@ public class AgentServerController {
         ));
         result.put("steps", List.of(
                 Map.of("step", 1, "title", "解压安装包",
-                        "desc", "将 crm_agent-v0.1.0.zip 解压到任意目录",
-                        "code",                         "unzip crm_agent-v0.1.0.zip\n" +
+                        "desc", "将 crm_agent-v{VER}.zip 解压到任意目录",
+                        "code",                         "unzip crm_agent-v{VER}.zip\n" +
                         "mv crm_agent ~/crm_agent\n" +
                         "cd ~/crm_agent"),
                 Map.of("step", 2, "title", "安装依赖",
@@ -262,10 +264,10 @@ public class AgentServerController {
                 Map.of("step", 4, "title", "复制并编辑配置",
                         "desc", "复制模板为 config.json，修改 3 个核心字段",
                         "code",                         "# macOS/Linux\n" +
-                        "cp config.example.json config.json\n" +
+                        "直接编辑 config.json（zip 里已包含模板）\n" +
                         "\n" +
                         "# Windows\n" +
-                        "copy config.example.json config.json\n" +
+                        "直接编辑 config.json（zip 里已包含模板）\n" +
                         "\n" +
                         "# 然后编辑 config.json，修改：\n" +
                         "#   serverUrl:  后端地址 http://x.x.x.x:8090/api\n" +
@@ -337,6 +339,19 @@ public class AgentServerController {
         return null;
     }
 
+    private String readAgentVersion() {
+        try {
+            Path sourceDir = resolveAgentSourceDir();
+            if (sourceDir != null) {
+                Path vFile = sourceDir.resolve("VERSION");
+                if (Files.exists(vFile)) {
+                    return Files.readString(vFile).trim();
+                }
+            }
+        } catch (Exception ignored) {}
+        return "1.0.0";
+    }
+
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
     private byte[] buildZip(Path sourceDir) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -353,7 +368,7 @@ public class AgentServerController {
                             if (relStr.equals(skip) || relStr.startsWith(skip + "/")) return;
                         }
                         // 排除文件
-                        String[] skipFiles = {".DS_Store", "package-lock.json", "config.json"};
+                        String[] skipFiles = {".DS_Store", "package-lock.json"};
                         for (String skip : skipFiles) {
                             if (relStr.equals(skip)) return;
                         }
@@ -370,7 +385,7 @@ public class AgentServerController {
                 });
             }
             // 追加安装说明 README_INSTALL.txt
-            String readme = buildInstallReadme();
+            String readme = buildInstallReadme(readAgentVersion());
             zos.putNextEntry(new ZipEntry(baseName + "/README_INSTALL.txt"));
             zos.write(readme.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             zos.closeEntry();
@@ -378,9 +393,9 @@ public class AgentServerController {
         return baos.toByteArray();
     }
 
-    private String buildInstallReadme() {
-        return                 "==============================================\n" +
-                "  crm_agent v0.1.0 — 完整安装说明\n" +
+    private String buildInstallReadme(String ver) {
+        String content =                 "==============================================\n" +
+                "  crm_agent v{VER} — 完整安装说明\n" +
                 "==============================================\n" +
                 "\n" +
                 "【环境要求】\n" +
@@ -404,8 +419,8 @@ public class AgentServerController {
                 "  export PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright\n" +
                 "\n" +
                 "【Step 1 — 解压】\n" +
-                "  macOS/Linux:  unzip crm_agent-v0.1.0.zip && cd crm_agent\n" +
-                "  Windows PS:   Expand-Archive crm_agent-v0.1.0.zip . ; cd crm_agent\n" +
+                "  macOS/Linux:  unzip crm_agent-v{VER}.zip && cd crm_agent\n" +
+                "  Windows PS:   Expand-Archive crm_agent-v{VER}.zip . ; cd crm_agent\n" +
                 "\n" +
                 "【Step 2 — npm install】\n" +
                 "  npm install\n" +
@@ -417,8 +432,9 @@ public class AgentServerController {
                 "  PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright npx playwright install chromium\n" +
                 "\n" +
                 "【Step 4 — 配置 config.json】\n" +
-                "  cp config.example.json config.json          # macOS/Linux\n" +
-                "  copy config.example.json config.json        # Windows\n" +
+    "  zip 里已包含 config.json 模板，直接修改即可：\n" +
+                "  直接编辑 config.json（zip 里已包含模板）          # macOS/Linux\n" +
+                "  直接编辑 config.json（zip 里已包含模板）        # Windows\n" +
                 "\n" +
                 "  然后编辑 config.json，关键字段：\n" +
                 "  +------------------------------------------------------+\n" +
@@ -483,5 +499,6 @@ public class AgentServerController {
                 "  Q: Windows 上后台运行后找不到进程？\n" +
                 "  A: Get-Process node;  Stop-Process -Id <PID>\n" +
                 "";
+        return content.replace("{VER}", ver);
     }
 }
