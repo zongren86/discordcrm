@@ -33,3 +33,9 @@ test.txt
 test_write.txt
 server/uploads/
 uploads/
+
+# Build artifacts
+deploy-package/
+server-admin/logs/
+*.tar.gz
+*.log.gz
