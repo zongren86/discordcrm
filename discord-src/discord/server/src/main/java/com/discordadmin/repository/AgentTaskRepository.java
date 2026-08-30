@@ -15,7 +15,11 @@ public interface AgentTaskRepository extends JpaRepository<AgentTask, Long> {
 
     long countByDiscordAccountId(Long accountId);
 
-    @org.springframework.data.jpa.repository.Modifying
+    // 直接删子表记录（账号都删了，关联 task 也没用了）
+    void deleteByDiscordAccountId(Long accountId);
+
+    // 或者置 NULL（保留 task 记录，只解除关联）
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
     @org.springframework.data.jpa.repository.Query("UPDATE AgentTask t SET t.discordAccount = NULL WHERE t.discordAccount.id = :accountId")
     void detachAccountFromTasks(@org.springframework.data.repository.query.Param("accountId") Long accountId);
 }

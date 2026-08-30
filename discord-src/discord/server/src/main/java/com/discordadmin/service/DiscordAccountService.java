@@ -74,6 +74,7 @@ public class DiscordAccountService {
     private final FetchProgressRepository fetchProgressRepository;
     private final DiscordAccountNumberRepository accountNumberRepository;
     private final AgentAccountNumberRelRepository relRepository;
+    private final AgentTaskRepository agentTaskRepository;
     private final PlatformTransactionManager transactionManager;
 
     @Autowired @Lazy
@@ -93,6 +94,7 @@ public class DiscordAccountService {
                                  FetchProgressRepository fetchProgressRepository,
                                  DiscordAccountNumberRepository accountNumberRepository,
                                  AgentAccountNumberRelRepository relRepository,
+                                 AgentTaskRepository agentTaskRepository,
                                  PlatformTransactionManager transactionManager) {
         this.accountRepository = accountRepository;
         this.botManager = botManager;
@@ -108,6 +110,7 @@ public class DiscordAccountService {
         this.fetchProgressRepository = fetchProgressRepository;
         this.accountNumberRepository = accountNumberRepository;
         this.relRepository = relRepository;
+        this.agentTaskRepository = agentTaskRepository;
         this.transactionManager = transactionManager;
     }
 
@@ -899,6 +902,9 @@ public class DiscordAccountService {
 
                         // 3e. 删除GIF收藏（外键约束）
                         gifFavoriteRepository.deleteByDiscordAccountId(id);
+
+                        // 解除 agent_tasks 外键关联
+                        agentTaskRepository.detachAccountFromTasks(id);
                         
                         // 3f. 删除账号
                         accountRepository.delete(acc);
