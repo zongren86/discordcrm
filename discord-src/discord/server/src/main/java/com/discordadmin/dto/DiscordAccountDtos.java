@@ -46,7 +46,7 @@ public class DiscordAccountDtos {
                               String agentName, String agentUsername, Long agentId,
                               String tokenExpiresAt, String tokenCheckedAt,
                               Long accountNumberId, Integer accountCustomNo,
-                              String browserProfilePath, Long discordAgentServerId) {
+                              String browserProfilePath, Long discordAgentServerId, String source) {
 
         // ===== 所有重载都自动从 entity 取 browserProfilePath/agentServerId =====
 
@@ -85,7 +85,7 @@ public class DiscordAccountDtos {
                     a.getTokenExpiresAt() != null ? a.getTokenExpiresAt().toString() : null,
                     a.getTokenCheckedAt() != null ? a.getTokenCheckedAt().toString() : null,
                     accountNumberId, accountCustomNo,
-                    a.getBrowserProfilePath(), a.getAgentServerId()
+                    a.getBrowserProfilePath(), a.getAgentServerId(), a.getSource()
             );
         }
 

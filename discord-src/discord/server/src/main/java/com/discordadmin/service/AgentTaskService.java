@@ -150,6 +150,7 @@ public class AgentTaskService {
         if (server != null) {
             account.setAgentServerId(server.getId());
         }
+        account.setSource("AGENT");
 
         account = discordAccountRepository.save(account);
         log.info("保存代理采集的账号 id={}, discordId={}, username={}, profile={}",

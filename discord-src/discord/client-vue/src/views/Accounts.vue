@@ -87,6 +87,15 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="来源" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.source === 'AGENT'" type="success" size="small">代理</el-tag>
+            <el-tag v-else-if="row.source === 'BATCH'" type="warning" size="small">批量</el-tag>
+            <el-tag v-else-if="row.source === 'MANUAL'" type="info" size="small">手工</el-tag>
+            <el-tag v-else type="info" size="small">—</el-tag>
+          </template>
+        </el-table-column>
+
         <el-table-column label="账号编号" width="120" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.accountCustomNo != null" type="success" size="small" effect="light">

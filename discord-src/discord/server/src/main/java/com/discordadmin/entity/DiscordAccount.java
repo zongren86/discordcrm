@@ -97,6 +97,10 @@ public class DiscordAccount {
     @Column(name = "friend_count")
     private Long friendCount = 0L;
 
+    /** 账号添加来源: BATCH-批量导入, MANUAL-手工添加, AGENT-代理模式添加 */
+    @Column(name = "source", length = 16)
+    private String source;
+
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 
