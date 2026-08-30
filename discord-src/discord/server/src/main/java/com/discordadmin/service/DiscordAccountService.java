@@ -904,7 +904,8 @@ public class DiscordAccountService {
                         gifFavoriteRepository.deleteByDiscordAccountId(id);
 
                         // 解除 agent_tasks 外键关联
-                        agentTaskRepository.detachAccountFromTasks(id);
+                        agentTaskRepository.deleteByDiscordAccountId(id);
+                        accountRepository.flush();
                         
                         // 3f. 删除账号
                         accountRepository.delete(acc);
