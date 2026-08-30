@@ -82,7 +82,8 @@ public class GifFavoriteController {
             return ResponseEntity.badRequest().body(Map.of("error", "URL 不能为空"));
         }
         
-        GifFavorite favorite = gifFavoriteService.addFavorite(accountId, gifUrl, title, type, convertedGifUrl);
+        Long currentUserId = SecurityUtils.currentUserId();
+        GifFavorite favorite = gifFavoriteService.addFavorite(accountId, gifUrl, title, type, convertedGifUrl, currentUserId);
         return ResponseEntity.ok(toDto(favorite));
     }
 @Transactional
@@ -90,8 +91,9 @@ public class GifFavoriteController {
     @DeleteMapping("/{id}")
     public ResponseEntity<Map<String, Object>> removeFavorite(
             @PathVariable Long id,
-            @RequestParam Long accountId) {
-        gifFavoriteService.removeFavorite(id, accountId);
+            @RequestParam(required = false) Long accountId) {
+        Long currentUserId = SecurityUtils.currentUserId();
+        gifFavoriteService.removeFavorite(id, accountId, currentUserId);
         return ResponseEntity.ok(Map.of("success", true));
     }
 
@@ -100,7 +102,8 @@ public class GifFavoriteController {
             @RequestParam Long accountId,
             @RequestParam String gifUrl,
             @RequestParam(value = "type", required = false) String type) {
-        boolean isFavorited = gifFavoriteService.isFavorited(accountId, gifUrl);
+        Long currentUserId = SecurityUtils.currentUserId();
+        boolean isFavorited = gifFavoriteService.isFavorited(accountId, currentUserId, gifUrl);
         Map<String, Object> result = new HashMap<>();
         result.put("favorited", isFavorited);
         return ResponseEntity.ok(result);
@@ -155,6 +158,7 @@ public class GifFavoriteController {
         dto.put("type", favorite.getType() != null ? favorite.getType() : "gif");
         dto.put("createdAt", favorite.getCreatedAt());
         dto.put("accountId", favorite.getDiscordAccountId());
+        dto.put("userId", favorite.getUserId());
         dto.put("convertedGifUrl", favorite.getConvertedGifUrl());
         return dto;
     }

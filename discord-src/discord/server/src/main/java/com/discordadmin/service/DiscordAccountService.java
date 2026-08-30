@@ -79,10 +79,14 @@ public class DiscordAccountService {
     private final DiscordAccountNumberRepository accountNumberRepository;
     private final AgentAccountNumberRelRepository relRepository;
     private final AgentTaskRepository agentTaskRepository;
-    private final AutoAddTaskRepository autoAddTaskRepository;
-    private final EmuAccountBindingRepository emuAccountBindingRepository;
-    private final EmuInstanceRepository emuInstanceRepository;
-    private final EmuServerBindingRepository emuServerBindingRepository;
+    @Autowired @Lazy
+    private AutoAddTaskRepository autoAddTaskRepository;
+    @Autowired @Lazy
+    private EmuAccountBindingRepository emuAccountBindingRepository;
+    @Autowired @Lazy
+    private EmuInstanceRepository emuInstanceRepository;
+    @Autowired @Lazy
+    private EmuServerBindingRepository emuServerBindingRepository;
     private final PlatformTransactionManager transactionManager;
 
     @Autowired @Lazy
@@ -909,7 +913,7 @@ public class DiscordAccountService {
                         friendRepository.deleteByDiscordAccount(acc);
 
                         // 3e. 删除GIF收藏（外键约束）
-                        gifFavoriteRepository.deleteByDiscordAccountId(id);
+                        // GifFavorite 基于 userId 归属，不删除；discord_account_id 置 NULL 即可
 
                         // 解除 agent_tasks 外键关联
                         agentTaskRepository.deleteByDiscordAccountId(id);
@@ -921,7 +925,7 @@ public class DiscordAccountService {
                         // 3g. 删除自动加好友任务
                         try { autoAddTaskRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
                         // 3h. 删除账号号码关联
-                        try { discordAccountNumberRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
+                        try { accountNumberRepository.detachFromDiscordAccount(id); } catch (Exception ignored) {}
                         accountRepository.flush();
                         
                         // 3f. 删除账号

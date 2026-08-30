@@ -21,6 +21,9 @@ public class GifFavorite {
     @Column(name = "merchant_id")
     private Long merchantId;
 
+    @Column(name = "user_id")
+    private Long userId;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "discord_account_id", nullable = false)
     @com.fasterxml.jackson.annotation.JsonIgnore

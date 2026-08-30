@@ -151,5 +151,9 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
     /** 按商户和自定义编号查询（支持批量） */
     List<DiscordAccountNumber> findByMerchantIdAndCustomNoIn(Long merchantId, List<Integer> customNos);
 
-    void deleteByDiscordAccountId(Long discordAccountId);
+        // 解绑：清除账号关联但保留编号数据
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
+    @org.springframework.data.jpa.repository.Query(
+        "UPDATE DiscordAccountNumber n SET n.discordAccount = NULL WHERE n.discordAccount.id = :accountId")
+    void detachFromDiscordAccount(@org.springframework.data.repository.query.Param("accountId") Long accountId);
 }

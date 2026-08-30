@@ -33,28 +33,37 @@ public class GifFavoriteService {
         return gifFavoriteRepository.findByDiscordAccountIdOrderByCreatedAtDesc(accountId);
     }
 
+    /**
+     * 按当前登录用户查询（userId 维度，新逻辑）
+     */
+    @Transactional(readOnly = true)
+    public List<GifFavorite> getFavoritesByUserId(Long userId) {
+        return gifFavoriteRepository.findByUserIdOrderByCreatedAtDesc(userId);
+    }
+
     @Transactional(readOnly = true)
     public List<GifFavorite> getFavoritesByMerchant(Long merchantId) {
         return gifFavoriteRepository.findByMerchantIdOrderByCreatedAtDesc(merchantId);
     }
 
     @Transactional
-    public GifFavorite addFavorite(Long accountId, String gifUrl, String title) {
-        return addFavorite(accountId, gifUrl, title, "gif", null);
+    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, Long userId) {
+        return addFavorite(accountId, gifUrl, title, "gif", null, userId);
     }
 
     @Transactional
-    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type) {
-        return addFavorite(accountId, gifUrl, title, type, null);
+    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type, Long userId) {
+        return addFavorite(accountId, gifUrl, title, type, null, userId);
     }
 
     @Transactional
-    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type, String convertedGifUrl) {
+    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type, String convertedGifUrl, Long userId) {
         String normalizedUrl = normalizeGifUrl(gifUrl);
         String urlHash = hashUrl(normalizedUrl);
         
+        // 优先按 userId 查重（新逻辑），兜底按 accountId 查重（旧数据）
         Optional<GifFavorite> existing = gifFavoriteRepository
-                .findByDiscordAccountIdAndGifUrlHash(accountId, urlHash);
+                .findByAccountOrUser(accountId, userId, urlHash);
         if (existing.isPresent()) {
             GifFavorite fav = existing.get();
             // 如果已有 convertedGifUrl 且新的也有，更新它
@@ -75,6 +84,7 @@ public class GifFavoriteService {
         GifFavorite favorite = new GifFavorite();
         favorite.setDiscordAccount(account);
         favorite.setMerchantId(account.getMerchantId());
+        favorite.setUserId(userId);
         favorite.setGifUrl(normalizedUrl);
         favorite.setGifUrlHash(urlHash);
         favorite.setTitle(title);
@@ -90,16 +100,18 @@ public class GifFavoriteService {
     }
 
     @Transactional
-    public void removeFavorite(Long id, Long accountId) {
+    public void removeFavorite(Long id, Long accountId, Long userId) {
         gifFavoriteRepository.deleteByIdAndDiscordAccountId(id, accountId);
         log.info("GIF 收藏已删除: id={}, accountId={}", id, accountId);
     }
 
     @Transactional(readOnly = true)
-    public boolean isFavorited(Long accountId, String gifUrl) {
+    public boolean isFavorited(Long accountId, String gifUrl) { return isFavorited(accountId, null, gifUrl); }
+
+    public boolean isFavorited(Long accountId, Long userId, String gifUrl) {
         String normalizedUrl = normalizeGifUrl(gifUrl);
         String urlHash = hashUrl(normalizedUrl);
-        return gifFavoriteRepository.findByDiscordAccountIdAndGifUrlHash(accountId, urlHash).isPresent();
+        return gifFavoriteRepository.findByAccountOrUser(accountId, userId, urlHash).isPresent();
     }
 
     public String normalizeGifUrl(String url) {
