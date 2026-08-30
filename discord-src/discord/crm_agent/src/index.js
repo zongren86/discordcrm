@@ -197,6 +197,12 @@ async function main() {
   await heartbeat();
   setInterval(heartbeat, cfg.heartbeatIntervalMs || 5000);
   setInterval(pollTask, cfg.pollIntervalMs || 5000);
+
+  // 消息轮询 (方案 C: HTTP REST, 2s 间隔)
+  await loadManagedAccounts();
+  setInterval(loadManagedAccounts, ACCOUNT_REFRESH_MS);
+  setInterval(pollMessages, MSG_POLL_MS);
+
   console.log('[就绪] 等待任务...');
 
   process.on('SIGINT', () => {
@@ -209,3 +215,82 @@ main().catch(err => {
   console.error('[启动] 致命错误:', err.message);
   process.exit(1);
 });
+
+// ============ AGENT PULL MESSAGES (方案 C: HTTP REST 轮询) ============
+
+// agent 负责的 AGENT 采集账号列表
+let managedAccounts = [];
+// 每个账号已见消息 ID 集合: Map<accountId, Set<discordMessageId>>
+const seenMessageIds = new Map();
+const ACCOUNT_REFRESH_MS = 30000;
+const MSG_POLL_MS = 2000;
+
+async function loadManagedAccounts() {
+  try {
+    const accounts = await http.post('/agent-servers/accounts', { token: cfg.token });
+    managedAccounts = accounts || [];
+    if (managedAccounts.length > 0) {
+      console.log(`[消息轮询] 负责 ${managedAccounts.length} 个 AGENT 采集账号`);
+    }
+  } catch (e) {} // 静默
+}
+
+async function pollMessages() {
+  if (managedAccounts.length === 0) return;
+  const axios = require('axios');
+
+  for (const acc of managedAccounts) {
+    try {
+      // 1. 拉 DM channels
+      const chResp = await axios.get('https://discord.com/api/v10/users/@me/channels', {
+        headers: { 'Authorization': acc.token }, timeout: 8000,
+      });
+      const channels = chResp.data || [];
+
+      const newMessages = [];
+      const seen = seenMessageIds.get(acc.id) || new Set();
+
+      for (const ch of channels) {
+        // 2. 拉最新 10 条消息
+        const mResp = await axios.get(`https://discord.com/api/v10/channels/${ch.id}/messages`, {
+          params: { limit: 10 },
+          headers: { 'Authorization': acc.token }, timeout: 5000,
+        });
+        for (const m of (mResp.data || [])) {
+          if (seen.has(m.id)) continue;
+          seen.add(m.id);
+          // 防止 seen 无限增长
+          if (seen.size > 2000) {
+            const arr = [...seen]; arr.splice(0, arr.length - 2000);
+            seenMessageIds.set(acc.id, new Set(arr));
+          } else {
+            seenMessageIds.set(acc.id, seen);
+          }
+          newMessages.push({
+            accountId: acc.id,
+            channelId: ch.id,
+            channelType: ch.type,
+            discordMessageId: m.id,
+            authorId: m.author?.id,
+            authorName: m.author?.username,
+            content: m.content || '',
+            timestamp: m.timestamp,
+            isFromMe: m.author?.id === acc.discordId,
+          });
+        }
+      }
+
+      // 3. 批量上报
+      if (newMessages.length > 0) {
+        await http.post('/agent-servers/messages/report', {
+          token: cfg.token, messages: newMessages,
+        });
+        console.log(`[消息轮询] ${acc.name}: ${newMessages.length} 条新消息`);
+      }
+    } catch (err) {
+      const st = err.response?.status;
+      if (st === 401) console.warn(`[消息轮询] ${acc.name}: Token 已失效`);
+      // 429 限流 或 其它错误 → 静默
+    }
+  }
+}
