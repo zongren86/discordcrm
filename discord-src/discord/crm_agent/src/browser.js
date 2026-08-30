@@ -8,6 +8,60 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+/**
+ * 查找系统真实 Chrome（反检测比 Playwright 自带 Chromium 强 10 倍）
+ * Windows: C:\Program Files\Google\Chrome\Application\chrome.exe
+ *          C:\Program Files (x86)\Google\Chrome\Application\chrome.exe
+ *          ~\AppData\Local\Google\Chrome\Application\chrome.exe
+ * macOS:   /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+ * Linux:   /usr/bin/google-chrome
+ * 返回路径字符串（找到真实 Chrome）或 null（用 Playwright 自带 Chromium）
+ */
+function findSystemChrome() {
+  const platform = process.platform;
+  const candidates = [];
+
+  if (platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || '';
+    candidates.push(
+      'C:\Program Files\Google\Chrome\Application\chrome.exe',
+      'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+      path.join(localAppData, 'Google\Chrome\Application\chrome.exe'),
+      'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+      'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+      path.join(localAppData, 'Microsoft\Edge\Application\msedge.exe'),
+    );
+  } else if (platform === 'darwin') {
+    candidates.push(
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+    );
+  } else {
+    candidates.push(
+      '/usr/bin/google-chrome',
+      '/usr/bin/google-chrome-stable',
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+    );
+  }
+
+  for (const p of candidates) {
+    try {
+      if (fs.existsSync(p)) {
+        const name = p.includes('msedge') ? 'Edge' : (p.includes('Chromium') && !p.includes('Chrome') ? 'Chromium' : 'Chrome');
+        console.log(`[Browser] ✅ 发现系统 ${name}: ${p}`);
+        return p;
+      }
+    } catch {}
+  }
+
+  console.log('[Browser] ⚠️ 未找到系统 Chrome/Edge，使用 Playwright 自带 Chromium（风控风险更高）');
+  return null;
+}
+
+const SYSTEM_CHROME = findSystemChrome();
+
 function getLaunchArgs() {
   return [
     '--no-sandbox',
@@ -96,12 +150,15 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   if (!fs.existsSync(userDataDir)) throw new Error('浏览器 profile 不存在: ' + userDataDir);
 
   console.log('[Browser] 唤起持久化浏览器 profile...');
-  const context = await chromium.launchPersistentContext(userDataDir, {
+  const launchOpts = {
     headless: false,
     viewport: browserConfig.viewport || { width: 1280, height: 800 },
     args: getLaunchArgs(),
     ignoreHTTPSErrors: true,
-  });
+  };
+  if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
+  else launchOpts.channel = 'chrome';  // 试试 Playwright 的 chrome channel
+  const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 
   const page = context.pages()[0] || await context.newPage();
   await page.addInitScript(getInitScript());
@@ -122,12 +179,15 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 
   let context;
   try {
-    context = await chromium.launchPersistentContext(userDataDir, {
+    const launchOpts = {
       headless: browserConfig.headless ?? false,
       viewport: browserConfig.viewport || { width: 1280, height: 800 },
       args: getLaunchArgs(),
       ignoreHTTPSErrors: true,
-    });
+    };
+    if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
+    else launchOpts.channel = 'chrome';
+    context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 
   } catch (e) {
     throw new Error('浏览器启动失败: ' + String(e.message || e).split('\n')[0]);
