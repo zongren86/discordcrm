@@ -12,4 +12,10 @@ import java.util.Optional;
 public interface AgentTaskRepository extends JpaRepository<AgentTask, Long> {
     List<AgentTask> findByAgentServerAndStatusOrderByCreatedAtAsc(AgentServer agentServer, String status);
     Optional<AgentTask> findFirstByAgentServerAndStatusOrderByCreatedAtAsc(AgentServer agentServer, String status);
+
+    long countByDiscordAccountId(Long accountId);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query("UPDATE AgentTask t SET t.discordAccount = NULL WHERE t.discordAccount.id = :accountId")
+    void detachAccountFromTasks(@org.springframework.data.repository.query.Param("accountId") Long accountId);
 }

@@ -4,7 +4,6 @@
  * v1.2.0: 超时/取消/异常都强制关闭浏览器
  */
 const { chromium } = require('playwright');
-const { execSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -72,9 +71,11 @@ async function checkCancelled(http, taskId) {
 async function safeClose(context) {
   if (!context) return;
   try {
+    // 只调 Playwright 原生 API，绝不碰系统进程
+    // Playwright 内部会自动管理 chromium 进程的生命周期
     if (typeof context.close === 'function') {
       await context.close();
-      console.log('[Browser] context.close() 已执行');
+      console.log('[Browser] context.close() ✅');
     }
   } catch (e) {
     console.warn('[Browser] context.close() 异常:', String(e.message || e).split('\n')[0]);
@@ -83,27 +84,7 @@ async function safeClose(context) {
     const browser = context.browser && context.browser();
     if (browser && typeof browser.close === 'function') {
       await browser.close();
-      console.log('[Browser] browser.close() 已执行');
-    }
-  } catch {}
-  // 兜底：用 PID 精准 kill（从 context 内部属性取），绝不杀用户自己的浏览器
-  try {
-    let pid = null;
-    try {
-      // Playwright context 内部浏览器进程
-      const b = context._browser || (context.browser && context.browser());
-      if (b && b._process) pid = b._process.pid;
-    } catch {}
-    if (pid) {
-      await new Promise(r => setTimeout(r, 300));
-      if (process.platform === 'win32') {
-        try { execSync('taskkill /F /PID ' + pid + ' /T', { stdio: 'ignore' }); } catch {}
-      } else {
-        try { process.kill(pid, 'SIGKILL'); } catch {}
-      }
-      console.log('[Browser] PID ' + pid + ' 已终止');
-    } else {
-      console.log('[Browser] 未获取到 PID，跳过兜底 kill');
+      console.log('[Browser] browser.close() ✅');
     }
   } catch {}
 }
