@@ -10,7 +10,6 @@ import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.DiscordAccountNumber;
 import com.discordadmin.repository.AgentAccountNumberRelRepository;
 import com.discordadmin.repository.AgentRepository;
-import com.discordadmin.repository.AgentTaskRepository;
 import com.discordadmin.repository.ConversationRepository;
 import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
@@ -69,7 +68,6 @@ public class DiscordAccountService {
     private final FetchProgressRepository fetchProgressRepository;
     private final DiscordAccountNumberRepository accountNumberRepository;
     private final AgentAccountNumberRelRepository relRepository;
-    private final AgentTaskRepository agentTaskRepository;
     private final PlatformTransactionManager transactionManager;
 
     @Autowired @Lazy
@@ -87,7 +85,6 @@ public class DiscordAccountService {
                                  FetchProgressRepository fetchProgressRepository,
                                  DiscordAccountNumberRepository accountNumberRepository,
                                  AgentAccountNumberRelRepository relRepository,
-                                 AgentTaskRepository agentTaskRepository,
                                  PlatformTransactionManager transactionManager) {
         this.accountRepository = accountRepository;
         this.botManager = botManager;
@@ -101,7 +98,6 @@ public class DiscordAccountService {
         this.fetchProgressRepository = fetchProgressRepository;
         this.accountNumberRepository = accountNumberRepository;
         this.relRepository = relRepository;
-        this.agentTaskRepository = agentTaskRepository;
         this.transactionManager = transactionManager;
     }
 
@@ -869,7 +865,7 @@ public class DiscordAccountService {
                     // 避免后续服务器级删除时出现 "actual row count: 0; expected: 1"。
                     fetchProgressRepository.deleteByDiscordAccountId(id);
 
-                    // 3b. GuildServer/GuildMember 数据已移到 server-admin 子项目 数据已移到 server-admin 子项目，本项目不再负责清理
+                    // 3b. GuildServer/GuildMember 数据已移到 server-admin 子项目，本项目不再负责清理
 
                     // 3b. 移除 Agent 关联
                     DiscordAccount acc = accountRepository.findById(id).orElse(null);
@@ -892,11 +888,8 @@ public class DiscordAccountService {
 
                         // 3e. 删除GIF收藏（外键约束）
                         gifFavoriteRepository.deleteByDiscordAccountId(id);
-
-                        // 3f. 删除 agent_tasks 关联记录（外键约束）
-                        agentTaskRepository.deleteByDiscordAccountId(id);
                         
-                        // 3g. 删除账号
+                        // 3f. 删除账号
                         accountRepository.delete(acc);
                     }
                     return null;
