@@ -348,6 +348,16 @@ public class MessageService {
             textToSend = content != null ? content : "[语音消息]";
         }
 
+        // 计算中文译文（translatedContent 统一存中文，用于前端默认显示）
+        String zhTranslation = null;
+        if (!isVoiceMessage && content != null && !content.isBlank() && !isPureNumber(content)) {
+            if (containsChinese(content)) {
+                zhTranslation = content; // 本身就是中文
+            } else {
+                zhTranslation = translationServiceFactory.translate(content, "zh-CN", merchantId).orElse(content);
+            }
+        }
+
         LanguageDetectionService.LanguageResult langResult = null;
         if (content != null && !content.isBlank()) {
             langResult = languageDetectionService.detect(content, merchantId);
@@ -442,22 +452,24 @@ public class MessageService {
                 // Update existing message instead of creating duplicate
                 Message existing = existingMsg.get();
                 existing.setContent(message.getContent());
-                existing.setTranslatedContent(message.getTranslatedContent());
-                existing.setDiscordCreatedAt(message.getDiscordCreatedAt());
+                if (zhTranslation != null) existing.setTranslatedContent(zhTranslation);
                 if (!isVoiceMessage && !textToSend.equals(content)) {
-                    existing.setTranslatedContent(textToSend);
+                    existing.setSentContent(textToSend);
                 }
+                existing.setDiscordCreatedAt(message.getDiscordCreatedAt());
                 message = messageRepository.save(existing);
             } else {
                 message.setDiscordMessageId(discordMessageId);
+                if (zhTranslation != null) message.setTranslatedContent(zhTranslation);
                 if (!isVoiceMessage && !textToSend.equals(content)) {
-                    message.setTranslatedContent(textToSend);
+                    message.setSentContent(textToSend);
                 }
                 message = messageRepository.save(message);
             }
         } else {
+            if (zhTranslation != null) message.setTranslatedContent(zhTranslation);
             if (!isVoiceMessage && !textToSend.equals(content)) {
-                message.setTranslatedContent(textToSend);
+                message.setSentContent(textToSend);
             }
             message = messageRepository.save(message);
         }

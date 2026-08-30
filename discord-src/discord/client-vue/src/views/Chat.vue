@@ -1711,8 +1711,10 @@ function senderNameOf(msg) {
 function displayContentOf(msg) {
   if (msg?.messageType === 'voice') return ''
   if (isGifMsg(msg)) return ''
-  // 默认显示原文（翻译前内容），"查看原文"展开后显示翻译后的内容
-  return msg.content || msg.translatedContent || ''
+  // 统一默认显示中文（translatedContent），"查看原文"展开后显示对应原文/发送内容
+  // INBOUND: translatedContent=中文译文, content=好友原文
+  // OUTBOUND: translatedContent=中文译文, sentContent=实际发出的目标语言内容, content=用户输入
+  return msg?.translatedContent || msg?.content || ''
 }
 
 function isGifMsg(msg) {
@@ -2348,10 +2350,22 @@ function voiceSrc(msg) {
 }
 
 function hasOriginal(msg) {
-  return !!(msg.translatedContent && msg.content && msg.translatedContent !== msg.content)
+  if (!msg?.translatedContent) return false
+  if (msg.direction === 'OUTBOUND') {
+    // OUTBOUND: translatedContent=中文, sentContent=实际发出的(目标语言)，两者不同才显示切换
+    return !!(msg.sentContent && msg.translatedContent !== msg.sentContent)
+  } else {
+    // INBOUND: translatedContent=中文译文, content=好友原文
+    return !!(msg.content && msg.translatedContent !== msg.content)
+  }
 }
 
-function originalContentOf(msg) { return msg.translatedContent || msg.content || '' }
+function originalContentOf(msg) {
+  // INBOUND: 查看原文 = 好友发的 content（translatedContent 已是中文译文）
+  // OUTBOUND: 查看原文 = 实际发出的 sentContent（目标语言），没有则退回 content
+  if (msg?.direction === 'OUTBOUND') return msg.sentContent || msg.content || ''
+  return msg?.content || msg?.translatedContent || ''
+}
 
 function toggleOriginal(msgId) {
   if (originalExpandedSet.value[msgId]) delete originalExpandedSet.value[msgId]

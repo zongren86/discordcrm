@@ -62,6 +62,10 @@ public class Message {
     @Column(name = "translated_content", columnDefinition = "TEXT")
     private String translatedContent;
 
+    /** OUTBOUND 专用：实际发送出去的文本（目标语言），translatedContent 存中文译文 */
+    @Column(name = "sent_content", columnDefinition = "TEXT")
+    private String sentContent;
+
     @Column(name = "language", length = 16)
     private String language;
 

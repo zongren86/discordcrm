@@ -17,7 +17,7 @@ public class MessageDtos {
                               String messageType, String audioUrl, Integer audioDuration, String audioMimeType,
                               String audioData,
                               String asrText, String asrTranslated, String asrLanguage, String asrStatus, String asrError,
-                              String gifUrl, String stickerItemsJson) {
+                              String gifUrl, String stickerItemsJson, String sentContent) {
 
         public static MessageDto from(Message m) {
             if (m == null) {
@@ -53,7 +53,8 @@ public class MessageDtos {
                     m.getAsrStatus(),
                     m.getAsrError(),
                     m.getGifUrl(),
-                    m.getStickerItemsJson()
+                    m.getStickerItemsJson(),
+                    m.getSentContent()
             );
         }
 
@@ -91,7 +92,8 @@ public class MessageDtos {
                     m.getAsrStatus(),
                     m.getAsrError(),
                     m.getGifUrl(),
-                    m.getStickerItemsJson()
+                    m.getStickerItemsJson(),
+                    m.getSentContent()
             );
         }
 
