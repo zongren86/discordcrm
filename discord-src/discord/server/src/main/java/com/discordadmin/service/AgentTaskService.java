@@ -111,7 +111,12 @@ public class AgentTaskService {
             t.setStatus("RUNNING");
             t.setUpdatedAt(Instant.now());
             agentTaskRepository.save(t);
+            log.info("[pollNext] agent={} serverId={} 领取 taskId={} type={} → RUNNING",
+                    agentName, server.getId(), t.getId(), t.getType());
         });
+        if (task.isEmpty()) {
+            log.debug("[pollNext] agent={} serverId={} 无待执行任务", agentName, server.getId());
+        }
         return task;
     }
 

@@ -1,4 +1,5 @@
 const { http, cfg } = require('./http');
+const { discordHttp } = require('./discord');
 const { captureDiscordAccount, launchBrowserOnly } = require('./browser');
 const fs = require('fs');
 const path = require('path');
@@ -145,17 +146,10 @@ async function executeTask(task) {
         await reportTask(task.id, 'RUNNING');
         try {
           // 从 agent 机器发 Discord API 请求 —— IP 是用户家庭宽带，不会触发风控
-          const resp = await require('axios').post(
-            `https://discord.com/api/v10/channels/${channelId}/messages`,
+          const resp = await discordHttp.post(
+            `/channels/${channelId}/messages`,
             { content: content || '' },
-            {
-              headers: {
-                'Authorization': token,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-                'Content-Type': 'application/json',
-              },
-              timeout: 15000,
-            }
+            { headers: { 'Authorization': token } }
           );
           const discordMessageId = resp.data?.id;
           console.log(`[任务] ✅ 消息已发送 discordMsgId=${discordMessageId}`);
@@ -242,7 +236,7 @@ async function pollMessages() {
   for (const acc of managedAccounts) {
     try {
       // 1. 拉 DM channels
-      const chResp = await axios.get('https://discord.com/api/v10/users/@me/channels', {
+      const chResp = await discordHttp.get('/users/@me/channels', {
         headers: { 'Authorization': acc.token }, timeout: 8000,
       });
       const channels = chResp.data || [];
@@ -252,7 +246,7 @@ async function pollMessages() {
 
       for (const ch of channels) {
         // 2. 拉最新 10 条消息
-        const mResp = await axios.get(`https://discord.com/api/v10/channels/${ch.id}/messages`, {
+        const mResp = await discordHttp.get(`/channels/${ch.id}/messages`, {
           params: { limit: 10 },
           headers: { 'Authorization': acc.token }, timeout: 5000,
         });
