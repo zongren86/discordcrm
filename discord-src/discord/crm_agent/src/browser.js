@@ -1,6 +1,6 @@
 /**
  * Discord 用户采集 —— Playwright
- * 支持：新账号采集、持久化 profile 唤起、取消/浏览器关闭检测
+ * 三层 token 捕获：网络拦截(最可靠) → localStorage → IndexedDB
  */
 const { chromium } = require('playwright');
 const path = require('path');
@@ -39,29 +39,20 @@ function getInitScript() {
   `;
 }
 
-/**
- * 检测浏览器 context 是否还活着（Playwright 原生 API）
- */
 function isContextAlive(context) {
   if (!context) return false;
   try {
     if (typeof context.isClosed === 'function') return !context.isClosed();
-    context.pages();
-    return true;
+    context.pages(); return true;
   } catch { return false; }
 }
 
-/**
- * 检测页面是否在 Discord 域名且有 storage 可用
- */
 async function pageReady(page) {
   try {
     const url = page.url();
     if (!url || url.startsWith('about:') || url.startsWith('chrome:')) return false;
     if (!url.includes('discord.com') && !url.includes('discordapp.com')) return false;
-    return await page.evaluate(() => {
-      return typeof localStorage !== 'undefined' && typeof sessionStorage !== 'undefined';
-    }).catch(() => false);
+    return true; // 只检查域名，storage 检查放 scanToken 里 try-catch
   } catch { return false; }
 }
 
@@ -72,9 +63,7 @@ async function checkCancelled(http, taskId) {
   } catch { return false; }
 }
 
-/**
- * 只唤起持久化浏览器（不采集）
- */
+/** 只唤起浏览器，不采集 */
 async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   if (!browserProfilePath) throw new Error('缺少 browserProfilePath');
   const userDataDir = path.resolve(browserProfilePath);
@@ -93,12 +82,12 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   try {
     await page.goto('https://discord.com/channels/@me', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
   } catch {}
-  console.log('[Browser] ✅ 浏览器已打开，等待用户手动关闭...');
+  console.log('[Browser] ✅ 浏览器已打开');
   return { context, page };
 }
 
 /**
- * Discord 账号采集
+ * Discord 账号采集（三层 token 捕获）
  */
 async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentName } = {}) {
   const userDataDir = path.join(
@@ -123,84 +112,114 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   let page = context.pages()[0] || await context.newPage();
   await page.addInitScript(getInitScript());
 
-  // 如果默认页在 about:blank，先打开 Discord
+  // ========== 关键：网络拦截抓 Authorization header ==========
+  // 不管 Discord 把 token 存哪，API 请求里一定带 Authorization
+  // 这是 Playwright 最稳的 token 抓法
+  let capturedToken = null;
+  context.on('request', (request) => {
+    try {
+      const headers = request.headers();
+      const auth = headers['authorization'] || headers['Authorization'];
+      if (auth && auth.startsWith('Bot ') === false && auth.length > 50) {
+        // 是用户 token（不是 Bot token）
+        if (!capturedToken || capturedToken !== auth) {
+          capturedToken = auth;
+          console.log(`[Browser] 🎯 网络拦截捕获 token (${auth.length} chars)`);
+        }
+      }
+    } catch {}
+  });
+
+  // 也监听 response，万一 header 是在 response 里
+  context.on('response', async (response) => {
+    try {
+      const headers = response.headers();
+      const auth = headers['authorization'] || headers['Authorization'];
+      if (auth && auth.length > 50 && !capturedToken) {
+        capturedToken = auth;
+        console.log(`[Browser] 🎯 响应头捕获 token (${auth.length} chars)`);
+      }
+    } catch {}
+  });
+
+  console.log('[Browser] 打开 Discord 登录页...');
   try {
     await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
   } catch (e) {
-    // goto 可能超时但页面其实有内容，继续让用户手动操作
-    console.log('[Browser] goto 超时或失败，等待 Discord 页面加载...');
+    console.log('[Browser] goto 超时，页面可能仍在加载，继续等待...');
   }
 
-  // 轮询：等到页面真的加载好了（有 localStorage）
-  console.log('[Browser] 等待页面就绪...');
-  for (let i = 0; i < 20; i++) {
+  // 等待页面就绪
+  console.log('[Browser] 等待 Discord 页面就绪...');
+  for (let i = 0; i < 15; i++) {
     await new Promise(r => setTimeout(r, 1000));
     if (await pageReady(page)) break;
     if (!isContextAlive(context)) throw new Error('用户关闭了浏览器');
-    // 有时 page 被用户切了 tab，找回 discord tab
     const pages = context.pages();
     page = pages.find(p => (p.url() || '').includes('discord')) || page;
   }
 
   const result = { token: null, userId: null, username: null, email: null, avatarUrl: null };
 
-  // scanToken：page.evaluate 里全程 try-catch，localStorage 不存在就返回 null
-  const scanToken = async () => {
+  // ========== 备用：从 storage 扫 token ==========
+  const scanStorage = async () => {
     try {
       return await page.evaluate(async () => {
         try {
-          if (typeof localStorage === 'undefined' && typeof sessionStorage === 'undefined') return null;
-          const scan = (storage) => {
-            if (!storage) return false;
-            try {
-              for (const k of Object.keys(storage)) {
-                const v = storage.getItem(k);
-                if (v && v.split('.').length === 3 && v.length > 50) { token = v; return true; }
-              }
-            } catch {}
-            return false;
-          };
-          let token = null;
-          scan(localStorage) || scan(sessionStorage);
+          const tokenPattern = /[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}/;
+          
+          // localStorage
+          if (typeof localStorage !== 'undefined') {
+            for (let i = 0; i < localStorage.length; i++) {
+              const v = localStorage.getItem(localStorage.key(i));
+              if (v && tokenPattern.test(v)) return v;
+            }
+          }
+          // sessionStorage
+          if (typeof sessionStorage !== 'undefined') {
+            for (let i = 0; i < sessionStorage.length; i++) {
+              const v = sessionStorage.getItem(sessionStorage.key(i));
+              if (v && tokenPattern.test(v)) return v;
+            }
+          }
           // IndexedDB
-          if (!token) {
+          if (typeof indexedDB !== 'undefined') {
             try {
-              if (typeof indexedDB !== 'undefined') {
-                const dbs = await indexedDB.databases();
-                for (const db of dbs) {
-                  if (!db.name) continue;
-                  try {
-                    await new Promise((resolve) => {
-                      const req = indexedDB.open(db.name);
-                      req.onsuccess = () => {
-                        try {
-                          const names = req.result.objectStoreNames;
-                          if (names.length > 0) {
-                            const tx = req.result.transaction(names[0], 'readonly');
-                            const all = tx.objectStore(names[0]).getAll();
-                            all.onsuccess = () => {
-                              for (const item of all.result || []) {
-                                const str = typeof item === 'string' ? item : JSON.stringify(item);
-                                const m = str.match(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}/);
-                                if (m) { token = m[0]; break; }
-                              }
-                            };
-                          }
-                        } catch {}
-                        resolve();
-                      };
-                      req.onerror = () => resolve();
-                    });
-                  } catch {}
-                  if (token) break;
-                }
+              const dbs = await indexedDB.databases();
+              for (const db of dbs) {
+                if (!db.name) continue;
+                let t = null;
+                await new Promise((resolve) => {
+                  const req = indexedDB.open(db.name);
+                  req.onsuccess = async () => {
+                    try {
+                      const names = req.result.objectStoreNames;
+                      for (const n of names) {
+                        const all = req.result.transaction(n, 'readonly').objectStore(n).getAll();
+                        await new Promise(r2 => {
+                          all.onsuccess = () => {
+                            for (const item of all.result || []) {
+                              const s = typeof item === 'string' ? item : JSON.stringify(item);
+                              const m = s.match(tokenPattern);
+                              if (m) { t = m[0]; break; }
+                            }
+                            r2();
+                          };
+                          all.onerror = () => r2();
+                        });
+                        if (t) break;
+                      }
+                    } catch {}
+                    resolve();
+                  };
+                  req.onerror = () => resolve();
+                });
+                if (t) return t;
               }
             } catch {}
           }
-          return token;
-        } catch (e) {
           return null;
-        }
+        } catch { return null; }
       });
     } catch { return null; }
   };
@@ -236,33 +255,36 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 
     // 2. 浏览器存活
     if (!isContextAlive(context)) {
-      console.log('[Browser] ❌ context.isClosed() = true');
+      console.log('[Browser] ❌ 用户关闭了浏览器');
       const err = new Error('用户关闭了浏览器'); err.code = 'BROWSER_CLOSED'; throw err;
     }
 
-    // 3. page 还在 discord 吗？
+    // 3. page 还在 discord 吗
     if (!await pageReady(page)) {
-      // 用户可能切了 tab，找回来
       const pages = context.pages();
       page = pages.find(p => (p.url() || '').includes('discord')) || page;
       if (scanCount <= 5 || scanCount % 15 === 0) {
-        console.log(`[Browser] 扫描#${scanCount} 页面未就绪 (url=${page.url()})，跳过本轮`);
+        console.log(`[Browser] 扫描#${scanCount} 页面未就绪 (url=${page.url()})`);
       }
       continue;
     }
 
-    if (scanCount <= 3 || scanCount % 10 === 0) {
-      console.log(`[Browser] 扫描#${scanCount}  hasToken=${!!result.token}  hasUser=${!!result.userId}`);
+    // 4. 拿 token —— 优先网络拦截，兜底 storage
+    let token = capturedToken;
+    if (!token) {
+      token = await scanStorage();
+      if (token) console.log(`[Browser] 🎯 storage 扫描捕获 token (${token.length} chars)`);
     }
 
-    // 4. 扫 token
-    const token = await scanToken();
     if (token && token !== result.token) {
       result.token = token;
-      console.log(`[Browser] ✅ 找到 token (${token.length} chars)`);
     }
 
-    // 5. 拿用户信息
+    if (scanCount <= 3 || scanCount % 10 === 0) {
+      console.log(`[Browser] 扫描#${scanCount}  token=${result.token ? result.token.slice(0,20)+'...' : '(无)'}  user=${result.username || '(无)'}`);
+    }
+
+    // 5. 有 token 就拿用户信息
     if (result.token && !result.userId) {
       const user = await fetchUser(result.token);
       if (user) {
@@ -276,7 +298,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 
     if (result.token && result.userId) {
       result.browserProfilePath = userDataDir;
-      console.log('[Browser] 🎉 采集成功');
+      console.log('[Browser] 🎉 采集成功！');
       return result;
     }
   }
