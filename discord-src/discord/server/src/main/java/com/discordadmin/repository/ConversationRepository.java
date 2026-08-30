@@ -205,5 +205,9 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
                                 @Param("agentIds") List<Long> agentIds,
                                 @Param("start") java.time.Instant start,
                                 @Param("end") java.time.Instant end);
+
+    /** agent 拉取 Discord REST API 消息时用 */
+    Optional<Conversation> findByDiscordAccountIdAndChannelId(Long accountId, String channelId);
 }
+
 

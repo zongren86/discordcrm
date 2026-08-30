@@ -2070,4 +2070,39 @@ private boolean isLocalUploadUrl(String url) {
         }
     }
 
+    /**
+     * agent 机器 HTTP 轮询 Discord API 拿到的新消息 → 入库
+     * 不走 JDA，直接从 Discord REST API 拿的数据
+     */
+    @Transactional
+    public void saveAgentPulledMessage(Long accountId, String channelId, String discordMsgId,
+                                        String content, boolean isFromMe) {
+        // 1. 去重
+        if (messageRepository.findByDiscordMessageId(discordMsgId).isPresent()) {
+            return;
+        }
+        // 2. 确保 Conversation 存在
+        com.discordadmin.entity.Conversation conv = conversationRepository
+                .findByDiscordAccountIdAndChannelId(accountId, channelId)
+                .orElseGet(() -> {
+                    com.discordadmin.entity.DiscordAccount acc = discordAccountRepository.findById(accountId)
+                            .orElseThrow(() -> new IllegalArgumentException("账号不存在 id=" + accountId));
+                    com.discordadmin.entity.Conversation cv = new com.discordadmin.entity.Conversation();
+                    cv.setDiscordAccount(acc);
+                    cv.setChannelId(channelId);
+                    cv.setChannelName("DM/" + channelId.substring(0, Math.min(8, channelId.length())));
+                    return conversationRepository.save(cv);
+                });
+        // 3. 存 Message
+        com.discordadmin.entity.Message msg = new com.discordadmin.entity.Message();
+        msg.setConversation(conv);
+        msg.setDiscordMessageId(discordMsgId);
+        msg.setDirection(isFromMe
+                ? com.discordadmin.entity.Message.Direction.OUTBOUND
+                : com.discordadmin.entity.Message.Direction.INBOUND);
+        msg.setContent(content != null ? content : "");
+        msg.setTranslatedContent(content != null ? content : "");
+        messageRepository.save(msg);
+    }
+
 }

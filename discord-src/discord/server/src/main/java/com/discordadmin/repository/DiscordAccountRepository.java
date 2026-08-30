@@ -200,5 +200,8 @@ public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, 
     @Query("SELECT a FROM DiscordAccount a WHERE a.status = 'ACTIVE' " +
            "AND a.accountType = 'USER' AND a.token IS NOT NULL AND a.token <> '' " +
            "AND (a.tokenValid = true OR a.tokenValid IS NULL)")
+    /** agent 拉自己负责的 AGENT 采集账号 */
+    List<DiscordAccount> findByAgentServerIdAndSourceAndStatus(Long agentServerId, String source, DiscordAccount.AccountStatus status);
+
     List<DiscordAccount> findForTokenHealthCheck();
 }

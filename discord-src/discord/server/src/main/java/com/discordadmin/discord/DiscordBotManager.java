@@ -90,6 +90,14 @@ public class DiscordBotManager {
             throw new IllegalArgumentException("Bot Token 不能为空");
         }
 
+        // ✅ AGENT 采集的账号跳过 JDA Gateway —— 由 agent 机器 HTTP 轮询收消息
+        // 同 token 双 IP（服务器 JDA + agent 发消息）会触发 Discord 风控
+        if ("AGENT".equals(acc.getSource())) {
+            connecting.remove(accountId);
+            log.info("Discord 账号 [id={}, name={}] 是 AGENT 采集的，跳过 JDA Gateway，由 agent 机器管理", accountId, acc.getName());
+            return;
+        }
+
         final Long accId = accountId;
         final String accountName = acc.getName();
         final String token = acc.getToken();

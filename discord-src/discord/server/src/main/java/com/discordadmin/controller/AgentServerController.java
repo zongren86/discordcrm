@@ -3,6 +3,10 @@ package com.discordadmin.controller;
 import com.discordadmin.entity.AgentServer;
 import com.discordadmin.service.AgentServerService;
 import com.discordadmin.service.AgentTaskService;
+import com.discordadmin.repository.DiscordAccountRepository;
+import com.discordadmin.repository.AgentServerRepository;
+import com.discordadmin.service.MessageService;
+import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.AgentTask;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +37,9 @@ public class AgentServerController {
 
     private final AgentServerService agentServerService;
     private final AgentTaskService agentTaskService;
+    private final DiscordAccountRepository discordAccountRepository;
+    private final AgentServerRepository agentServerRepository;
+    private final MessageService messageService;
 
     @Value("${app.agent-source-dir:}")
     private String agentSourceDir;
@@ -548,5 +555,61 @@ public class AgentServerController {
                 "  A: Get-Process node;  Stop-Process -Id <PID>\n" +
                 "";
         return content.replace("{VER}", ver);
+    }
+
+    /**
+     * agent 拉自己负责的 AGENT 采集账号列表（用于 HTTP 轮询收消息）
+     * body: { token }
+     * 返回: [{ id, name, discordId, token, status }] — 只返回必要字段，不含敏感信息（browserProfilePath 等在 agent 本地已有）
+     */
+    @PostMapping("/accounts")
+    public ResponseEntity<List<Map<String, Object>>> getAgentAccounts(@RequestBody Map<String, Object> body) {
+        String token = (String) body.get("token");
+        AgentServer server = agentServerRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("无效的 agent token"));
+        List<DiscordAccount> accounts = discordAccountRepository
+                .findByAgentServerIdAndSourceAndStatus(server.getId(), "AGENT", DiscordAccount.AccountStatus.ACTIVE);
+        List<Map<String, Object>> result = accounts.stream().map(a -> {
+            Map<String, Object> m = new HashMap<>();
+            m.put("id", a.getId());
+            m.put("name", a.getName());
+            m.put("discordId", a.getDiscordId());
+            m.put("token", a.getToken());
+            return m;
+        }).toList();
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * agent 上报新消息（agent 机器 HTTP 轮询 Discord API 拿到的）
+     * body: { token, messages: [{ accountId, channelId, channelType, discordMessageId, authorId, authorName, content, timestamp, isFromMe }] }
+     */
+    @PostMapping("/messages/report")
+    public ResponseEntity<Map<String, Object>> reportMessages(@RequestBody Map<String, Object> body) {
+        String token = (String) body.get("token");
+        AgentServer server = agentServerRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("无效的 agent token"));
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> messages = (List<Map<String, Object>>) body.get("messages");
+        if (messages == null || messages.isEmpty()) {
+            return ResponseEntity.ok(Map.of("received", 0));
+        }
+
+        int saved = 0;
+        for (Map<String, Object> m : messages) {
+            try {
+                Long accountId = Long.valueOf(m.get("accountId").toString());
+                String channelId = (String) m.get("channelId");
+                String discordMsgId = (String) m.get("discordMessageId");
+                String content = (String) m.getOrDefault("content", "");
+                boolean isFromMe = Boolean.TRUE.equals(m.get("isFromMe"));
+                messageService.saveAgentPulledMessage(accountId, channelId, discordMsgId, content, isFromMe);
+                saved++;
+            } catch (Exception e) {
+                log.warn("Agent 上报消息入库失败: {}", e.getMessage());
+            }
+        }
+        return ResponseEntity.ok(Map.of("received", saved));
     }
 }
