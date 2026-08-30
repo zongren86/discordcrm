@@ -54,6 +54,27 @@ public class AgentTaskService {
     }
 
     /**
+     * 同步等待任务完成（给 MessageService 用）
+     * @return result JSON 字符串，失败抛异常
+     */
+    public String waitForTaskResult(Long taskId, long timeoutMs) throws InterruptedException {
+        long start = System.currentTimeMillis();
+        while (System.currentTimeMillis() - start < timeoutMs) {
+            AgentTask t = agentTaskRepository.findById(taskId).orElse(null);
+            if (t == null) throw new IllegalStateException("任务不存在 id=" + taskId);
+            String status = t.getStatus();
+            if ("SUCCESS".equals(status)) return t.getResult();
+            if ("FAILED".equals(status)) {
+                String err = t.getResult();
+                throw new IllegalStateException("Agent 执行失败: " + (err != null ? err : "未知错误"));
+            }
+            if ("CANCELLED".equals(status)) throw new IllegalStateException("任务已取消");
+            Thread.sleep(500);
+        }
+        throw new IllegalStateException("等待 Agent 执行超时（" + (timeoutMs/1000) + "秒）");
+    }
+
+    /**
      * agent poll —— 拉取下一个待执行任务并标记 RUNNING
      */
     @Transactional

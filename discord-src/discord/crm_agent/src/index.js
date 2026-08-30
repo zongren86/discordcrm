@@ -133,6 +133,48 @@ async function executeTask(task) {
         break;
       }
 
+      case 'SEND_MESSAGE': {
+        const params = typeof task.params === 'string'
+          ? (() => { try { return JSON.parse(task.params); } catch { return {}; } })()
+          : (task.params || {});
+        const { token, channelId, content } = params;
+        if (!token || !channelId) {
+          await reportTask(task.id, 'FAILED', { error: '缺少 token 或 channelId' });
+          break;
+        }
+        await reportTask(task.id, 'RUNNING');
+        try {
+          // 从 agent 机器发 Discord API 请求 —— IP 是用户家庭宽带，不会触发风控
+          const resp = await require('axios').post(
+            `https://discord.com/api/v10/channels/${channelId}/messages`,
+            { content: content || '' },
+            {
+              headers: {
+                'Authorization': token,
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+                'Content-Type': 'application/json',
+              },
+              timeout: 15000,
+            }
+          );
+          const discordMessageId = resp.data?.id;
+          console.log(`[任务] ✅ 消息已发送 discordMsgId=${discordMessageId}`);
+          await reportTask(task.id, 'SUCCESS', {
+            discordMessageId,
+            channelId,
+          });
+        } catch (err) {
+          const status = err.response?.status;
+          const msg = status === 401 ? 'Token 已失效（401 Unauthorized）'
+                    : status === 403 ? '没有权限在此频道发消息（403 Forbidden）'
+                    : status === 429 ? 'Discord 限流（429 Too Many Requests）'
+                    : (err.response?.data?.message || err.message);
+          console.error(`[任务] 发消息失败: ${msg}`);
+          await reportTask(task.id, 'FAILED', { error: msg, status });
+        }
+        break;
+      }
+
       default:
         console.warn(`[任务] 未知类型: ${task.type}`);
         await reportTask(task.id, 'FAILED', { error: '未知任务类型: ' + task.type });

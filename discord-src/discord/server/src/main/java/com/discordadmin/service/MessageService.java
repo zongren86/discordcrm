@@ -69,6 +69,8 @@ public class MessageService {
     private final DiscordAccountRepository discordAccountRepository;
     private final DiscordBotManager discordBotManager;
     private final DiscordUserClient discordUserClient;
+    @Autowired @Lazy
+    private AgentTaskService agentTaskService;
     private final SimpMessagingTemplate messagingTemplate;
     private final TranslationService translationService;
     private final TranslationServiceFactory translationServiceFactory;
@@ -368,7 +370,32 @@ public class MessageService {
                         fileName, audioBytes, mimeType, audioDuration, null);
                 discordMessageId = resp.path("id").asText(null);
                 discordAttachmentUrl = extractAttachmentUrl(resp);
+            } else if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
+                // ✅ 代理模式采集的账号 —— 从 agent 机器发，IP 是用户家庭宽带，不会触发风控
+                try {
+                    com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+                    String paramsJson = om.writeValueAsString(java.util.Map.of(
+                            "token", account.getToken(),
+                            "channelId", conversation.getChannelId(),
+                            "content", textToSend != null ? textToSend : ""
+                    ));
+                    com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
+                            account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
+                    log.info("[Agent路由] 发消息走 agent taskId={}, account={}, channel={}",
+                            task.getId(), account.getName(), conversation.getChannelId());
+                    String resultJson = agentTaskService.waitForTaskResult(task.getId(), 15000);
+                    com.fasterxml.jackson.databind.JsonNode r = om.readTree(resultJson);
+                    discordMessageId = r.path("discordMessageId").asText(null);
+                    if (discordMessageId == null) {
+                        throw new IllegalStateException("Agent 未返回 discordMessageId");
+                    }
+                } catch (IllegalStateException e) {
+                    throw e; // 自己抛的直接上抛
+                } catch (Exception e) {
+                    throw new IllegalStateException("Agent 发消息失败: " + e.getMessage(), e);
+                }
             } else {
+                // ✅ 手工/批量导入 —— 服务端裸调（原来的逻辑）
                 discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
             }
         } catch (Exception e) {
