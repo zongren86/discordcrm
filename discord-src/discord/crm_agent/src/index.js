@@ -120,13 +120,17 @@ async function executeTask(task) {
         await reportTask(task.id, 'RUNNING');
         try {
           const { context } = await launchBrowserOnly(profilePath, cfg.browser || {});
-          console.log('[任务] 浏览器已打开，等待用户关闭...');
-          // 保持浏览器开着直到用户主动关闭
-          await new Promise((resolve) => {
-            context.on('close', resolve);
-          });
-          console.log('[Browser] 浏览器已关闭');
-          await reportTask(task.id, 'SUCCESS');
+          console.log('[任务] ✅ 浏览器已打开');
+          // 立即报告 SUCCESS + 释放 busy，让 pollTask 能继续 poll 新任务（如 SEND_MESSAGE）
+          // 浏览器关闭监听放后台异步跑，不阻塞主循环
+          reportTask(task.id, 'SUCCESS').catch(() => {});
+          (async () => {
+            try {
+              await new Promise(resolve => context.on('close', resolve));
+              console.log('[Browser] 浏览器已关闭');
+            } catch {}
+          })();
+          break;
         } catch (err) {
           await reportTask(task.id, 'FAILED', { error: err.message });
           console.error('[任务] 唤起浏览器失败:', err.message);
