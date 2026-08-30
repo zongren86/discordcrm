@@ -177,17 +177,25 @@ public class AgentTaskService {
         if (discordId != null) {
             Optional<DiscordAccount> existing = discordAccountRepository.findByDiscordId(discordId);
             account = existing.orElseGet(DiscordAccount::new);
+            if (existing.isPresent()) {
+                log.info("[upsert] 账号已存在 id={} discordId={} → 更新 token/信息", account.getId(), discordId);
+            }
         } else {
             account = new DiscordAccount();
         }
 
         if (username != null) account.setName(username);
+        if (discordId != null) account.setDiscordId(discordId);
+        // 从 resultMap 再取 discordName（Discord 上的显示名，可能和 username 不同）
+        String discordName = (String) result.get("discordName");
+        if (discordName != null) account.setDiscordName(discordName);
+        else if (username != null) account.setDiscordName(username);
         if (email != null) account.setEmail(email);
         if (token != null) account.setToken(token);
-        if (discordId != null) account.setDiscordId(discordId);
+        if (avatarUrl != null) account.setAvatarUrl(avatarUrl);
         if (merchantId != null) account.setMerchantId(merchantId);
         account.setAccountType(AccountType.USER);
-        if (account.getStatus() == null) account.setStatus(AccountStatus.ACTIVE);
+        account.setStatus(AccountStatus.ACTIVE);
         // 持久化 profile 路径 + agent 关联
         if (browserProfilePath != null && !browserProfilePath.isBlank()) {
             account.setBrowserProfilePath(browserProfilePath);
