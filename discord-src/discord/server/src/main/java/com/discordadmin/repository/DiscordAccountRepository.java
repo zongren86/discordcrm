@@ -196,12 +196,12 @@ public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, 
     @Query("SELECT a.id, COUNT(m) FROM DiscordAccount a LEFT JOIN Conversation c ON c.discordAccount = a LEFT JOIN Message m ON m.conversation = c WHERE a.id IN :ids GROUP BY a.id")
     List<Object[]> countMessagesByAccountIds(@Param("ids") List<Long> ids);
 
+    /** agent 拉自己负责的 AGENT 采集账号 */
+    List<DiscordAccount> findByAgentServerIdAndSourceAndStatus(Long agentServerId, String source, DiscordAccount.AccountStatus status);
+
     /** Token 定时体检专用：查 ACTIVE + USER + token_valid=true 的账号 */
     @Query("SELECT a FROM DiscordAccount a WHERE a.status = 'ACTIVE' " +
            "AND a.accountType = 'USER' AND a.token IS NOT NULL AND a.token <> '' " +
            "AND (a.tokenValid = true OR a.tokenValid IS NULL)")
-    /** agent 拉自己负责的 AGENT 采集账号 */
-    List<DiscordAccount> findByAgentServerIdAndSourceAndStatus(Long agentServerId, String source, DiscordAccount.AccountStatus status);
-
     List<DiscordAccount> findForTokenHealthCheck();
 }

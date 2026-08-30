@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 import java.time.Instant;
 import java.util.Map;
@@ -32,8 +33,9 @@ public class AgentTaskService {
 
     /**
      * 创建一个待执行任务（由前端调用）
+     * 用 REQUIRES_NEW —— 独立事务，外层（如 MessageService 的 sendMessage）回滚不影响 task 持久化
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public AgentTask createTask(Long agentServerId, String type, String paramsJson) {
         AgentServer server = agentServerRepository.findById(agentServerId)
                 .orElseThrow(() -> new IllegalArgumentException("代理节点不存在 id=" + agentServerId));
@@ -70,6 +72,14 @@ public class AgentTaskService {
             }
             if ("CANCELLED".equals(status)) throw new IllegalStateException("任务已取消");
             Thread.sleep(500);
+        }
+        // 超时了，把 task 标记为 CANCELLED（避免 agent 后续 poll 到又执行）
+        AgentTask t = agentTaskRepository.findById(taskId).orElse(null);
+        if (t != null && !"SUCCESS".equals(t.getStatus()) && !"FAILED".equals(t.getStatus())) {
+            t.setStatus("CANCELLED");
+            t.setResult("{\"error\":\"timeout_cancelled_by_server\"}");
+            t.setUpdatedAt(Instant.now());
+            agentTaskRepository.save(t);
         }
         throw new IllegalStateException("等待 Agent 执行超时（" + (timeoutMs/1000) + "秒）");
     }
