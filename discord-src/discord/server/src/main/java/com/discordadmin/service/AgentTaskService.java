@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
+import jakarta.persistence.EntityManager;
 
 import java.time.Instant;
 import java.util.Map;
@@ -30,6 +31,7 @@ public class AgentTaskService {
     private final AgentServerRepository agentServerRepository;
     private final DiscordAccountRepository discordAccountRepository;
     private final ObjectMapper objectMapper;
+    private final EntityManager entityManager;
 
     /**
      * 创建一个待执行任务（由前端调用）
@@ -62,6 +64,10 @@ public class AgentTaskService {
     public String waitForTaskResult(Long taskId, long timeoutMs) throws InterruptedException {
         long start = System.currentTimeMillis();
         while (System.currentTimeMillis() - start < timeoutMs) {
+            // 关键：clear Hibernate 一级缓存，强制每次都查真实 DB
+            // 因为 sendReply 有 @Transactional，createTask + waitFor 在同事务里，
+            // findById 会返回缓存的 PENDING，即使 agent 已经在另一个事务 report SUCCESS 了
+            entityManager.clear();
             AgentTask t = agentTaskRepository.findById(taskId).orElse(null);
             if (t == null) throw new IllegalStateException("任务不存在 id=" + taskId);
             String status = t.getStatus();
@@ -82,6 +88,7 @@ public class AgentTaskService {
             Thread.sleep(500);
         }
         // 超时了，把 task 标记为 CANCELLED（避免 agent 后续 poll 到又执行）
+        entityManager.clear();
         AgentTask t = agentTaskRepository.findById(taskId).orElse(null);
         if (t != null && !"SUCCESS".equals(t.getStatus()) && !"FAILED".equals(t.getStatus())) {
             t.setStatus("CANCELLED");

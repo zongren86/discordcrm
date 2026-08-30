@@ -358,6 +358,9 @@ public class MessageService {
             }
         }
 
+        log.info("[sendReply] TRANSLATE: content='{}', targetLang={}, textToSend='{}', zhTranslation='{}', merchantId={}",
+                content, targetLang, textToSend, zhTranslation, merchantId);
+
         LanguageDetectionService.LanguageResult langResult = null;
         if (content != null && !content.isBlank()) {
             langResult = languageDetectionService.detect(content, merchantId);
@@ -459,12 +462,12 @@ public class MessageService {
             } else {
                 message.setDiscordMessageId(discordMessageId);
                 if (zhTranslation != null) message.setTranslatedContent(zhTranslation);
-                if (!isVoiceMessage) message.setSentContent(textToSend);
+                if (!isVoiceMessage) { log.info("[sendReply] SAVE sentContent='{}'", textToSend); message.setSentContent(textToSend); }
                 message = messageRepository.save(message);
             }
         } else {
             if (zhTranslation != null) message.setTranslatedContent(zhTranslation);
-            if (!isVoiceMessage) message.setSentContent(textToSend);
+            if (!isVoiceMessage) { log.info("[sendReply] SAVE sentContent='{}'", textToSend); message.setSentContent(textToSend); }
             message = messageRepository.save(message);
         }
 
@@ -2140,6 +2143,45 @@ private boolean isLocalUploadUrl(String url) {
                 : com.discordadmin.entity.Message.Direction.INBOUND);
         msg.setContent(content != null ? content : "");
         msg.setTranslatedContent(content != null ? content : "");
+        messageRepository.save(msg);
+    }
+
+    /**
+     * agent 机器上报自己发的消息 → OUTBOUND 入库（完整字段版本）
+     * 用于 agent 补拉自己的历史消息（比如账号接管前在网页版发的）
+     */
+    @Transactional
+    public void saveAgentOutboundMessage(Long accountId, String channelId, String discordMsgId,
+                                          String authorId, String authorName, String content,
+                                          String messageType, String gifUrl, String attachmentsJson) {
+        // 1. 去重
+        if (messageRepository.findByDiscordMessageId(discordMsgId).isPresent()) {
+            return;
+        }
+        // 2. 确保 Conversation 存在
+        com.discordadmin.entity.Conversation conv = conversationRepository
+                .findByDiscordAccountIdAndChannelId(accountId, channelId)
+                .orElseGet(() -> {
+                    com.discordadmin.entity.DiscordAccount acc = discordAccountRepository.findById(accountId)
+                            .orElseThrow(() -> new IllegalArgumentException("账号不存在 id=" + accountId));
+                    com.discordadmin.entity.Conversation cv = new com.discordadmin.entity.Conversation();
+                    cv.setDiscordAccount(acc);
+                    cv.setChannelId(channelId);
+                    cv.setChannelName("DM/" + channelId.substring(0, Math.min(8, channelId.length())));
+                    return conversationRepository.save(cv);
+                });
+        // 3. 存 Message — OUTBOUND
+        com.discordadmin.entity.Message msg = new com.discordadmin.entity.Message();
+        msg.setConversation(conv);
+        msg.setDiscordMessageId(discordMsgId);
+        msg.setDirection(com.discordadmin.entity.Message.Direction.OUTBOUND);
+        msg.setSenderName(authorName);
+        msg.setSenderDiscordUserId(authorId);
+        msg.setContent(content != null ? content : "");
+        msg.setTranslatedContent(content != null ? content : "");
+        msg.setMessageType(messageType != null ? messageType : "text");
+        msg.setGifUrl(gifUrl);
+        msg.setAttachmentsJson(attachmentsJson);
         messageRepository.save(msg);
     }
 

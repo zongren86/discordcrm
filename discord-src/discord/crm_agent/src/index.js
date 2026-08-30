@@ -232,14 +232,88 @@ const seenMessageIds = new Map();
 const ACCOUNT_REFRESH_MS = 30000;
 const MSG_POLL_MS = 2000;
 
+// 已经执行过首次历史补拉的账号 ID 集合
+const backfilledAccounts = new Set();
+
 async function loadManagedAccounts() {
   try {
     const accounts = await http.post('/agent-servers/accounts', { token: cfg.token });
     managedAccounts = accounts || [];
     if (managedAccounts.length > 0) {
       console.log(`[消息轮询] 负责 ${managedAccounts.length} 个 AGENT 采集账号`);
+      // 对新账号执行首次历史补拉
+      for (const acc of managedAccounts) {
+        if (!backfilledAccounts.has(acc.id)) {
+          backfilledAccounts.add(acc.id);
+          // 异步执行，不阻塞主流程
+          setTimeout(() => backfillHistoryForAccount(acc), 3000);
+        }
+      }
     }
   } catch (e) {} // 静默
+}
+
+/**
+ * 首次启动时对每个账号补拉历史消息（最多 500 条），确保不丢消息。
+ * 已经在数据库里的消息后端会自动去重。
+ */
+async function backfillHistoryForAccount(acc) {
+  try {
+    console.log(`[历史补拉] 开始为 ${acc.name} 拉取历史消息...`);
+    const chResp = await discordHttp.get('/users/@me/channels', {
+      headers: { 'Authorization': acc.token }, timeout: 10000,
+    });
+    const channels = chResp.data || [];
+    let totalNew = 0;
+    for (const ch of channels) {
+      // 拉最新 100 条（Discord 单次最大）
+      const mResp = await discordHttp.get(`/channels/${ch.id}/messages`, {
+        params: { limit: 100 },
+        headers: { 'Authorization': acc.token }, timeout: 8000,
+      });
+      const msgs = mResp.data || [];
+      const seen = seenMessageIds.get(acc.id) || new Set();
+      const newMsgs = [];
+      for (const m of msgs) {
+        if (seen.has(m.id)) continue;
+        seen.add(m.id);
+        const atts = (m.attachments || []).map(a => ({
+          url: a.url, contentType: a.content_type, filename: a.filename, size: a.size
+        }));
+        const stickers = (m.sticker_items || m.stickers || []).map(s => ({
+          id: s.id, name: s.name, formatType: s.format_type || s.formatType
+        }));
+        let gifUrl = null;
+        const trimmed = (m.content || '').trim();
+        if (/^https?:\/\/\S+$/i.test(trimmed) && /\.(gif|webp|mp4|webm)(\?|#|$)/i.test(trimmed)) {
+          gifUrl = trimmed;
+        } else if (/\.gif/i.test(trimmed) || /gif|giphy|klipy/i.test(trimmed)) {
+          gifUrl = trimmed;
+        }
+        const gifAtt = atts.find(a => a.contentType === 'image/gif' || /\.gif$/i.test(a.filename || ''));
+        if (gifAtt && !gifUrl) gifUrl = gifAtt.url;
+        newMsgs.push({
+          accountId: acc.id, channelId: ch.id, channelType: ch.type,
+          discordMessageId: m.id, authorId: m.author?.id, authorName: m.author?.username,
+          authorGlobalName: m.author?.global_name,
+          content: m.content || '', timestamp: m.timestamp,
+          isFromMe: m.author?.id === acc.discordId,
+          messageType: stickers.length > 0 ? 'sticker' : gifUrl ? 'gif' : atts.length > 0 ? 'image' : 'text',
+          gifUrl, attachments: atts, stickers,
+        });
+      }
+      seenMessageIds.set(acc.id, seen);
+      if (newMsgs.length > 0) {
+        await http.post('/agent-servers/messages/report', {
+          token: cfg.token, messages: newMsgs,
+        });
+        totalNew += newMsgs.length;
+      }
+    }
+    console.log(`[历史补拉] ${acc.name}: 完成，共上报 ${totalNew} 条历史消息（后端会自动去重）`);
+  } catch (err) {
+    console.warn(`[历史补拉] ${acc.name} 失败:`, err.message);
+  }
 }
 
 async function pollMessages() {
@@ -258,9 +332,9 @@ async function pollMessages() {
       const seen = seenMessageIds.get(acc.id) || new Set();
 
       for (const ch of channels) {
-        // 2. 拉最新 10 条消息
+        // 2. 拉最新 50 条消息（Discord API 单次最大 100，取 50 兼顾覆盖和限流）
         const mResp = await discordHttp.get(`/channels/${ch.id}/messages`, {
-          params: { limit: 10 },
+          params: { limit: 50 },
           headers: { 'Authorization': acc.token }, timeout: 5000,
         });
         for (const m of (mResp.data || [])) {
@@ -273,6 +347,25 @@ async function pollMessages() {
           } else {
             seenMessageIds.set(acc.id, seen);
           }
+          // 解析附件、Sticker、GIF URL
+          const atts = (m.attachments || []).map(a => ({
+            url: a.url, contentType: a.content_type, filename: a.filename, size: a.size
+          }));
+          const stickers = (m.sticker_items || m.stickers || []).map(s => ({
+            id: s.id, name: s.name, formatType: s.format_type || s.formatType
+          }));
+          // 检测 GIF URL：纯URL形式 或 附件里的 gif
+          let gifUrl = null;
+          const trimmed = (m.content || '').trim();
+          if (/^https?:\/\/\S+$/i.test(trimmed) && /\.(gif|webp|mp4|webm)(\?|#|$)/i.test(trimmed)) {
+            gifUrl = trimmed;
+          } else if (/\.gif/i.test(trimmed) || /gif|giphy|klipy/i.test(trimmed)) {
+            // gif域名也视为gif
+            gifUrl = trimmed;
+          }
+          const gifAtt = atts.find(a => a.contentType === 'image/gif' || /\.gif$/i.test(a.filename || ''));
+          if (gifAtt && !gifUrl) gifUrl = gifAtt.url;
+
           newMessages.push({
             accountId: acc.id,
             channelId: ch.id,
@@ -280,9 +373,21 @@ async function pollMessages() {
             discordMessageId: m.id,
             authorId: m.author?.id,
             authorName: m.author?.username,
+            authorGlobalName: m.author?.global_name,
+            authorAvatar: m.author?.avatar
+              ? `https://cdn.discordapp.com/avatars/${m.author.id}/${m.author.avatar}.png`
+              : null,
             content: m.content || '',
             timestamp: m.timestamp,
             isFromMe: m.author?.id === acc.discordId,
+            messageType: stickers.length > 0 ? 'sticker'
+              : gifUrl ? 'gif'
+              : atts.length > 0 && atts.some(a => (a.contentType || '').startsWith('image/')) ? 'image'
+              : atts.length > 0 && atts.some(a => (a.contentType || '').startsWith('video/')) ? 'gif'
+              : 'text',
+            gifUrl,
+            attachments: atts,
+            stickers,
           });
         }
       }

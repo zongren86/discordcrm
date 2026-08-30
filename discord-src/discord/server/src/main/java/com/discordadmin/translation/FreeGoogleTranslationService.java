@@ -41,6 +41,7 @@ public class FreeGoogleTranslationService implements TranslationService {
             return Optional.empty();
         }
 
+        log.info("[translate] 开始翻译 text='{}', targetLang={}", text, targetLanguage);
         // 1) Google 翻译（带重试）
         Optional<String> result = translateWithRetry(text, targetLanguage);
         if (result.isPresent()) {
@@ -84,7 +85,7 @@ public class FreeGoogleTranslationService implements TranslationService {
                 }
             } catch (Exception e) {
                 lastError = e;
-                log.debug("Google 翻译第{}次尝试异常: {}", attempt + 1, e.getMessage());
+                log.info("[Google] 第{}次尝试异常: {}", attempt + 1, e.getMessage());
             }
         }
         if (lastError != null) {
@@ -149,13 +150,11 @@ public class FreeGoogleTranslationService implements TranslationService {
     }
 
     private Optional<String> translateWithMyMemory(String text, String targetLanguage, String endpoint) {
+        log.info("[MyMemory] 开始翻译 text='{}', targetLang={}", text, targetLanguage);
         try {
-            String langPair;
-            if (targetLanguage.startsWith("zh")) {
-                langPair = "en|zh-CN";
-            } else {
-                langPair = "zh-CN|en";
-            }
+            // 用 auto 让 MyMemory 自动检测源语言，目标语言按用户传入的来
+            String target = targetLanguage != null ? targetLanguage : "en";
+            String langPair = "auto|" + target;
             String url = String.format(endpoint,
                     URLEncoder.encode(text, StandardCharsets.UTF_8),
                     URLEncoder.encode(langPair, StandardCharsets.UTF_8));
@@ -167,11 +166,13 @@ public class FreeGoogleTranslationService implements TranslationService {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
+                log.warn("[MyMemory] 返回非200: {} body={}", response.statusCode(), response.body().substring(0, Math.min(200, response.body().length())));
                 return Optional.empty();
             }
             JsonNode root = objectMapper.readTree(response.body());
             JsonNode responseData = root.path("responseData");
             if (responseData.isMissingNode()) {
+                log.warn("[MyMemory] responseData 缺失 body={}", response.body().substring(0, Math.min(200, response.body().length())));
                 return Optional.empty();
             }
             String translated = responseData.path("translatedText").asText(null);

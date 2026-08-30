@@ -5,6 +5,8 @@ import com.discordadmin.service.AgentServerService;
 import com.discordadmin.service.AgentTaskService;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.AgentServerRepository;
+import com.discordadmin.service.ConversationService;
+import com.discordadmin.discord.InboundMessage;
 import com.discordadmin.service.MessageService;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.AgentTask;
@@ -15,6 +17,7 @@ import org.springframework.http.ResponseEntity;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import java.io.*;
 import java.nio.file.*;
@@ -40,6 +43,8 @@ public class AgentServerController {
     private final DiscordAccountRepository discordAccountRepository;
     private final AgentServerRepository agentServerRepository;
     private final MessageService messageService;
+    @Autowired
+    private ConversationService conversationService;
 
     @Value("${app.agent-source-dir:}")
     private String agentSourceDir;
@@ -604,10 +609,49 @@ public class AgentServerController {
                 String discordMsgId = (String) m.get("discordMessageId");
                 String content = (String) m.getOrDefault("content", "");
                 boolean isFromMe = Boolean.TRUE.equals(m.get("isFromMe"));
-                messageService.saveAgentPulledMessage(accountId, channelId, discordMsgId, content, isFromMe);
+
+                // 解析完整字段
+                String authorId = (String) m.getOrDefault("authorId", "");
+                String authorName = (String) m.getOrDefault("authorName", "");
+                String authorGlobalName = (String) m.getOrDefault("authorGlobalName", authorName);
+                String authorAvatar = (String) m.get("authorAvatar");
+                String channelType = (String) m.getOrDefault("channelType", "dm");
+                String messageType = (String) m.getOrDefault("messageType", "text");
+                String gifUrl = (String) m.get("gifUrl");
+
+                // 构建 attachmentsJson
+                String attachmentsJson = null;
+                Object attsObj = m.get("attachments");
+                if (attsObj != null) {
+                    try { attachmentsJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(attsObj); }
+                    catch (Exception ignored) {}
+                }
+                String stickerItemsJson = null;
+                Object stickersObj = m.get("stickers");
+                if (stickersObj != null) {
+                    try { stickerItemsJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(stickersObj); }
+                    catch (Exception ignored) {}
+                }
+
+                if (isFromMe) {
+                    // 自己发的消息 → OUTBOUND，走 MessageService 的 OUTBOUND 保存
+                    messageService.saveAgentOutboundMessage(accountId, channelId, discordMsgId,
+                            authorId, authorName, content, messageType, gifUrl, attachmentsJson);
+                } else {
+                    // 别人发的消息 → INBOUND，走完整的 handleInbound 链路
+                    InboundMessage inbound = new InboundMessage(
+                            accountId, discordMsgId, authorId, authorName, authorGlobalName, authorAvatar,
+                            true, null, null, // isDirectMessage=true（agent目前只拉DM）
+                            channelId, "DM/" + channelId.substring(0, Math.min(8, channelId.length())),
+                            content, attachmentsJson, messageType,
+                            null, null, null, null, // 无语音
+                            stickerItemsJson, gifUrl
+                    );
+                    conversationService.handleInbound(inbound);
+                }
                 saved++;
             } catch (Exception e) {
-                log.warn("Agent 上报消息入库失败: {}", e.getMessage());
+                log.warn("Agent 上报消息入库失败 discordMsgId={}: {}", m.get("discordMessageId"), e.getMessage());
             }
         }
         return ResponseEntity.ok(Map.of("received", saved));
