@@ -57,6 +57,7 @@ public class RelationshipSyncService {
     public void autoSyncAll() {
         for (DiscordAccount acc : accountRepository.findByStatus(DiscordAccount.AccountStatus.ACTIVE)) {
             if (acc.getAccountType() == DiscordAccount.AccountType.USER
+                    && !"AGENT".equals(acc.getSource())
                     && Boolean.TRUE.equals(acc.getTokenValid())) {
                 try {
                     syncOne(acc.getId());
@@ -91,6 +92,9 @@ public class RelationshipSyncService {
                 .orElseThrow(() -> new IllegalArgumentException("账号不存在"));
         if (acc.getAccountType() != DiscordAccount.AccountType.USER) {
             throw new IllegalStateException("仅 USER 类型账号可同步好友，BOT 账号无好友概念");
+        }
+        if ("AGENT".equals(acc.getSource())) {
+            throw new IllegalStateException("AGENT 采集账号由 agent 机器管理，服务端不碰");
         }
 
         List<JsonNode> remoteFriends;

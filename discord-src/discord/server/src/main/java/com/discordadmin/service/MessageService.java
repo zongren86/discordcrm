@@ -362,6 +362,9 @@ public class MessageService {
         String discordAttachmentUrl = null;
         try {
             if (isVoiceMessage) {
+                if ("AGENT".equals(account.getSource())) {
+                    throw new IllegalStateException("语音消息暂不支持代理模式发送，请先使用文本消息，或等待后续版本");
+                }
                 byte[] audioBytes = java.util.Base64.getDecoder().decode(audioData);
                 String fileName = normalizeVoiceFileName(audioFileName, audioMimeType);
                 String mimeType = normalizeVoiceMimeType(audioMimeType);
@@ -584,7 +587,9 @@ public class MessageService {
                         String mimeType = contentType != null ? contentType : "application/octet-stream";
                         String name = fileName != null ? fileName : "attachment";
                         
-                        // 发送到 Discord，并获取 API 响应
+                        if ("AGENT".equals(account.getSource())) {
+                            throw new IllegalStateException("文件/图片暂不支持代理模式发送，请先使用文本消息");
+                        }
                         if (account.getAccountType() == DiscordAccount.AccountType.USER) {
                             com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
                                     account.getToken(), conversation.getChannelId(), "",
@@ -1330,6 +1335,9 @@ private boolean isLocalUploadUrl(String url) {
             // Sticker CDN URL：提取stickerId，使用原生sticker_ids API发送
             String stickerId = extractStickerId(gifUrl);
             log.info("发送Discord Sticker, id={}, url={}", stickerId, gifUrl);
+            if ("AGENT".equals(account.getSource())) {
+                throw new IllegalStateException("Sticker/表情包暂不支持代理模式发送");
+            }
             try {
                 JsonNode resp = discordUserClient.sendStickerMessage(
                         account.getToken(), conversation.getChannelId(), stickerId);
@@ -1472,6 +1480,9 @@ private boolean isLocalUploadUrl(String url) {
             String fileName = determineFileName(gifUrl, title);
             String mimeType = determineMimeType(gifUrl, gifData);
 
+            if ("AGENT".equals(account.getSource())) {
+                throw new IllegalStateException("GIF/图片暂不支持代理模式发送，请先使用文本消息");
+            }
             // 3. 上传到 Discord
             JsonNode resp = discordUserClient.sendMessageWithFile(
                     account.getToken(),

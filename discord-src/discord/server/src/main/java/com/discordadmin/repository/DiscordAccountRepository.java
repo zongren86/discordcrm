@@ -202,6 +202,7 @@ public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, 
     /** Token 定时体检专用：查 ACTIVE + USER + token_valid=true 的账号 */
     @Query("SELECT a FROM DiscordAccount a WHERE a.status = 'ACTIVE' " +
            "AND a.accountType = 'USER' AND a.token IS NOT NULL AND a.token <> '' " +
-           "AND (a.tokenValid = true OR a.tokenValid IS NULL)")
+           "AND (a.tokenValid = true OR a.tokenValid IS NULL) " +
+           "AND (a.source IS NULL OR a.source <> 'AGENT')")  // AGENT 账号由 agent 机器体检
     List<DiscordAccount> findForTokenHealthCheck();
 }

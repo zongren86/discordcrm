@@ -44,7 +44,7 @@ public class PresenceSyncScheduler {
         List<DiscordAccount> userAccounts = accountRepository.findByStatus(DiscordAccount.AccountStatus.ACTIVE)
                 .stream()
                 .filter(a -> a.getAccountType() == DiscordAccount.AccountType.USER)
-                // 只同步 Token 有效的账号
+                .filter(a -> !"AGENT".equals(a.getSource()))
                 .filter(a -> Boolean.TRUE.equals(a.getTokenValid()))
                 .toList();
 
