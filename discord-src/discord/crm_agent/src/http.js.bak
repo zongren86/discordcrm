@@ -42,11 +42,7 @@ http.interceptors.response.use(
     if (status === 401 && url?.includes('/heartbeat')) {
       hint = '\n  ⚠️ Token 无效！请在前端「配置→代理管理」复制正确的 token 到 config.json';
     } else if (err.code === 'ERR_TOO_MANY_REDIRECTS' || (typeof status === 'number' && status >= 300 && status < 400)) {
-      const loc = err.response?.headers?.location || '(无 Location 头)';
-      hint = '\n  ⚠️ 检测到 ' + status + ' 重定向！';
-      hint += '\n  → Location: ' + loc;
-      hint += '\n  可能原因: 全局代理软件（Clash/Surge/V2Ray/Proxifier）劫持了后端请求，';
-      hint += '\n  请关闭代理或把 ' + cfg.serverUrl + ' 加入直连规则（不走代理）。';
+      hint = '\n  ⚠️ 检测到重定向！Windows 用户请检查是否开了全局代理（Clash/Surge/V2Ray），请关闭或把 ' + cfg.serverUrl + ' 加入直连规则';
     } else if (err.code === 'ECONNREFUSED') {
       hint = '\n  ⚠️ 连接被拒绝！请确认后端 ' + cfg.serverUrl + ' 可达';
     }
