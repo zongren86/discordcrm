@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
+import { useAuthStore } from '@/stores/auth'
 import { API_BASE } from '@/config'
 
 // 使用配置文件中的 API_BASE
@@ -30,11 +31,21 @@ http.interceptors.response.use(
     const msg = data?.message || data?.error || error.message || '请求失败'
 
     if (status === 401) {
-      localStorage.removeItem('crm_token')
-      localStorage.removeItem('crm_auth')
+      // 先清除 Pinia auth store（内存态），否则路由守卫会把 /login 重定向回来
+      try {
+        const auth = useAuthStore()
+        auth.logout()
+      } catch (e) {
+        // Pinia 可能还没初始化，兜底手动清
+        localStorage.removeItem('crm_token')
+        localStorage.removeItem('crm_auth')
+        localStorage.removeItem('crm_permissions')
+        localStorage.removeItem('crm_menu_paths')
+      }
       if (router.currentRoute.value.name !== 'Login') {
         ElMessage.warning('登录已过期，请重新登录')
-        router.push('/login')
+        // 用 replace 避免浏览器后退又回到被踢下线的页面
+        router.replace('/login')
       }
     } else if (status === 403) {
       ElMessage.error('权限不足 (403)')
