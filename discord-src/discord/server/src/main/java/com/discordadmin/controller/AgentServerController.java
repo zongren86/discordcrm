@@ -75,6 +75,7 @@ public class AgentServerController {
             m.put("nodeVersion", s.getNodeVersion());
             m.put("browserType", s.getBrowserType());
             m.put("notes", s.getNotes());
+            m.put("accountCount", discordAccountRepository.countByAgentServerId(s.getId()));
             m.put("lastSeenAt", s.getLastSeenAt());
             m.put("createdAt", s.getCreatedAt());
             return m;

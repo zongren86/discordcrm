@@ -205,4 +205,7 @@ public interface DiscordAccountRepository extends JpaRepository<DiscordAccount, 
            "AND (a.tokenValid = true OR a.tokenValid IS NULL) " +
            "AND (a.source IS NULL OR a.source <> 'AGENT')")  // AGENT 账号由 agent 机器体检
     List<DiscordAccount> findForTokenHealthCheck();
+
+    /** 统计某个代理节点管理的账号数 */
+    long countByAgentServerId(Long agentServerId);
 }

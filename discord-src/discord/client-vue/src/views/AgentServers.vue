@@ -45,6 +45,13 @@
           <template #default="{ row }">{{ row.browserType || '-' }}</template>
         </el-table-column>
 
+        <el-table-column label="账号数" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.accountCount > 0" type="primary" effect="light" round>{{ row.accountCount }}</el-tag>
+            <span v-else class="text-muted">0</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="最后心跳" width="180">
           <template #default="{ row }">
             <span v-if="row.lastSeenAt">{{ formatTime(row.lastSeenAt) }}</span>
