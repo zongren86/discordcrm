@@ -65,12 +65,20 @@ public class AgentTaskService {
             AgentTask t = agentTaskRepository.findById(taskId).orElse(null);
             if (t == null) throw new IllegalStateException("任务不存在 id=" + taskId);
             String status = t.getStatus();
-            if ("SUCCESS".equals(status)) return t.getResult();
+            log.debug("[waitFor] taskId={} status={}", taskId, status);
+            if ("SUCCESS".equals(status)) {
+                log.info("[waitFor] taskId={} 完成 SUCCESS, 返回结果", taskId);
+                return t.getResult();
+            }
             if ("FAILED".equals(status)) {
                 String err = t.getResult();
+                log.warn("[waitFor] taskId={} FAILED, result={}", taskId, err);
                 throw new IllegalStateException("Agent 执行失败: " + (err != null ? err : "未知错误"));
             }
-            if ("CANCELLED".equals(status)) throw new IllegalStateException("任务已取消");
+            if ("CANCELLED".equals(status)) {
+                log.warn("[waitFor] taskId={} CANCELLED", taskId);
+                throw new IllegalStateException("任务已取消");
+            }
             Thread.sleep(500);
         }
         // 超时了，把 task 标记为 CANCELLED（避免 agent 后续 poll 到又执行）
@@ -115,6 +123,7 @@ public class AgentTaskService {
     public AgentTask reportTask(String token, Long taskId, String status, Map<String, Object> resultMap) {
         AgentServer server = agentServerRepository.findByToken(token)
                 .orElseThrow(() -> new IllegalArgumentException("无效 token"));
+        log.info("[reportTask] taskId={} status={} serverId={}", taskId, status, server.getId());
 
         AgentTask task = agentTaskRepository.findById(taskId)
                 .orElseThrow(() -> new IllegalArgumentException("任务不存在 id=" + taskId));
