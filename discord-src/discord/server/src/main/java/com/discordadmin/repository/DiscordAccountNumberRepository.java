@@ -154,6 +154,7 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
         // 解绑：清除账号关联但保留编号数据
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
     @org.springframework.data.jpa.repository.Query(
-        "UPDATE DiscordAccountNumber n SET n.discordAccount = NULL WHERE n.discordAccount.id = :accountId")
-    void detachFromDiscordAccount(@org.springframework.data.repository.query.Param("accountId") Long accountId);
+        nativeQuery = true,
+        value = "UPDATE discord_account_numbers SET discord_account_id = NULL, bound_account = NULL WHERE discord_account_id = ?1")
+    void detachFromDiscordAccount(Long accountId);
 }
