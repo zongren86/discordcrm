@@ -453,24 +453,18 @@ public class MessageService {
                 Message existing = existingMsg.get();
                 existing.setContent(message.getContent());
                 if (zhTranslation != null) existing.setTranslatedContent(zhTranslation);
-                if (!isVoiceMessage && !textToSend.equals(content)) {
-                    existing.setSentContent(textToSend);
-                }
+                if (!isVoiceMessage) existing.setSentContent(textToSend);
                 existing.setDiscordCreatedAt(message.getDiscordCreatedAt());
                 message = messageRepository.save(existing);
             } else {
                 message.setDiscordMessageId(discordMessageId);
                 if (zhTranslation != null) message.setTranslatedContent(zhTranslation);
-                if (!isVoiceMessage && !textToSend.equals(content)) {
-                    message.setSentContent(textToSend);
-                }
+                if (!isVoiceMessage) message.setSentContent(textToSend);
                 message = messageRepository.save(message);
             }
         } else {
             if (zhTranslation != null) message.setTranslatedContent(zhTranslation);
-            if (!isVoiceMessage && !textToSend.equals(content)) {
-                message.setSentContent(textToSend);
-            }
+            if (!isVoiceMessage) message.setSentContent(textToSend);
             message = messageRepository.save(message);
         }
 
