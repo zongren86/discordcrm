@@ -115,10 +115,10 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="浏览器" width="100" align="center">
+        <el-table-column label="浏览器" width="80" align="center" fixed="right">
           <template #default="{ row }">
             <el-button
-              v-if="row.browserProfilePath && row.agentServerId"
+              v-if="row.browserProfilePath && (row.discordAgentServerId || row.agentServerId)"
               link type="primary"
               @click="launchBrowser(row)"
             >唤起</el-button>
@@ -166,6 +166,9 @@
               </el-button>
               <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="syncAccount(row)">
                 <el-icon><Refresh /></el-icon> 同步好友
+              </el-button>
+              <el-button v-if="row.browserProfilePath && row.discordAgentServerId" size="small" type="success" link @click="launchBrowser(row)">
+                <el-icon><Monitor /></el-icon> 唤起浏览器
               </el-button>
               <el-button size="small" type="primary" link @click="openEdit(row)">
                 <el-icon><Edit /></el-icon> 编辑
@@ -580,13 +583,14 @@ const agentResultDialog = reactive({
 })
 
 async function launchBrowser(account) {
-  if (!account.agentServerId || !account.browserProfilePath) {
+  const agentId = account.discordAgentServerId || account.agentServerId
+  if (!agentId || !account.browserProfilePath) {
     ElMessage.warning('该账号未关联浏览器 profile')
     return
   }
   try {
     ElMessage.info('正在唤起浏览器...请在代理弹出的窗口查看')
-    await createAgentTask(account.agentServerId, 'LAUNCH_BROWSER', {
+    await createAgentTask(agentId, 'LAUNCH_BROWSER', {
       browserProfilePath: account.browserProfilePath,
       accountId: account.id,
     })
