@@ -150,4 +150,6 @@ public interface DiscordAccountNumberRepository extends JpaRepository<DiscordAcc
 
     /** 按商户和自定义编号查询（支持批量） */
     List<DiscordAccountNumber> findByMerchantIdAndCustomNoIn(Long merchantId, List<Integer> customNos);
+
+    void deleteByDiscordAccountId(Long discordAccountId);
 }

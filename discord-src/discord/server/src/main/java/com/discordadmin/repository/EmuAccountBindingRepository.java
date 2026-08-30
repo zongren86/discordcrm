@@ -23,4 +23,6 @@ public interface EmuAccountBindingRepository extends JpaRepository<EmuAccountBin
     long countByMerchantId(Long merchantId);
 
     long countByMerchantIdAndStatus(Long merchantId, EmuAccountBinding.BindingStatus status);
+
+    void deleteByDiscordAccountId(Long discordAccountId);
 }

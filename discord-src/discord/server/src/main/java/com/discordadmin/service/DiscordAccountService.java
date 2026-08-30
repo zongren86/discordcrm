@@ -12,6 +12,10 @@ import com.discordadmin.entity.GuildServer;
 import com.discordadmin.repository.AgentAccountNumberRelRepository;
 import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.AgentTaskRepository;
+import com.discordadmin.repository.AutoAddTaskRepository;
+import com.discordadmin.repository.EmuAccountBindingRepository;
+import com.discordadmin.repository.EmuInstanceRepository;
+import com.discordadmin.repository.EmuServerBindingRepository;
 import com.discordadmin.repository.ConversationRepository;
 import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
@@ -75,6 +79,10 @@ public class DiscordAccountService {
     private final DiscordAccountNumberRepository accountNumberRepository;
     private final AgentAccountNumberRelRepository relRepository;
     private final AgentTaskRepository agentTaskRepository;
+    private final AutoAddTaskRepository autoAddTaskRepository;
+    private final EmuAccountBindingRepository emuAccountBindingRepository;
+    private final EmuInstanceRepository emuInstanceRepository;
+    private final EmuServerBindingRepository emuServerBindingRepository;
     private final PlatformTransactionManager transactionManager;
 
     @Autowired @Lazy
@@ -905,6 +913,15 @@ public class DiscordAccountService {
 
                         // 解除 agent_tasks 外键关联
                         agentTaskRepository.deleteByDiscordAccountId(id);
+
+                        // 3f. 删除 Emu 相关（模拟器绑定/实例/账号绑定）
+                        try { emuServerBindingRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
+                        try { emuInstanceRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
+                        try { emuAccountBindingRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
+                        // 3g. 删除自动加好友任务
+                        try { autoAddTaskRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
+                        // 3h. 删除账号号码关联
+                        try { discordAccountNumberRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
                         accountRepository.flush();
                         
                         // 3f. 删除账号

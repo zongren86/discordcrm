@@ -23,4 +23,6 @@ public interface EmuServerBindingRepository extends JpaRepository<EmuServerBindi
     boolean existsByServerIdAndStatus(Long serverId, EmuServerBinding.BindingStatus status);
 
     long countByMerchantId(Long merchantId);
+
+    void deleteByDiscordAccountId(Long discordAccountId);
 }
