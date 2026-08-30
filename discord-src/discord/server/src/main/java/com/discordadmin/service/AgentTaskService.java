@@ -100,13 +100,28 @@ public class AgentTaskService {
         AgentServer server = agentServerRepository.findByToken(token)
                 .orElseThrow(() -> new IllegalArgumentException("无效 token"));
 
-        // 优先取 RUNNING 的（agent 之前崩了未清理的），否则 PENDING
-        Optional<AgentTask> task = agentTaskRepository
+        // 0. 自动清理僵死的 RUNNING 任务（>3分钟没更新，说明 agent 崩了或卡了）
+        Instant staleCutoff = Instant.now().minusSeconds(180);
+        Optional<AgentTask> stale = agentTaskRepository
                 .findFirstByAgentServerAndStatusOrderByCreatedAtAsc(server, "RUNNING");
-        if (task.isEmpty()) {
-            task = agentTaskRepository
-                    .findFirstByAgentServerAndStatusOrderByCreatedAtAsc(server, "PENDING");
+        while (stale.isPresent()) {
+            AgentTask st = stale.get();
+            if (st.getUpdatedAt() != null && st.getUpdatedAt().isBefore(staleCutoff)) {
+                st.setStatus("FAILED");
+                st.setResult("{\"error\":\"stale_running_timeout\"}");
+                st.setUpdatedAt(Instant.now());
+                agentTaskRepository.save(st);
+                log.warn("[pollNext] 清理僵死 RUNNING taskId={} type={}", st.getId(), st.getType());
+                stale = agentTaskRepository.findFirstByAgentServerAndStatusOrderByCreatedAtAsc(server, "RUNNING");
+            } else {
+                break; // 还有没僵死的，agent 可能正在执行
+            }
         }
+
+        // 优先取 PENDING 的（RUNNING 僵死已清理）
+        Optional<AgentTask> task = agentTaskRepository
+                .findFirstByAgentServerAndStatusOrderByCreatedAtAsc(server, "PENDING");
+
         task.ifPresent(t -> {
             t.setStatus("RUNNING");
             t.setUpdatedAt(Instant.now());

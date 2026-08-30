@@ -3414,6 +3414,10 @@ async function send() {
   } catch (e) {
     const errorMsg = e?.response?.data?.message || e?.message || '发送失败'
     ElMessage.error(errorMsg)
+    // 发送失败也清空输入框 + 附件 + @，让用户可以重新输入
+    inputText.value = ''
+    pendingAttachments.value = []
+    replyToMsg.value = null
   } finally {
     sending.value = false
   }
