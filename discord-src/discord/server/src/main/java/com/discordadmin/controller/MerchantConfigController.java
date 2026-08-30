@@ -2,7 +2,7 @@ package com.discordadmin.controller;
 
 import com.discordadmin.entity.MerchantConfig;
 import com.discordadmin.security.SecurityUtils;
-import com.discordadmin.service.GuildService;
+import com.discordadmin.service.MerchantConfigService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -12,10 +12,10 @@ import java.util.Map;
 @RequestMapping("/api/merchant-config")
 public class MerchantConfigController {
 
-    private final GuildService guildService;
+    private final MerchantConfigService merchantConfigService;
 
-    public MerchantConfigController(GuildService guildService) {
-        this.guildService = guildService;
+    public MerchantConfigController(MerchantConfigService merchantConfigService) {
+        this.merchantConfigService = merchantConfigService;
     }
 
     @GetMapping
@@ -24,7 +24,7 @@ public class MerchantConfigController {
         if (merchantId == null) {
             return toDefaultMap();
         }
-        MerchantConfig config = guildService.getOrCreateConfig(merchantId);
+        MerchantConfig config = merchantConfigService.getOrCreateConfig(merchantId);
         return toMap(config);
     }
 
@@ -61,7 +61,7 @@ public class MerchantConfigController {
             config.setMaxLinkedAccounts(Integer.valueOf(payload.get("maxLinkedAccounts").toString()));
         }
 
-        MerchantConfig updated = guildService.updateConfig(merchantId, config);
+        MerchantConfig updated = merchantConfigService.updateConfig(merchantId, config);
         return toMap(updated);
     }
 
@@ -70,7 +70,7 @@ public class MerchantConfigController {
         if (!SecurityUtils.isPlatformAdmin()) {
             throw new IllegalStateException("仅平台管理员可访问");
         }
-        MerchantConfig config = guildService.getOrCreateConfig(merchantId);
+        MerchantConfig config = merchantConfigService.getOrCreateConfig(merchantId);
         return toMap(config);
     }
 
@@ -108,7 +108,7 @@ public class MerchantConfigController {
             config.setMaxLinkedAccounts(Integer.valueOf(payload.get("maxLinkedAccounts").toString()));
         }
 
-        MerchantConfig updated = guildService.updateConfig(merchantId, config);
+        MerchantConfig updated = merchantConfigService.updateConfig(merchantId, config);
         return toMap(updated);
     }
 

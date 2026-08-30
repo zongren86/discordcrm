@@ -1,27 +1,20 @@
 package com.discordadmin.config;
 
-import com.discordadmin.service.CloudWebSocketService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.messaging.simp.config.MessageBrokerRegistry;
-import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
-import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
-import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 import org.springframework.web.socket.server.standard.ServletServerContainerFactoryBean;
 
+/**
+ * STOMP WebSocket 配置 — 给 Chat.vue 推送消息/会话更新
+ * （原来 CloudWebSocketService 是 mumu 模拟器 agent 通信，已移到 server-admin 子项目）
+ */
 @Configuration
-@EnableWebSocket
 @EnableWebSocketMessageBroker
-public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSocketConfigurer {
-
-    private final CloudWebSocketService cloudWebSocketService;
-
-    public WebSocketConfig(CloudWebSocketService cloudWebSocketService) {
-        this.cloudWebSocketService = cloudWebSocketService;
-    }
+public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Bean
     public ServletServerContainerFactoryBean createServletServerContainerFactoryBean() {
@@ -43,11 +36,5 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer, WebSoc
         registry.addEndpoint("/ws")
                 .setAllowedOriginPatterns("*")
                 .withSockJS();
-    }
-
-    @Override
-    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(cloudWebSocketService, "/ws/agent")
-                .setAllowedOriginPatterns("*");
     }
 }

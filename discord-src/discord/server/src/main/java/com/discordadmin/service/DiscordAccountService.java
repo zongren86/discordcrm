@@ -8,21 +8,13 @@ import com.discordadmin.entity.Agent;
 import com.discordadmin.entity.AgentAccountNumberRel;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.DiscordAccountNumber;
-import com.discordadmin.entity.GuildServer;
 import com.discordadmin.repository.AgentAccountNumberRelRepository;
 import com.discordadmin.repository.AgentRepository;
-import com.discordadmin.repository.AgentTaskRepository;
-import com.discordadmin.repository.AutoAddTaskRepository;
-import com.discordadmin.repository.EmuAccountBindingRepository;
-import com.discordadmin.repository.EmuInstanceRepository;
-import com.discordadmin.repository.EmuServerBindingRepository;
 import com.discordadmin.repository.ConversationRepository;
 import com.discordadmin.repository.DiscordAccountNumberRepository;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.FetchProgressRepository;
 import com.discordadmin.repository.FriendRepository;
-import com.discordadmin.repository.GuildMemberRepository;
-import com.discordadmin.repository.GuildServerRepository;
 import com.discordadmin.repository.GifFavoriteRepository;
 import com.discordadmin.repository.MessageRepository;
 import com.discordadmin.security.SecurityUtils;
@@ -72,21 +64,10 @@ public class DiscordAccountService {
     private final MessageRepository messageRepository;
     private final FriendRepository friendRepository;
     private final AgentRepository agentRepository;
-    private final GuildServerRepository guildServerRepository;
     private final GifFavoriteRepository gifFavoriteRepository;
-    private final GuildMemberRepository guildMemberRepository;
     private final FetchProgressRepository fetchProgressRepository;
     private final DiscordAccountNumberRepository accountNumberRepository;
     private final AgentAccountNumberRelRepository relRepository;
-    private final AgentTaskRepository agentTaskRepository;
-    @Autowired @Lazy
-    private AutoAddTaskRepository autoAddTaskRepository;
-    @Autowired @Lazy
-    private EmuAccountBindingRepository emuAccountBindingRepository;
-    @Autowired @Lazy
-    private EmuInstanceRepository emuInstanceRepository;
-    @Autowired @Lazy
-    private EmuServerBindingRepository emuServerBindingRepository;
     private final PlatformTransactionManager transactionManager;
 
     @Autowired @Lazy
@@ -100,13 +81,10 @@ public class DiscordAccountService {
                                  MessageRepository messageRepository,
                                  FriendRepository friendRepository,
                                  AgentRepository agentRepository,
-                                 GuildServerRepository guildServerRepository,
                                  GifFavoriteRepository gifFavoriteRepository,
-                                 GuildMemberRepository guildMemberRepository,
                                  FetchProgressRepository fetchProgressRepository,
                                  DiscordAccountNumberRepository accountNumberRepository,
                                  AgentAccountNumberRelRepository relRepository,
-                                 AgentTaskRepository agentTaskRepository,
                                  PlatformTransactionManager transactionManager) {
         this.accountRepository = accountRepository;
         this.botManager = botManager;
@@ -116,17 +94,13 @@ public class DiscordAccountService {
         this.messageRepository = messageRepository;
         this.friendRepository = friendRepository;
         this.agentRepository = agentRepository;
-        this.guildServerRepository = guildServerRepository;
         this.gifFavoriteRepository = gifFavoriteRepository;
-        this.guildMemberRepository = guildMemberRepository;
         this.fetchProgressRepository = fetchProgressRepository;
         this.accountNumberRepository = accountNumberRepository;
         this.relRepository = relRepository;
-        this.agentTaskRepository = agentTaskRepository;
         this.transactionManager = transactionManager;
     }
 
-    @Transactional(readOnly = true)
     public List<AccountDto> listAccounts(String keyword, String status) {
         Long merchantId = SecurityUtils.currentMerchantId();
         boolean isPlatformAdmin = SecurityUtils.isPlatformAdmin();
@@ -887,11 +861,11 @@ public class DiscordAccountService {
         for (int attempt = 1; attempt <= MAX_DELETE_RETRIES; attempt++) {
             try {
                 txTemplate.execute(status -> {
-                    // 3a. 保留服务器(guild_servers)、服务器成员(guild_members)、抓取进度(fetch_progress)数据不删除，
-                    // 这些数据一旦生成就脱离与原账号的关系，最终只用于加好友。
-                    // 统计当前账号关联的服务器数量，仅用于日志。
-                    long serverCount = guildServerRepository.findByDiscordAccountId(id).size();
-                    log.info("删除账号[id={}]，保留其关联的 {} 个服务器及其成员/抓取进度数据(不删除)", id, serverCount);
+                    // 3a. 删除抓取进度：先按 discordAccountId 整体批量删除（覆盖所有进度，包括引用了已不存在的 guild_server_id 的孤儿记录），
+                    // 避免后续服务器级删除时出现 "actual row count: 0; expected: 1"。
+                    fetchProgressRepository.deleteByDiscordAccountId(id);
+
+                    // 3b. GuildServer/GuildMember 数据已移到 server-admin 子项目，本项目不再负责清理
 
                     // 3b. 移除 Agent 关联
                     DiscordAccount acc = accountRepository.findById(id).orElse(null);
@@ -913,20 +887,7 @@ public class DiscordAccountService {
                         friendRepository.deleteByDiscordAccount(acc);
 
                         // 3e. 删除GIF收藏（外键约束）
-                        // GifFavorite 基于 userId 归属，不删除；discord_account_id 置 NULL 即可
-
-                        // 解除 agent_tasks 外键关联
-                        agentTaskRepository.deleteByDiscordAccountId(id);
-
-                        // 3f. 删除 Emu 相关（模拟器绑定/实例/账号绑定）
-                        try { emuServerBindingRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
-                        try { emuInstanceRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
-                        try { emuAccountBindingRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
-                        // 3g. 删除自动加好友任务
-                        try { autoAddTaskRepository.deleteByDiscordAccountId(id); } catch (Exception ignored) {}
-                        // 3h. 删除账号号码关联
-                        try { accountNumberRepository.detachFromDiscordAccount(id); } catch (Exception ignored) {}
-                        accountRepository.flush();
+                        gifFavoriteRepository.deleteByDiscordAccountId(id);
                         
                         // 3f. 删除账号
                         accountRepository.delete(acc);

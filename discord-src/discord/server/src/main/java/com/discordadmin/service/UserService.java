@@ -24,20 +24,20 @@ public class UserService {
     private final MerchantRepository merchantRepository;
     private final com.discordadmin.repository.RoleRepository roleRepository;
     private final PasswordEncoder passwordEncoder;
-    private final GuildService guildService;
+    private final MerchantConfigService merchantConfigService;
 
     public UserService(AgentRepository agentRepository,
                        DiscordAccountRepository accountRepository,
                        MerchantRepository merchantRepository,
                        com.discordadmin.repository.RoleRepository roleRepository,
                        PasswordEncoder passwordEncoder,
-                       GuildService guildService) {
+                       MerchantConfigService merchantConfigService) {
         this.agentRepository = agentRepository;
         this.accountRepository = accountRepository;
         this.merchantRepository = merchantRepository;
         this.roleRepository = roleRepository;
         this.passwordEncoder = passwordEncoder;
-        this.guildService = guildService;
+        this.merchantConfigService = merchantConfigService;
     }
 
     public List<Map<String, Object>> list() {
@@ -94,7 +94,7 @@ public class UserService {
 
         // 用户数上限检查
         if (merchantId != null && !SecurityUtils.isPlatformAdmin()) {
-            MerchantConfig config = guildService.getOrCreateConfig(merchantId);
+            MerchantConfig config = merchantConfigService.getOrCreateConfig(merchantId);
             Integer maxUsers = config.getMaxUsers() != null ? config.getMaxUsers() : 10;
             long currentUserCount = agentRepository.findByMerchantId(merchantId).size();
             if (currentUserCount >= maxUsers) {
@@ -244,7 +244,7 @@ public class UserService {
 
         // 关联账号上限检查
         if (agent.getMerchantId() != null) {
-            MerchantConfig config = guildService.getOrCreateConfig(agent.getMerchantId());
+            MerchantConfig config = merchantConfigService.getOrCreateConfig(agent.getMerchantId());
             Integer maxLinkedAccounts = config.getMaxLinkedAccounts() != null ? config.getMaxLinkedAccounts() : 20;
             int currentLinkedCount = agent.getDiscordAccounts().size();
             if (currentLinkedCount >= maxLinkedAccounts) {

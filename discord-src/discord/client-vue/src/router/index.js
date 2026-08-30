@@ -18,11 +18,7 @@ const routes = [
       { path: 'chat', name: 'Chat', component: () => import('@/views/Chat.vue'), meta: { title: '消息中心', icon: 'ChatDotRound', permissions: ['chat'] } },
       { path: 'account-numbers', name: 'AccountNumbers', component: () => import('@/views/AccountNumbers.vue'), meta: { title: '账号编号管理', icon: 'Tickets', permissions: ['account-numbers'] } },
       { path: 'accounts', name: 'Accounts', component: () => import('@/views/Accounts.vue'), meta: { title: 'Discord账号管理', icon: 'User', permissions: ['accounts'] } },
-      { path: 'customers', name: 'Customers', component: () => import('@/views/Customers.vue'), meta: { title: '客户管理', icon: 'UserFilled', permissions: ['customers'] } },
-      { path: 'guilds', name: 'Guilds', component: () => import('@/views/Guilds.vue'), meta: { title: '服务器列表', icon: 'OfficeBuilding', permissions: ['guilds'] } },
-      { path: 'guild-members', name: 'GuildMembers', component: () => import('@/views/GuildMembers.vue'), meta: { title: '服务器成员', icon: 'User', permissions: ['guild-members'] } },
-      { path: 'emulator', name: 'Emulator', component: () => import('@/views/EmulatorView.vue'), meta: { title: '好友管理', icon: 'Monitor', permissions: ['emulator'] } },
-      { path: 'ai-settings', name: 'AISettings', component: () => import('@/views/AISettings.vue'), meta: { title: 'AI配置', icon: 'Cpu', permissions: ['ai-settings'] } },
+      { path: 'customers', name: 'Customers', component: () => import('@/views/Customers.vue'), meta: { title: '客户管理', icon: 'UserFilled', permissions: ['customers'] } },      { path: 'ai-settings', name: 'AISettings', component: () => import('@/views/AISettings.vue'), meta: { title: 'AI配置', icon: 'Cpu', permissions: ['ai-settings'] } },
       { path: 'agent-servers', name: 'AgentServers', component: () => import('@/views/AgentServers.vue'), meta: { title: '代理管理', icon: 'Connection', permissions: ['agent-servers'] } },
       { path: 'merchants', name: 'Merchants', component: () => import('@/views/Merchants.vue'), meta: { title: '商户管理', icon: 'OfficeBuilding', permissions: ['merchants'] } },
       { path: 'users', name: 'Users', component: () => import('@/views/Users.vue'), meta: { title: '用户管理', icon: 'User', permissions: ['users'] } },
@@ -53,7 +49,7 @@ function getFirstAllowedPath(auth) {
   // 按顺序查找第一个有权限的菜单
   const pathList = [
     '/stats', '/account-numbers', '/accounts', '/customers',
-    '/guilds', '/guild-members', '/emulator', '/ai-settings', '/agent-servers',
+    '/ai-settings', '/agent-servers',
     '/merchants', '/users', '/roles', '/features', '/audit'
   ]
   
