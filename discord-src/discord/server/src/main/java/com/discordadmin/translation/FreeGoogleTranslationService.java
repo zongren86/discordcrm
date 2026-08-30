@@ -149,12 +149,34 @@ public class FreeGoogleTranslationService implements TranslationService {
         }
     }
 
+    /** 简单的源语言检测（按 Unicode 范围），MyMemory 不支持 auto，必须传具体语言 */
+    private String detectSourceLang(String text) {
+        if (text == null || text.isEmpty()) return "en";
+        // 中文 一-鿿
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= 0x4E00 && c <= 0x9FFF) return "zh-CN";
+            if (c >= 0x3040 && c <= 0x309F) return "ja"; // 日文假名
+            if (c >= 0x30A0 && c <= 0x30FF) return "ja"; // 日文片假名
+            if (c >= 0xAC00 && c <= 0xD7AF) return "ko"; // 韩文
+            if (c >= 0x0600 && c <= 0x06FF) return "ar"; // 阿拉伯
+            if (c >= 0x0400 && c <= 0x04FF) return "ru"; // 俄文
+            if (c >= 0x0E00 && c <= 0x0E7F) return "th"; // 泰文
+        }
+        return "en";
+    }
+
     private Optional<String> translateWithMyMemory(String text, String targetLanguage, String endpoint) {
         log.info("[MyMemory] 开始翻译 text='{}', targetLang={}", text, targetLanguage);
         try {
-            // 用 auto 让 MyMemory 自动检测源语言，目标语言按用户传入的来
             String target = targetLanguage != null ? targetLanguage : "en";
-            String langPair = "auto|" + target;
+            String source = detectSourceLang(text);
+            // 如果源=目标（同语种），MyMemory 会返回原文，跳过
+            if (source.equalsIgnoreCase(target)) {
+                log.info("[MyMemory] 源语言 {} = 目标语言 {}，跳过", source, target);
+                return Optional.empty();
+            }
+            String langPair = source + "|" + target;
             String url = String.format(endpoint,
                     URLEncoder.encode(text, StandardCharsets.UTF_8),
                     URLEncoder.encode(langPair, StandardCharsets.UTF_8));
@@ -170,6 +192,13 @@ public class FreeGoogleTranslationService implements TranslationService {
                 return Optional.empty();
             }
             JsonNode root = objectMapper.readTree(response.body());
+            // MyMemory 会在 HTTP 200 时通过 responseStatus 返回错误码（如 403 auto 无效）
+            String responseStatus = root.path("responseStatus").asText("200");
+            if (!"200".equals(responseStatus)) {
+                String errMsg = root.path("responseDetails").asText("MyMemory 翻译失败");
+                log.warn("[MyMemory] responseStatus={} error={}", responseStatus, errMsg);
+                return Optional.empty();
+            }
             JsonNode responseData = root.path("responseData");
             if (responseData.isMissingNode()) {
                 log.warn("[MyMemory] responseData 缺失 body={}", response.body().substring(0, Math.min(200, response.body().length())));
