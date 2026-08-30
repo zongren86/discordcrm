@@ -4,7 +4,7 @@
  * v1.2.0: 超时/取消/异常都强制关闭浏览器
  */
 const { chromium } = require('playwright');
-const { execSync } = require('child_process');
+const { execSync, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -86,17 +86,25 @@ async function safeClose(context) {
       console.log('[Browser] browser.close() 已执行');
     }
   } catch {}
-  // 兜底：杀 chromium 进程
+  // 兜底：用 PID 精准 kill（从 context 内部属性取），绝不杀用户自己的浏览器
   try {
-    await new Promise(r => setTimeout(r, 300));
-    if (process.platform === 'win32') {
-      try { execSync('taskkill /F /IM chromium.exe /T', { stdio: 'ignore' }); } catch {}
-      try { execSync('taskkill /F /IM chrome.exe /T', { stdio: 'ignore' }); } catch {}
+    let pid = null;
+    try {
+      // Playwright context 内部浏览器进程
+      const b = context._browser || (context.browser && context.browser());
+      if (b && b._process) pid = b._process.pid;
+    } catch {}
+    if (pid) {
+      await new Promise(r => setTimeout(r, 300));
+      if (process.platform === 'win32') {
+        try { execSync('taskkill /F /PID ' + pid + ' /T', { stdio: 'ignore' }); } catch {}
+      } else {
+        try { process.kill(pid, 'SIGKILL'); } catch {}
+      }
+      console.log('[Browser] PID ' + pid + ' 已终止');
     } else {
-      try { execSync('pkill -f "Chromium.*crm-agent"', { stdio: 'ignore' }); } catch {}
-      try { execSync('pkill -f "chrome.*discord"', { stdio: 'ignore' }); } catch {}
+      console.log('[Browser] 未获取到 PID，跳过兜底 kill');
     }
-    console.log('[Browser] 兜底进程清理已执行');
   } catch {}
 }
 
@@ -139,6 +147,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       args: getLaunchArgs(),
       ignoreHTTPSErrors: true,
     });
+
   } catch (e) {
     throw new Error('浏览器启动失败: ' + String(e.message || e).split('\n')[0]);
   }
