@@ -111,7 +111,20 @@ public class AgentServerController {
     public ResponseEntity<Map<String, Object>> createTask(@RequestBody Map<String, Object> body) {
         Long agentServerId = Long.valueOf(body.get("agentServerId").toString());
         String type = (String) body.get("type");
-        String paramsJson = body.get("params") != null ? safeJson(body.get("params")) : null;
+        String paramsJson;
+        if (body.get("params") != null) {
+            paramsJson = safeJson(body.get("params"));
+        } else {
+            // 前端传平铺字段（browserProfilePath, accountId, token, channelId...）→ 自动收集
+            java.util.Map<String, Object> extras = new java.util.LinkedHashMap<>();
+            for (Map.Entry<String, Object> e : body.entrySet()) {
+                if (!"agentServerId".equals(e.getKey()) && !"type".equals(e.getKey())) {
+                    extras.put(e.getKey(), e.getValue());
+                }
+            }
+            paramsJson = extras.isEmpty() ? null : safeJson(extras);
+        }
+        log.info("创建 agent task type={}, params={}", type, paramsJson);
         AgentTask task = agentTaskService.createTask(agentServerId, type, paramsJson);
         return ResponseEntity.ok(Map.of("id", task.getId(), "status", task.getStatus(), "type", task.getType()));
     }
