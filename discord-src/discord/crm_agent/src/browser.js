@@ -312,6 +312,9 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
     if (result.token && result.userId) {
       result.browserProfilePath = userDataDir;
       console.log('[Browser] 🎉 采集成功！');
+      console.log('[Browser] 3 秒后自动关闭浏览器...');
+      await new Promise(r => setTimeout(r, 3000));
+      await safeClose(context);
       return result;
     }
   }
