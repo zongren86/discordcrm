@@ -146,6 +146,7 @@ public class UserMessagePoller {
         List<DiscordAccount> userAccounts = accountRepository.findByStatus(DiscordAccount.AccountStatus.ACTIVE)
                 .stream()
                 .filter(a -> a.getAccountType() == DiscordAccount.AccountType.USER)
+                .filter(a -> !"AGENT".equals(a.getSource()))  // ✅ AGENT 账号由 agent 机器 HTTP 轮询，服务端别碰
                 .toList();
 
         if (userAccounts.isEmpty()) {
