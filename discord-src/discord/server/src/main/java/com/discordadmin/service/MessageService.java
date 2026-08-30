@@ -1335,20 +1335,41 @@ private boolean isLocalUploadUrl(String url) {
             // Sticker CDN URL：提取stickerId，使用原生sticker_ids API发送
             String stickerId = extractStickerId(gifUrl);
             log.info("发送Discord Sticker, id={}, url={}", stickerId, gifUrl);
-            if ("AGENT".equals(account.getSource())) {
-                throw new IllegalStateException("Sticker/表情包暂不支持代理模式发送");
+            if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
+                // ✅ 代理模式采集的账号 —— 从 agent 机器发
+                try {
+                    com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+                    String paramsJson = om.writeValueAsString(java.util.Map.of(
+                            "token", account.getToken(),
+                            "channelId", conversation.getChannelId(),
+                            "stickerIds", java.util.List.of(stickerId)
+                    ));
+                    com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
+                            account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
+                    log.info("[Agent路由] 发Sticker走 agent taskId={}, account={}, channel={}",
+                            task.getId(), account.getName(), conversation.getChannelId());
+                    String resultJson = agentTaskService.waitForTaskResult(task.getId(), 15000);
+                    com.fasterxml.jackson.databind.JsonNode r = om.readTree(resultJson);
+                    discordMessageId = r.path("discordMessageId").asText(null);
+                    if (discordMessageId == null) {
+                        throw new IllegalStateException("Agent 未返回 discordMessageId");
+                    }
+                } catch (Exception e) {
+                    throw new IllegalStateException("Agent 发 Sticker 失败: " + e.getMessage(), e);
+                }
+            } else {
+                try {
+                    JsonNode resp = discordUserClient.sendStickerMessage(
+                            account.getToken(), conversation.getChannelId(), stickerId);
+                    discordMessageId = resp.path("id").asText(null);
+                    log.info("Sticker发送成功, messageId={}", discordMessageId);
+                } catch (Exception e) {
+                    log.error("Sticker发送失败: {}", e.getMessage());
+                    throw new RuntimeException("Sticker发送失败: " + e.getMessage(), e);
+                }
             }
-            try {
-                JsonNode resp = discordUserClient.sendStickerMessage(
-                        account.getToken(), conversation.getChannelId(), stickerId);
-                discordMessageId = resp.path("id").asText(null);
-                discordAttachmentUrl = gifUrl;
-                sentContent = gifUrl;
-                log.info("Sticker发送成功, messageId={}", discordMessageId);
-            } catch (Exception e) {
-                log.error("Sticker发送失败: {}", e.getMessage());
-                throw new RuntimeException("Sticker发送失败: " + e.getMessage(), e);
-            }
+            discordAttachmentUrl = gifUrl;
+            sentContent = gifUrl;
         } else if (isLocalUpload) {
             // 本地服务器上传的文件：下载后重新上传到 Discord CDN
             log.info("发送本地上传文件: {}", gifUrl);

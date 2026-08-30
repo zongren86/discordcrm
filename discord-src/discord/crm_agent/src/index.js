@@ -138,17 +138,30 @@ async function executeTask(task) {
         const params = typeof task.params === 'string'
           ? (() => { try { return JSON.parse(task.params); } catch { return {}; } })()
           : (task.params || {});
-        const { token, channelId, content } = params;
+        const { token, channelId, content, stickerIds, sticker_id } = params;
         if (!token || !channelId) {
           await reportTask(task.id, 'FAILED', { error: '缺少 token 或 channelId' });
           break;
         }
         await reportTask(task.id, 'RUNNING');
         try {
+          // 构建请求体：支持纯文本、Sticker、混合发送
+          const body = {};
+          if (stickerIds && Array.isArray(stickerIds) && stickerIds.length > 0) {
+            body.sticker_ids = stickerIds;
+            if (content) body.content = content;
+            console.log(`[任务] 发送 Sticker: sticker_ids=[${stickerIds.join(',')}]`);
+          } else if (sticker_id) {
+            body.sticker_ids = [sticker_id];
+            if (content) body.content = content;
+            console.log(`[任务] 发送 Sticker: sticker_id=${sticker_id}`);
+          } else {
+            body.content = content || '';
+          }
           // 从 agent 机器发 Discord API 请求 —— IP 是用户家庭宽带，不会触发风控
           const resp = await discordHttp.post(
             `/channels/${channelId}/messages`,
-            { content: content || '' },
+            body,
             { headers: { 'Authorization': token } }
           );
           const discordMessageId = resp.data?.id;
