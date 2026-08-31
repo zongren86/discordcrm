@@ -2392,6 +2392,8 @@ function canTranslateInbound(msg) {
   if (isVoiceMsg(msg)) return false
   // GIF消息跳过翻译
   if (isGifMsg(msg)) return false
+  // Sticker/Lottie 消息本身没有文本，不需要翻译按钮
+  if (isStickerMsg(msg)) return false
   if (msg.translatedContent && msg.translatedContent !== msg.content) return false
   if (msg.userTranslated) return false
   return !containsChinese(msg.content || '')

@@ -737,9 +737,40 @@ public class AgentServerController {
                 friend.setDiscordAccount(acc);
                 friend.setMerchantId(acc.getMerchantId());
                 friend.setFriendDiscordUserId(friendId);
-                friend.setUsername(sstr(f.get("username"), ""));
-                friend.setGlobalName(sstr(f.get("globalName"), sstr(f.get("username"), "")));
-                friend.setAvatar(sstr(f.get("avatar")));
+
+                // 字段兜底逻辑：
+                // 1) agent 上报的 username/globalName/avatar 非空才覆盖（防止旧 agent 代码传 undefined 把已有值抹空）
+                // 2) 数据库里如果也没有，就去同 friendId 的其他账号好友记录里抄一份
+                String u = sstr(f.get("username"));
+                String g = sstr(f.get("globalName"));
+                String a = sstr(f.get("avatar"));
+
+                // 当前记录已有值且 agent 没上报新值 → 保留原值
+                if ((u == null || u.isEmpty()) && friend.getUsername() != null && !friend.getUsername().isEmpty()) {
+                    u = friend.getUsername();
+                }
+                if ((g == null || g.isEmpty()) && friend.getGlobalName() != null && !friend.getGlobalName().isEmpty()) {
+                    g = friend.getGlobalName();
+                }
+                if ((a == null || a.isEmpty()) && friend.getAvatar() != null && !friend.getAvatar().isEmpty()) {
+                    a = friend.getAvatar();
+                }
+
+                // 额外兜底：从同 friendId 的其他账号完整记录抄
+                if (u == null || u.isEmpty() || g == null || g.isEmpty() || a == null || a.isEmpty()) {
+                    for (Friend src : friendRepository.findByFriendDiscordUserId(friendId)) {
+                        if (src.getUsername() != null && !src.getUsername().isEmpty()) {
+                            if (u == null || u.isEmpty()) u = src.getUsername();
+                            if (g == null || g.isEmpty()) g = src.getGlobalName();
+                            if (a == null || a.isEmpty()) a = src.getAvatar();
+                            break;
+                        }
+                    }
+                }
+
+                friend.setUsername(u != null ? u : "");
+                friend.setGlobalName(g != null ? g : (u != null ? u : ""));
+                friend.setAvatar(a);
                 friend.setStatus(status);
                 friend.setSyncedAt(Instant.now());
                 if (friend.getId() == null) friend.setCreatedAt(Instant.now());
