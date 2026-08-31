@@ -353,7 +353,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "system", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "merchants", "users", "roles", "features", "audit"
+            "friend-manage", "ai-settings", "agent-servers", "merchants", "users", "roles", "features", "audit"
         );
     }
 
@@ -361,7 +361,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "audit"
+            "friend-manage", "ai-settings", "agent-servers", "audit", "merchants"
         );
     }
 
@@ -369,7 +369,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "audit"
+            "friend-manage", "ai-settings", "agent-servers", "audit", "merchants"
         );
     }
 
