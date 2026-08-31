@@ -207,7 +207,7 @@ async function getAccountProfilePath(accountId) {
 async function main() {
   await heartbeat();
   setInterval(heartbeat, cfg.heartbeatIntervalMs || 5000);
-  setInterval(pollTask, cfg.pollIntervalMs || 5000);
+  setInterval(pollTask, cfg.pollIntervalMs || 2000);
 
   // 消息轮询 (方案 C: HTTP REST, 2s 间隔)
   await loadManagedAccounts();
