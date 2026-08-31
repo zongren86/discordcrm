@@ -33,7 +33,7 @@
         <!-- 动态菜单渲染 -->
         <template v-for="item in menuTree" :key="item.path || item.code">
           <!-- 有子菜单的项 -->
-          <el-sub-menu v-if="item.children && item.children.length > 0" :index="item.path || item.code">
+          <el-sub-menu v-if="item.children && item.children.length > 0" :index="item.path || item.code" trigger="click">
             <template #title>
               <el-icon v-if="item.icon"><component :is="resolveIcon(item.icon)" /></el-icon>
               <span>{{ item.title }}</span>
@@ -51,7 +51,7 @@
                   />
                 </span>
               </el-menu-item>
-              <el-sub-menu v-else :index="child.path || child.code">
+              <el-sub-menu v-else :index="child.path || child.code" trigger="click">
                 <template #title>
                   <el-icon v-if="child.icon"><component :is="resolveIcon(child.icon)" /></el-icon>
                   <span>{{ child.title }}</span>
