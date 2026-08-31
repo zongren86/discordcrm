@@ -1,3 +1,18 @@
+// 全局日志时间戳: [MM-DD HH:MM:SS]
+(function(){
+  const ts = () => {
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `[${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}]`;
+  };
+  const _log = console.log;
+  console.log = (...args) => _log(ts(), ...args);
+  const _warn = console.warn;
+  console.warn = (...args) => _warn(ts(), ...args);
+  const _error = console.error;
+  console.error = (...args) => _error(ts(), ...args);
+})();
+
 const { http, cfg } = require('./http');
 const { discordHttp } = require('./discord');
 const { captureDiscordAccount, launchBrowserOnly } = require('./browser');
