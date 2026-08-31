@@ -1,6 +1,6 @@
 {
   "name": "crm_agent",
-  "version": "1.13.5",
+  "version": "1.13.6",
   "description": "Discord CRM 代理服务器节点 — 负责浏览器自动化和 Discord 用户采集",
   "main": "src/index.js",
   "type": "commonjs",

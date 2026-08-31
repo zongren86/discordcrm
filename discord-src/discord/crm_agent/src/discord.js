@@ -205,24 +205,67 @@ const discordHttp = axios.create(axiosConfig);
     console.log('[Discord] ✅ axios agent 已切换到可用代理');
   } else if (!working) {
     console.error('[Discord] ❌ 所有代理端口都试过了, 全不通!');
-    console.error('[Discord] 💡 1. 确认 Clash/v2rayN 正在运行');
-    console.error('[Discord] 💡 2. 确认规则里 discord.com 走代理 (不是 DIRECT)');
-    console.error('[Discord] 💡 3. 看 Clash 日志面板: 请求有没有过来');
+    // 关键: 自动测裸连, 看 Windows TUN/系统代理能不能接管
+    console.log('[Discord] 🧪 尝试裸连 (让 TUN/系统代理接管)...');
+    try {
+      await axios.get('https://discord.com/api/v10/gateway', { timeout: 8000, validateStatus: () => true });
+      console.log('[Discord] ✅ 裸连通了！自动切换到裸连模式（依赖系统代理/TUN）');
+      // 清掉所有 agent, 让 Node 直连 (Windows Clash TUN 会自动路由)
+      Object.assign(discordHttp.defaults, { httpAgent: undefined, httpsAgent: undefined, proxy: undefined });
+      agentOrProxy = null;
+      // 注: config.json 的 discordProxy 暂时忽略
+    } catch(e) {
+      console.error('[Discord] ❌ 裸连也不通, 彻底无网!');
+      console.error('[Discord] 💡 Clash 完全没在工作, 检查:');
+      console.error('[Discord] 💡   1. Clash 是否启动 + 订阅是否更新');
+      console.error('[Discord] 💡   2. 是否需要开 TUN/增强模式 (Clash 设置里)');
+      console.error('[Discord] 💡   3. 系统代理是否已设 (控制面板→Internet选项→LAN设置)');
+    }
   }
 })();
 
+// 标记: 是否已经在 fallback 裸连中, 避免无限重试
+let isFallingBack = false;
+
 discordHttp.interceptors.response.use(
   r => r,
-  err => {
-    if (err.code === 'ECONNABORTED' && err.message?.includes('timeout')) {
-      console.error(`[Discord] ❌ 请求超时 — discord.com 被 GFW 拦截${!proxyUrl ? '，且未配置代理！' : ''}`);
-      if (!proxyUrl) console.error(`[Discord] 💡 解决: config.json 加 "discordProxy": "http://127.0.0.1:7890"`);
-    } else if (err.code === 'ECONNREFUSED') {
-      console.error(`[Discord] ❌ 代理连接被拒绝！代理服务没启动？`);
+  async (err) => {
+    const code = err.code;
+    const isNetworkError = ['ECONNABORTED', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT'].includes(code);
+    
+    // 关键: 请求失败 + 配了代理 + 还没 fallback → 去掉 agent 裸连重试一次
+    if (isNetworkError && agentOrProxy && !isFallingBack && !err.config?._fallbackTried) {
+      console.warn(`[Discord] ⚠️ 代理请求失败(${code}), 自动裸连重试一次...`);
+      isFallingBack = true;
+      try {
+        // 裸连: 清掉 agent, 让系统/TUN接管
+        const bareConfig = { ...err.config, _fallbackTried: true };
+        delete bareConfig.httpAgent;
+        delete bareConfig.httpsAgent;
+        delete bareConfig.proxy;
+        const retry = await axios.request(bareConfig);
+        console.warn(`[Discord] ✅ 裸连成功! 以后自动忽略代理, 用裸连模式`);
+        // 后续所有请求都裸连
+        agentOrProxy = null;
+        Object.assign(discordHttp.defaults, { httpAgent: undefined, httpsAgent: undefined, proxy: undefined });
+        isFallingBack = false;
+        return retry;
+      } catch (bareErr) {
+        isFallingBack = false;
+        // 裸连也失败, 输出诊断
+        console.error(`[Discord] ❌ 裸连也失败(${bareErr.code})! GFW 完全不通`);
+      }
+    }
+    
+    // 常规错误提示
+    if (code === 'ECONNABORTED' || (code === 'ETIMEDOUT')) {
+      console.error(`[Discord] ❌ 请求超时`);
+    } else if (code === 'ECONNREFUSED') {
+      console.error(`[Discord] ❌ 代理端口没人监听! Clash 没启动?`);
     } else if (err.response?.status === 407) {
-      console.error(`[Discord] ❌ 代理需要认证（407）`);
-    } else if (err.code === 'ECONNRESET') {
-      console.error(`[Discord] ❌ 连接被重置！GFW 或代理配置错误`);
+      console.error(`[Discord] ❌ 代理需要认证(407)`);
+    } else if (code === 'ECONNRESET') {
+      console.error(`[Discord] ❌ 连接被重置`);
     }
     return Promise.reject(err);
   }
