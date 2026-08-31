@@ -234,7 +234,7 @@ let managedAccounts = [];
 // 每个账号已见消息 ID 集合: Map<accountId, Set<discordMessageId>>
 const seenMessageIds = new Map();
 const ACCOUNT_REFRESH_MS = 30000;
-const MSG_POLL_MS = 15000;  // 消息轮询 15s，1k账号×5channel=333 req/s
+const MSG_POLL_MS = 5000;   // 消息轮询 5s，分层采样 + 并发 25 支撑 ~450 账号
 
 // 已经执行过首次历史补拉的账号 ID 集合
 const backfilledAccounts = new Set();
@@ -335,13 +335,23 @@ async function pool(items, concurrency, worker) {
 /** 每个 (accountId, channelId) 上次看到的最新消息 ID — 用 Discord after 参数增量拉 */
 const channelLastMsgId = new Map();
 
-/** 处理单个账号的消息轮询（提取出来便于并发） */
-async function pollOneAccount(acc) {
+/** 轮次计数器 — 用于分层采样 */
+let pollRound = 0;
+
+/**
+ * 处理单个账号的消息轮询
+ * @param {object} acc 账号
+ * @param {number} channelLimit 本轮最多拉多少个 DM channel（Discord 返回按最近消息时间倒序）
+ */
+async function pollOneAccount(acc, channelLimit) {
   try {
     const chResp = await discordHttp.get('/users/@me/channels', {
       headers: { 'Authorization': acc.token }, timeout: 8000,
+      params: { limit: Math.min(channelLimit, 200) },
     });
-    const channels = chResp.data || [];
+    const allChannels = chResp.data || [];
+    // 分层采样：只取前 channelLimit 个（最活跃的）
+    const channels = allChannels.slice(0, channelLimit);
     const seen = seenMessageIds.get(acc.id) || new Set();
     const newMessages = [];
 
