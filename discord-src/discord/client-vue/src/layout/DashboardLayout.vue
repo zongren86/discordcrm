@@ -25,7 +25,7 @@
         v-loading="menuLoading"
         class="sidebar-menu"
         :default-active="activeMenu"
-        v-model:openeds="openeds"
+        :default-openeds="allOpeneds"
         @select="handleSelect"
         :collapse="theme.sidebarCollapsed"
         :collapse-transition="false"
@@ -180,7 +180,7 @@ const theme = useThemeStore()
 // 菜单加载状态
 const menuLoading = ref(false)
 const menuTree = ref([])
-const openeds = ref([])
+const allOpeneds = computed(() => collectOpeneds(menuTree.value))
 
 // 图标映射表
 const iconMap = {
@@ -231,8 +231,6 @@ async function loadMenuTree() {
     const data = await api.get('/auth/menu-tree')
     if (Array.isArray(data)) {
       menuTree.value = data
-      await nextTick()
-      openeds.value = collectOpeneds(data)
     } else {
       ElMessage.error('服务器繁忙，请稍后再试')
       menuTree.value = []
@@ -612,6 +610,34 @@ onMounted(async () => {
   gap: 10px;
   padding: 0 14px !important;
   color: var(--color-text);
+}
+
+/* sub-menu 标题: 箭头贴右侧, 不独立占位 */
+.sidebar-menu :deep(.el-sub-menu__title) {
+  justify-content: flex-start;
+}
+.sidebar-menu :deep(.el-sub-menu__title > .el-icon),
+.sidebar-menu :deep(.el-sub-menu__title > span) {
+  flex-shrink: 0;
+}
+.sidebar-menu :deep(.el-sub-menu__title > span:last-child) {
+  flex: 1;
+}
+.sidebar-menu :deep(.el-sub-menu__icon-arrow) {
+  position: static !important;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--color-text-3, #8a919f);
+  transition: transform 0.2s ease;
+}
+/* 展开时箭头旋转 */
+.sidebar-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title .el-sub-menu__icon-arrow),
+.sidebar-menu :deep(.el-sub-menu.is-opened > .el-sub-menu__title .el-sub-menu__icon-arrow) {
+  transform: rotate(90deg);
+}
+/* 折叠侧边栏时隐藏箭头 */
+.sidebar.collapsed :deep(.el-sub-menu__icon-arrow) {
+  display: none;
 }
 
 .sidebar-menu :deep(.el-sub-menu__title .el-icon) {
