@@ -458,7 +458,12 @@ async function pollOneAccount(acc, channelLimit) {
       await http.post('/agent-servers/messages/report', {
         token: cfg.token, messages: newMessages,
       });
-      console.log(`[消息轮询] ${acc.name}: ${newMessages.length} 条新消息`);
+      const sentCount = newMessages.filter(m => m.isFromMe).length;
+      const recvCount = newMessages.length - sentCount;
+      const parts = [];
+      if (recvCount > 0) parts.push(`收 ${recvCount}`);
+      if (sentCount > 0) parts.push(`发 ${sentCount}`);
+      console.log(`[消息轮询] ${acc.name}: ${newMessages.length} 条新消息 (${parts.join(', ')})`);
     }
   } catch (err) {
     const st = err.response?.status;

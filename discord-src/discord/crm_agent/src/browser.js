@@ -146,7 +146,6 @@ const SYSTEM_CHROME = findSystemChrome();
 
 function getLaunchArgs() {
   return [
-    '--no-sandbox',
     '--disable-blink-features=AutomationControlled',
     '--disable-dev-shm-usage',
     '--disable-gpu',
@@ -234,10 +233,11 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   console.log('[Browser] 唤起持久化浏览器 profile...');
   const launchOpts = {
     headless: false,
-    viewport: browserConfig.viewport || { width: 1280, height: 800 },
     args: getLaunchArgs(),
     ignoreHTTPSErrors: true,
   };
+  // 唤起浏览器时不传 viewport，让 Chrome 窗口自然展开（用户可拖拽调整）
+  if (browserConfig.viewport) launchOpts.viewport = browserConfig.viewport;
   if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
   const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 

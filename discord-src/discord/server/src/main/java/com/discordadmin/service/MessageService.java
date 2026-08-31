@@ -2172,15 +2172,30 @@ private boolean isLocalUploadUrl(String url) {
                     cv.setChannelName("DM/" + channelId.substring(0, Math.min(8, channelId.length())));
                     return conversationRepository.save(cv);
                 });
-        // 3. 存 Message — OUTBOUND
+        // 3. 算 translatedContent：非中文 → 译成中文
+        String safeContent = content != null ? content : "";
+        String translatedContent = safeContent;
+        if (!safeContent.isBlank() && !containsChinese(safeContent)) {
+            try {
+                Long mid = conv.getDiscordAccount() != null ? conv.getDiscordAccount().getMerchantId() : null;
+                if (mid != null) {
+                    translatedContent = translationServiceFactory.translate(safeContent, "zh-CN", mid)
+                            .orElse(safeContent);
+                }
+            } catch (Exception e) {
+                // 翻译失败就用原文
+            }
+        }
+
+        // 4. 存 Message — OUTBOUND
         com.discordadmin.entity.Message msg = new com.discordadmin.entity.Message();
         msg.setConversation(conv);
         msg.setDiscordMessageId(discordMsgId);
         msg.setDirection(com.discordadmin.entity.Message.Direction.OUTBOUND);
         msg.setSenderName(authorName);
         msg.setSenderDiscordUserId(authorId);
-        msg.setContent(content != null ? content : "");
-        msg.setTranslatedContent(content != null ? content : "");
+        msg.setContent(safeContent);
+        msg.setTranslatedContent(translatedContent);
         msg.setMessageType(messageType != null ? messageType : "text");
         msg.setGifUrl(gifUrl);
         msg.setAttachmentsJson(attachmentsJson);
