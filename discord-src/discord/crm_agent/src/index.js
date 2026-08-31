@@ -350,27 +350,42 @@ async function pollOneAccount(acc, channelLimit) {
       params: { limit: Math.min(channelLimit, 200) },
     });
     const allChannels = chResp.data || [];
-    // 分层采样：只取前 channelLimit 个（最活跃的）
+    // 分层采样：只取前 channelLimit 个（Discord 按最近消息时间倒序返回）
     const channels = allChannels.slice(0, channelLimit);
     const seen = seenMessageIds.get(acc.id) || new Set();
     const newMessages = [];
 
-    for (const ch of channels) {
-      const key = `${acc.id}:${ch.id}`;
-      const lastId = channelLastMsgId.get(key);
-      const params = { limit: 50 };
-      if (lastId) params.after = lastId;
+    // ===== 账号内 messages API 并发 — 关键优化 =====
+    // 之前串行: 20 channel × 50ms = 1000ms
+    // 现在并行: max 100ms（取决于最慢的那 1-2 个请求）
+    const fetchTasks = channels.map(async (ch) => {
+      try {
+        const key = `${acc.id}:${ch.id}`;
+        const lastId = channelLastMsgId.get(key);
+        const params = { limit: 50 };
+        if (lastId) params.after = lastId;
 
-      const mResp = await discordHttp.get(`/channels/${ch.id}/messages`, {
-        params,
-        headers: { 'Authorization': acc.token }, timeout: 5000,
-      });
-      const msgs = mResp.data || [];
-      if (msgs.length === 0) continue;
+        const mResp = await discordHttp.get(`/channels/${ch.id}/messages`, {
+          params,
+          headers: { 'Authorization': acc.token }, timeout: 5000,
+        });
+        const msgs = mResp.data || [];
+        if (msgs.length === 0) return null;
 
-      // Discord messages 数组按时间倒序 — index 0 是最新
-      const latestMsgId = msgs[0]?.id;
-      if (latestMsgId) channelLastMsgId.set(key, latestMsgId);
+        // Discord messages 数组按时间倒序 — index 0 是最新
+        const latestMsgId = msgs[0]?.id;
+        if (latestMsgId) channelLastMsgId.set(key, latestMsgId);
+        return { ch, msgs };
+      } catch {
+        return null;  // 单个 channel 失败不影响其他
+      }
+    });
+
+    const results = await Promise.all(fetchTasks);
+
+    for (const res of results) {
+      if (!res) continue;
+      const { ch, msgs } = res;
 
       for (const m of msgs) {
         if (seen.has(m.id)) continue;
@@ -436,7 +451,6 @@ async function pollOneAccount(acc, channelLimit) {
   }
 }
 
-let pollInProgress = false;
 async function pollMessages() {
   if (managedAccounts.length === 0) return;
   if (pollInProgress) return;  // 防重入：上一轮还没跑完就跳过本轮
