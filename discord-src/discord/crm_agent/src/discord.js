@@ -22,23 +22,24 @@ try { HttpsProxyAgent = require('https-proxy-agent').HttpsProxyAgent; } catch {}
 try { SocksProxyAgent = require('socks-proxy-agent').SocksProxyAgent; } catch {}
 
 function detectProxyUrl() {
-  // 1. 显式配置（优先）
+  // 优先级 1: config.json 显式配置（最可靠）
   if (cfg.discordProxy && cfg.discordProxy.trim()) {
-    console.log(`[Discord] 📋 config.json 代理: ${cfg.discordProxy.trim()}`);
-    return cfg.discordProxy.trim();
+    const url = cfg.discordProxy.trim();
+    console.log(`[Discord] 代理 → config.json: ${url}`);
+    return url;
   }
 
-  // 2. 环境变量
+  // 优先级 2: 环境变量
   const envProxy = process.env.ALL_PROXY
                 || process.env.all_proxy
                 || process.env.HTTPS_PROXY || process.env.https_proxy
                 || process.env.HTTP_PROXY || process.env.http_proxy;
-  if (envProxy) {
-    console.log(`[Discord] 📋 环境变量代理: ${envProxy.trim()}`);
+  if (envProxy && envProxy.trim()) {
+    console.log(`[Discord] 代理 → 环境变量: ${envProxy.trim()}`);
     return envProxy.trim();
   }
 
-  // 3. Windows 注册表
+  // 优先级 3: Windows 注册表
   if (process.platform === 'win32') {
     try {
       const enable = execSync(
@@ -50,7 +51,7 @@ function detectProxyUrl() {
           'reg query "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyServer 2>nul',
           { encoding: 'utf8' }
         );
-        const match = server.match(/ProxyServer\s+REG_SZ\s+(.+)/);
+        const match = server.match(/ProxyServer\s+REG_SZ\s+(.+)/i);
         if (match) {
           let proxyUrl = match[1].trim();
           if (proxyUrl.includes('=')) {
@@ -59,17 +60,19 @@ function detectProxyUrl() {
             proxyUrl = (httpsMatch || httpMatch)[1];
           }
           if (!proxyUrl.startsWith('http')) proxyUrl = 'http://' + proxyUrl;
-          console.log(`[Discord] 🛰️ Windows 系统代理: ${proxyUrl}`);
+          console.log(`[Discord] 代理 → Windows 系统代理: ${proxyUrl}`);
           return proxyUrl;
         }
       }
     } catch {}
   }
 
-  console.log('[Discord] 直连模式');
-  return '';
+  // 没配置代理 → 提醒用户
+  console.warn(`[Discord] ⚠️ 未配置代理，将直连 discord.com（国内会被 GFW 拦截）`);
+  console.warn(`[Discord] 💡 解决: 在 config.json 加 "discordProxy": "http://127.0.0.1:7890"`);
+  console.warn(`[Discord] 💡 或者设置环境变量 ALL_PROXY=http://127.0.0.1:7890 后启动`);
+  return null;
 }
-
 function buildAgent(proxyUrl) {
   try {
     let url = proxyUrl;
@@ -139,7 +142,7 @@ discordHttp.interceptors.response.use(
   r => r,
   err => {
     if (err.code === 'ECONNABORTED' && err.message?.includes('timeout')) {
-      console.error(`[Discord] ❌ 请求超时！discord.com 被 GFW 拦截${!proxyUrl ? '，且未配置代理！' : ''}`);
+      console.error(`[Discord] ❌ 请求超时 — discord.com 被 GFW 拦截${!proxyUrl ? '，且未配置代理！' : ''}`);
       if (!proxyUrl) console.error(`[Discord] 💡 解决: config.json 加 "discordProxy": "http://127.0.0.1:7890"`);
     } else if (err.code === 'ECONNREFUSED') {
       console.error(`[Discord] ❌ 代理连接被拒绝！代理服务没启动？`);
