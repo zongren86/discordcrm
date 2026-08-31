@@ -346,4 +346,42 @@ async function fetchFriends(token) {
   return resp.data;
 }
 
-module.exports = { discordHttp, fetchFriends };
+/**
+ * 发送带附件的消息（multipart/form-data）
+ * Discord API: POST /channels/{channelId}/messages
+ * body: content + 多个 files (file[0], file[1], ...)
+ *
+ * files: [{ filename, contentType, dataBase64 }]
+ */
+async function sendMessageWithFiles(token, channelId, content, files) {
+  const FormData = require('form-data');
+  const fd = new FormData();
+  if (content) fd.append('content', content);
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const buf = Buffer.from(f.dataBase64, 'base64');
+    fd.append(`files[${i}]`, buf, {
+      filename: f.filename || `file_${i}`,
+      contentType: f.contentType || 'application/octet-stream',
+    });
+  }
+
+  const resp = await axios.post(
+    `${axiosConfig.baseURL}/channels/${channelId}/messages`,
+    fd,
+    {
+      headers: {
+        ...fd.getHeaders(),
+        'Authorization': token,
+      },
+      timeout: 60000,
+      maxContentLength: 100 * 1024 * 1024, // 100MB
+      maxBodyLength: 100 * 1024 * 1024,
+      _skipTransform: true, // 跳过 convertBigIntsInJson，直接 JSON.parse
+    }
+  );
+  return resp.data;
+}
+
+module.exports = { discordHttp, fetchFriends, sendMessageWithFiles };

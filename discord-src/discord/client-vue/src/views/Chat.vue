@@ -2128,7 +2128,12 @@ function stickerItemsOf(msg) {
 
 /** 判断是否 Lottie 格式 Sticker */
 function isLottieSticker(sticker) {
-  return sticker && (sticker.formatType === 3 || sticker.format === 'lottie')
+  if (!sticker) return false
+  // 兼容数字 3 或字符串 "3"，以及不同字段名
+  const fmt = sticker.formatType ?? sticker.format_type ?? sticker.format
+  if (fmt === 3 || fmt === '3') return true
+  if (fmt === 'lottie') return true
+  return false
 }
 
 /** 判断收藏的 URL 是否是 Lottie JSON 形式（Sticker 收藏 Tab 判断渲染方式） */
@@ -2194,23 +2199,31 @@ function stickerLottieUrl(sticker) {
   if (!sticker) return ''
   // 已经是完整 URL
   if (sticker.assetUrl && sticker.assetUrl.startsWith('http')) return sticker.assetUrl
+  if (sticker.asset_url && sticker.asset_url.startsWith('http')) return sticker.asset_url
   
-  // Lottie 格式
+  const fmtNum = Number(sticker.formatType ?? sticker.format_type ?? 0)
+  
+  // Lottie 格式 (format_type = 3)
   if (isLottieSticker(sticker)) {
-    if (sticker.assetUrl) {
-      return `https://cdn.discordapp.com/stickers/${sticker.id}/${sticker.assetUrl}.json`
+    // Lottie sticker 的 CDN URL 格式: https://cdn.discordapp.com/stickers/{id}.json
+    // 或带 assetUrl: https://cdn.discordapp.com/stickers/{id}/{assetUrl}.json
+    const asset = sticker.assetUrl || sticker.asset_url
+    if (asset && !asset.includes('http')) {
+      return `https://cdn.discordapp.com/stickers/${sticker.id}/${asset}.json`
     }
-    return `https://cdn.discordapp.com/stickers/${sticker.id}?format=json`
+    // 标准 Lottie URL
+    return `https://cdn.discordapp.com/stickers/${sticker.id}.json`
   }
   
-  // 普通图片 Sticker：尝试多种可能的 CDN URL 格式
-  const appId = sticker.applicationId || sticker.appId
-  const ext = sticker.formatType === 4 ? 'webm' : 'png'  // 4 = animated
-  if (sticker.assetUrl) {
-    return `https://cdn.discordapp.com/stickers/${sticker.id}/${sticker.assetUrl}.${ext}`
+  // 普通图片 Sticker: format_type = 1(PNG), 2(APNG), 4(GIF/webp)
+  // 静态 sticker 的展示 URL: https://cdn.discordapp.com/stickers/{id}.png?size=320
+  // 动态 sticker: webp
+  const ext = fmtNum === 2 ? 'png' : (fmtNum === 4 ? 'webp' : 'png')
+  const asset = sticker.assetUrl || sticker.asset_url
+  if (asset && !asset.includes('http')) {
+    return `https://cdn.discordapp.com/stickers/${sticker.id}/${asset}.${ext}`
   }
-  // 兜底
-  return `https://cdn.discordapp.com/attachments/${appId || ''}/${sticker.id}.${ext}`
+  return `https://cdn.discordapp.com/stickers/${sticker.id}.${ext}`
 }
 
 /** Sticker 是否已收藏 */

@@ -540,29 +540,166 @@ public class MessageService {
         return sendReply(conversationId, content, targetLanguage, null, null, null, null, null, agentDisplayName);
     }
 
-    /** 带附件的发送方法 */
+    /** 带附件的发送方法 —— AGENT 账号统一用一个 SEND_MESSAGE 同时发 content + files */
     @Transactional
     public Message sendReply(Long conversationId, String content, String targetLanguage,
                               String messageType, String audioData, String audioMimeType,
                               Integer audioDuration, String audioFileName, String agentDisplayName,
                               java.util.List<java.util.Map<String, String>> attachments) {
-        Message result = null;
-        // 如果有附件，先发送附件消息
-        if (attachments != null && !attachments.isEmpty()) {
-            Message attMsg = sendAttachments(conversationId, attachments, agentDisplayName);
-            // 如果没有文字内容或语音，返回附件消息
-            if (attMsg != null) {
-                result = attMsg;
-            }
+        Conversation conversation = conversationRepository.findById(conversationId)
+                .orElseThrow(() -> new IllegalArgumentException("会话不存在"));
+        DiscordAccount account = discordAccountRepository.findById(
+                conversation.getDiscordAccount().getId())
+                .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
+
+        boolean hasAttachments = attachments != null && !attachments.isEmpty();
+        boolean hasTextOrVoice = (content != null && !content.isBlank())
+                || ("voice".equals(messageType) && audioData != null && !audioData.isBlank());
+
+        // AGENT 账号：统一 SEND_MESSAGE 任务，一次发 content + files（合并成一条消息）
+        if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
+            return sendAgentUnifiedMessage(conversation, account, content, targetLanguage, attachments, agentDisplayName);
         }
-        // 只有当有文字内容或语音时，才发送文本/语音消息
-        boolean hasTextOrVoice = (content != null && !content.isBlank()) 
-                                || ("voice".equals(messageType) && audioData != null && !audioData.isBlank());
+
+        // 非 AGENT 账号：保持原有逻辑
+        Message result = null;
+        if (hasAttachments) {
+            Message attMsg = sendAttachments(conversationId, attachments, agentDisplayName);
+            if (attMsg != null) result = attMsg;
+        }
         if (hasTextOrVoice) {
             result = sendReply(conversationId, content, targetLanguage,
                     messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
         }
         return result;
+    }
+
+    /** AGENT 账号统一发送 content + files + stickers 为一条消息 */
+    private Message sendAgentUnifiedMessage(Conversation conversation, DiscordAccount account,
+                                            String content, String targetLanguage,
+                                            java.util.List<java.util.Map<String, String>> attachments,
+                                            String agentDisplayName) {
+        java.util.List<java.util.Map<String, String>> fileList = new java.util.ArrayList<>();
+        if (attachments != null && !attachments.isEmpty()) {
+            for (java.util.Map<String, String> att : attachments) {
+                String url = att.get("url");
+                String fileName = att.get("name");
+                String contentType = att.get("contentType");
+                if (url == null || url.isBlank()) continue;
+                if (url.startsWith("/")) url = "http://localhost:8090" + url;
+                try {
+                    HttpClient client = HttpClient.newBuilder()
+                            .connectTimeout(Duration.ofSeconds(30)).build();
+                    HttpRequest request = HttpRequest.newBuilder()
+                            .uri(URI.create(url)).timeout(Duration.ofSeconds(60)).GET().build();
+                    HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+                    if (response.statusCode() == 200) {
+                        java.util.Map<String, String> fm = new java.util.HashMap<>();
+                        fm.put("filename", fileName != null ? fileName : "attachment");
+                        fm.put("contentType", contentType != null ? contentType : "application/octet-stream");
+                        fm.put("dataBase64", java.util.Base64.getEncoder().encodeToString(response.body()));
+                        fileList.add(fm);
+                    }
+                } catch (Exception e) {
+                    log.error("[Agent附件] 下载文件失败 {}: {}", url, e.getMessage());
+                }
+            }
+        }
+
+        // 翻译 content（如果有）
+        String effectiveContent = content != null ? content : "";
+        String translatedText = effectiveContent;
+        if (effectiveContent != null && !effectiveContent.isBlank() && !isPureNumber(effectiveContent)) {
+            Long merchantId = conversation.getMerchantId();
+            if (merchantId == null && conversation.getDiscordAccount() != null) {
+                merchantId = conversation.getDiscordAccount().getMerchantId();
+            }
+            String targetLang = normalizeLanguageCode(targetLanguage);
+            if ((targetLang == null || targetLang.isBlank())) {
+                targetLang = containsChinese(effectiveContent) ? "en" : "zh-CN";
+            }
+            translatedText = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(
+                    translationServiceFactory.translate(effectiveContent, targetLang, merchantId)
+                            .orElse(effectiveContent));
+        }
+
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> params = new java.util.HashMap<>();
+            params.put("token", account.getToken());
+            params.put("channelId", conversation.getChannelId());
+            params.put("content", translatedText);
+            if (!fileList.isEmpty()) params.put("files", fileList);
+
+            String paramsJson = om.writeValueAsString(params);
+            com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
+                    account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
+            log.info("[Agent统一发送] taskId={}, account={}, contentLen={}, files={}",
+                    task.getId(), account.getName(),
+                    translatedText != null ? translatedText.length() : 0, fileList.size());
+
+            String resultJson = agentTaskService.waitForTaskResult(task.getId(), 30000);
+            com.fasterxml.jackson.databind.JsonNode r = om.readTree(resultJson);
+            String discordMessageId = r.path("discordMessageId").asText(null);
+            if (discordMessageId == null) {
+                throw new IllegalStateException("Agent 未返回 discordMessageId: " + r.path("error").asText("未知原因"));
+            }
+            String cdnUrl = r.path("cdnUrl").asText(null);
+
+            // 保存消息
+            String dbContent = (content != null && !content.isBlank()) ? content :
+                    (fileList.isEmpty() ? "" : "[图片消息]");
+            Message message = new Message();
+            message.setConversation(conversation);
+            message.setDirection(Message.Direction.OUTBOUND);
+            message.setSenderName(account.getName());
+            message.setContent(dbContent);
+            message.setSentContent(translatedText != null ? translatedText : "");
+            message.setMessageType(fileList.isEmpty() ? "text" : "image");
+            message.setDiscordMessageId(discordMessageId);
+            if (cdnUrl != null && !cdnUrl.isBlank()) {
+                java.util.List<java.util.Map<String, String>> attArr = new java.util.ArrayList<>();
+                java.util.Map<String, String> m = new java.util.HashMap<>();
+                m.put("url", cdnUrl);
+                attArr.add(m);
+                message.setAttachmentsJson(om.writeValueAsString(attArr));
+            }
+            try {
+                if (effectiveContent != null && !effectiveContent.isBlank() && !isPureNumber(effectiveContent)) {
+                    if (containsChinese(effectiveContent)) {
+                        message.setTranslatedContent(effectiveContent);
+                    } else {
+                        message.setTranslatedContent(com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(
+                                translationServiceFactory.translate(effectiveContent, "zh-CN", conversation.getMerchantId()).orElse(effectiveContent)));
+                    }
+                } else {
+                    message.setTranslatedContent(dbContent);
+                }
+            } catch (Exception e) {
+                message.setTranslatedContent(dbContent);
+            }
+            Instant now = Instant.now();
+            message.setDiscordCreatedAt(now);
+            message.setCreatedAt(now);
+
+            Optional<Message> existing = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
+            if (existing.isPresent()) {
+                Message ex = existing.get();
+                ex.setContent(message.getContent());
+                ex.setTranslatedContent(message.getTranslatedContent());
+                ex.setSentContent(message.getSentContent());
+                ex.setAttachmentsJson(message.getAttachmentsJson());
+                return messageRepository.save(ex);
+            }
+            conversation.setLastMessagePreview(message.getTranslatedContent() != null && !message.getTranslatedContent().isBlank() ?
+                    message.getTranslatedContent().substring(0, Math.min(200, message.getTranslatedContent().length())) : dbContent);
+            conversation.setLastMessageDirection("OUTBOUND");
+            conversation.setLastMessageAt(Instant.now());
+            conversationRepository.save(conversation);
+            return messageRepository.save(message);
+        } catch (Exception e) {
+            throw new IllegalStateException("Agent 发消息失败: " + e.getMessage(), e);
+        }
     }
 
     /** 发送附件到 Discord 并保存本地记录，返回保存的消息 */
@@ -2165,7 +2302,8 @@ private boolean isLocalUploadUrl(String url) {
     @Transactional
     public void saveAgentOutboundMessage(Long accountId, String channelId, String discordMsgId,
                                           String authorId, String authorName, String content,
-                                          String messageType, String gifUrl, String attachmentsJson) {
+                                          String messageType, String gifUrl, String attachmentsJson,
+                                          String stickerItemsJson) {
         // 1. 去重
         if (messageRepository.findByDiscordMessageId(discordMsgId).isPresent()) {
             return;
@@ -2212,6 +2350,7 @@ private boolean isLocalUploadUrl(String url) {
         msg.setMessageType(messageType != null ? messageType : "text");
         msg.setGifUrl(gifUrl);
         msg.setAttachmentsJson(attachmentsJson);
+        msg.setStickerItemsJson(stickerItemsJson);
         messageRepository.save(msg);
     }
 

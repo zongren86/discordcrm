@@ -14,7 +14,7 @@
 })();
 
 const { http, cfg } = require('./http');
-const { discordHttp, fetchFriends } = require('./discord');
+const { discordHttp, fetchFriends, sendMessageWithFiles } = require('./discord');
 const { captureDiscordAccount, launchBrowserOnly } = require('./browser');
 const fs = require('fs');
 const path = require('path');
@@ -157,13 +157,27 @@ async function executeTask(task) {
         const params = typeof task.params === 'string'
           ? (() => { try { return JSON.parse(task.params); } catch { return {}; } })()
           : (task.params || {});
-        const { token, channelId, content, stickerIds, sticker_id } = params;
+        const { token, channelId, content, stickerIds, sticker_id, files } = params;
         if (!token || !channelId) {
           await reportTask(task.id, 'FAILED', { error: '缺少 token 或 channelId' });
           break;
         }
         await reportTask(task.id, 'RUNNING');
         try {
+          // 有 files → multipart 同时发 content + files（合并为一条消息）
+          if (files && Array.isArray(files) && files.length > 0) {
+            console.log(`[任务] 统一发送 content="${content || ''}", files=${files.length}`);
+            const result = await sendMessageWithFiles(token, channelId, content || '', files);
+            const discordMessageId = result?.id;
+            const firstCdnUrl = result?.attachments?.[0]?.url || null;
+            console.log(`[任务] ✅ 统一发送成功 discordMsgId=${discordMessageId} cdnUrl=${firstCdnUrl || '(无)'}`);
+            await reportTask(task.id, 'SUCCESS', {
+              discordMessageId,
+              cdnUrl: firstCdnUrl,
+              channelId,
+            });
+            break;
+          }
           // 构建请求体：支持纯文本、Sticker、混合发送
           const body = {};
           if (stickerIds && Array.isArray(stickerIds) && stickerIds.length > 0) {
@@ -340,9 +354,24 @@ async function backfillHistoryForAccount(acc) {
         const atts = (m.attachments || []).map(a => ({
           url: a.url, contentType: a.content_type, filename: a.filename, size: a.size
         }));
-        const stickers = (m.sticker_items || m.stickers || []).map(s => ({
-          id: s.id, name: s.name, formatType: s.format_type || s.formatType
-        }));
+        const stickers = (m.sticker_items || m.stickers || []).map(s => {
+          const fmt = s.format_type || s.formatType || 0;
+          const isLottie = Number(fmt) === 3;
+          const asset = s.asset || '';  // Discord API 里 asset 是文件名（可能为空字符串）
+          const ext = Number(fmt) === 2 ? 'png' : (Number(fmt) === 4 ? 'webp' : 'png');
+          let assetUrl;
+          if (isLottie) {
+            // Lottie sticker CDN: https://cdn.discordapp.com/stickers/{id}.json 或带 asset
+            assetUrl = asset
+              ? `https://cdn.discordapp.com/stickers/${s.id}/${asset}.json`
+              : `https://cdn.discordapp.com/stickers/${s.id}.json`;
+          } else {
+            assetUrl = asset
+              ? `https://cdn.discordapp.com/stickers/${s.id}/${asset}.${ext}`
+              : `https://cdn.discordapp.com/stickers/${s.id}.${ext}`;
+          }
+          return { id: s.id, name: s.name, formatType: fmt, asset, assetUrl };
+        });
         let gifUrl = null;
         const trimmed = (m.content || '').trim();
         if (/^https?:\/\/\S+$/i.test(trimmed) && /\.(gif|webp|mp4|webm)(\?|#|$)/i.test(trimmed)) {
@@ -456,9 +485,24 @@ async function pollOneAccount(acc, channelLimit) {
         const atts = (m.attachments || []).map(a => ({
           url: a.url, contentType: a.content_type, filename: a.filename, size: a.size
         }));
-        const stickers = (m.sticker_items || m.stickers || []).map(s => ({
-          id: s.id, name: s.name, formatType: s.format_type || s.formatType
-        }));
+        const stickers = (m.sticker_items || m.stickers || []).map(s => {
+          const fmt = s.format_type || s.formatType || 0;
+          const isLottie = Number(fmt) === 3;
+          const asset = s.asset || '';  // Discord API 里 asset 是文件名（可能为空字符串）
+          const ext = Number(fmt) === 2 ? 'png' : (Number(fmt) === 4 ? 'webp' : 'png');
+          let assetUrl;
+          if (isLottie) {
+            // Lottie sticker CDN: https://cdn.discordapp.com/stickers/{id}.json 或带 asset
+            assetUrl = asset
+              ? `https://cdn.discordapp.com/stickers/${s.id}/${asset}.json`
+              : `https://cdn.discordapp.com/stickers/${s.id}.json`;
+          } else {
+            assetUrl = asset
+              ? `https://cdn.discordapp.com/stickers/${s.id}/${asset}.${ext}`
+              : `https://cdn.discordapp.com/stickers/${s.id}.${ext}`;
+          }
+          return { id: s.id, name: s.name, formatType: fmt, asset, assetUrl };
+        });
         let gifUrl = null;
         const trimmed = (m.content || '').trim();
         if (/^https?:\/\/\S+$/i.test(trimmed) && /\.(gif|webp|mp4|webm)(\?|#|$)/i.test(trimmed)) {

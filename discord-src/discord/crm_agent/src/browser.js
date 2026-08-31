@@ -149,11 +149,9 @@ function getLaunchArgs() {
   // Playwright 会在 chromiumSandbox !== true 时自动加 --no-sandbox，
   // 所以 launchOpts 必须设 chromiumSandbox: true（下面两处已设）
   return [
-    '--disable-blink-features=AutomationControlled',
     '--disable-dev-shm-usage',
     '--disable-gpu',
     '--disable-infobars',
-    '--disable-features=AutomationControlled',
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-background-networking',

@@ -670,7 +670,7 @@ public class AgentServerController {
                 if (isFromMe) {
                     // 自己发的消息 → OUTBOUND，走 MessageService 的 OUTBOUND 保存
                     messageService.saveAgentOutboundMessage(accountId, channelId, discordMsgId,
-                            authorId, authorName, content, messageType, gifUrl, attachmentsJson);
+                            authorId, authorName, content, messageType, gifUrl, attachmentsJson, stickerItemsJson);
                 } else {
                     // 别人发的消息 → INBOUND，走完整的 handleInbound 链路
                     InboundMessage inbound = new InboundMessage(
