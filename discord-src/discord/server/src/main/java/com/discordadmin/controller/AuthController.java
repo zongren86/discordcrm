@@ -38,6 +38,12 @@ public class AuthController {
                                 Long merchantId, String merchantName,
                                 List<String> permissions) {}
 
+    @GetMapping("/ping")
+    public Map<String, Object> ping() {
+        // 同时验证 token 有效性：如果 JWT 有效则返回 ok=true，token 无效由 Security 过滤器返回 401
+        return java.util.Map.of("ok", true, "ts", System.currentTimeMillis());
+    }
+
     @PostMapping("/login")
     public LoginResponse login(@RequestBody LoginRequest request) {
         Agent agent = agentRepository.findByUsername(request.username())
