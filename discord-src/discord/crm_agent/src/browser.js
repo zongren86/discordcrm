@@ -246,7 +246,7 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   const page = context.pages()[0] || await context.newPage();
   await page.addInitScript(getInitScript());
   try {
-    await page.goto('https://discord.com/channels/@me', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+    await page.goto('https://discord.com/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
   } catch {}
   console.log('[Browser] ✅ 浏览器已打开');
   return { context, page };
@@ -297,7 +297,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 
   console.log('[Browser] 打开 Discord 登录页...');
   try {
-    await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto('https://discord.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
   } catch (e) {
     console.log('[Browser] goto 超时，继续等待...');
   }
