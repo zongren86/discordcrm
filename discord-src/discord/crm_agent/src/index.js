@@ -337,6 +337,7 @@ const channelLastMsgId = new Map();
 
 /** 轮次计数器 — 用于分层采样 */
 let pollRound = 0;
+let pollInProgress = false;
 
 /**
  * 处理单个账号的消息轮询
@@ -456,8 +457,8 @@ async function pollMessages() {
   if (pollInProgress) return;  // 防重入：上一轮还没跑完就跳过本轮
   pollInProgress = true;
   try {
-    // 并发 10 — 500 账号每 channel 平均 200ms，500×3ch/10 ≈ 30s 一轮
-    await pool(managedAccounts, 10, pollOneAccount);
+    // 并发 25 — 三层并发（账号间 25 + 账号内 Promise.all + 分层采样 20/50/200 channel）
+    await pool(managedAccounts, 25, pollOneAccount);
   } finally {
     pollInProgress = false;
   }
