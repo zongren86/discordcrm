@@ -208,7 +208,31 @@ public class FreeGoogleTranslationService implements TranslationService {
             if (translated == null || translated.isBlank()) {
                 return Optional.empty();
             }
-            log.info("MyMemory 翻译成功 [textLen={}]", text.length());
+            // 关键校验: translatedText 不能等于原文 (MyMemory MateCat 记忆库垃圾)
+            // 如果相同, 从 matches 数组里找一个不同的译文
+            if (translated.trim().equalsIgnoreCase(text.trim())) {
+                log.warn("[MyMemory] translatedText 等于原文 '{}', 从 matches 里找更好的译文", text);
+                JsonNode matches = root.path("matches");
+                if (matches.isArray()) {
+                    for (JsonNode match : matches) {
+                        String candidate = match.path("translation").asText(null);
+                        if (candidate != null && !candidate.isBlank()
+                                && !candidate.trim().equalsIgnoreCase(text.trim())
+                                && candidate.length() < text.length() * 3) {  // 防乱码
+                            int quality = match.path("quality").asInt(0);
+                            log.info("[MyMemory] 从 match 取更好译文: '{}' (quality={})", candidate, quality);
+                            translated = candidate;
+                            break;
+                        }
+                    }
+                }
+                // 如果 matches 里也没好的, 干脆返回 empty, 让上层知道翻译失败
+                if (translated.trim().equalsIgnoreCase(text.trim())) {
+                    log.warn("[MyMemory] matches 里也没有不同于原文的译文, 判定为失败");
+                    return Optional.empty();
+                }
+            }
+            log.info("MyMemory 翻译成功: '{}' -> '{}' [textLen={}]", text, translated, text.length());
             return Optional.of(translated);
         } catch (Exception e) {
             log.debug("MyMemory 翻译失败: {}", e.getMessage());

@@ -348,11 +348,17 @@ public class MessageService {
             textToSend = content != null ? content : "[语音消息]";
         }
 
-        // 计算中文译文（translatedContent 统一存中文，用于前端默认显示）
+        // 计算前端默认显示内容 (translatedContent)：
+        // - 源语言=目标语言（textToSend 和 content 相同）：不需要翻译，直接用原文
+        // - 本身就是中文：直接用原文
+        // - 其他：翻译成中文让管理员能看懂
         String zhTranslation = null;
         if (!isVoiceMessage && content != null && !content.isBlank() && !isPureNumber(content)) {
-            if (containsChinese(content)) {
-                zhTranslation = content; // 本身就是中文
+            if (content.equalsIgnoreCase(textToSend)) {
+                zhTranslation = content;
+                log.info("[sendReply] 源语言=目标语言({}), 跳过中文翻译", targetLang);
+            } else if (containsChinese(content)) {
+                zhTranslation = content;
             } else {
                 zhTranslation = translationServiceFactory.translate(content, "zh-CN", merchantId).orElse(content);
             }

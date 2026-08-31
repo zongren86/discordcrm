@@ -73,9 +73,15 @@ public class TranslationServiceFactory {
             log.debug("免费翻译兜底成功 merchant={}", merchantId);
             return free;
         }
-        // 如果 AI 返回过"等于原文"的结果，至少保留原文避免展示为空
-        if (aiResult.isPresent() && !aiResult.get().isBlank()) return aiResult;
-        if (free.isPresent() && !free.get().isBlank()) return free;
+        // 最终兜底：AI 和免费翻译都没产出有效译文（都返回原文或为空）
+        // 一律返回 empty，让调用方 MessageService 用 .orElse(content) 自行处理
+        if (aiResult.isPresent() && !aiResult.get().isBlank()
+                && !aiResult.get().equalsIgnoreCase(text.trim())) {
+            log.warn("AI翻译与免费翻译均未产出有效译文，但AI返回了不同结果，使用AI结果: merchant={}", merchantId);
+            return aiResult;
+        }
+        log.warn("所有翻译渠道均未产出有效译文(返回原文或空): textLen={} targetLang={} merchant={}",
+                text.length(), targetLanguage, merchantId);
         return Optional.empty();
     }
 

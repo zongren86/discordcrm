@@ -1,3 +1,4 @@
+1.13.9
 {
   "serverUrl": "http://127.0.0.1:8090/api",
   "agentName": "crm-agent-01",
@@ -13,5 +14,5 @@
       "height": 800
     }
   },
-  "version": "1.13.8"
+  "version": "1.13.9"
 }
