@@ -11,7 +11,11 @@ import com.discordadmin.service.MessageService;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.AgentTask;
 import com.discordadmin.entity.Friend;
+import com.discordadmin.entity.DiscordUser;
+import com.discordadmin.entity.Conversation;
 import com.discordadmin.repository.FriendRepository;
+import com.discordadmin.repository.DiscordUserRepository;
+import com.discordadmin.repository.ConversationRepository;
 import java.time.Instant;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -62,6 +66,10 @@ public class AgentServerController {
     private final MessageService messageService;
     @Autowired
     private ConversationService conversationService;
+    @Autowired
+    private DiscordUserRepository discordUserRepository;
+    @Autowired
+    private ConversationRepository conversationRepository;
 
     @Value("${app.agent-source-dir:}")
     private String agentSourceDir;
@@ -787,5 +795,120 @@ public class AgentServerController {
             accountId, friends.size(), saved, friends.size() - saved);
 
         return ResponseEntity.ok(Map.of("saved", saved, "total", friends.size()));
+    }
+
+    /**
+     * Agent 上报 DM 频道列表 —— 为每个 1:1 DM 创建/更新 Conversation
+     * 这样 Chat.vue 会话列表才能显示好友
+     */
+    @PostMapping("/dm-channels/report")
+    public ResponseEntity<Map<String, Object>> reportDmChannels(@RequestBody Map<String, Object> body) {
+        String agentToken = (String) body.get("token");
+        AgentServer server = agentServerRepository.findByToken(agentToken)
+                .orElseThrow(() -> new IllegalArgumentException("无效的 agent token"));
+
+        Long accountId = Long.valueOf(body.get("accountId").toString());
+        DiscordAccount acc = discordAccountRepository.findById(accountId).orElse(null);
+        if (acc == null) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "账号不存在: " + accountId));
+        }
+
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> dms = (java.util.List<Map<String, Object>>) body.get("dms");
+        if (dms == null) dms = java.util.Collections.emptyList();
+
+        int saved = 0;
+        for (Map<String, Object> dm : dms) {
+            int channelType = dm.get("channelType") != null ? ((Number) dm.get("channelType")).intValue() : -1;
+            if (channelType != 1) continue; // 只处理 1:1 DM
+
+            String channelId = sstr(dm.get("channelId"), null);
+            if (channelId == null) continue;
+
+            @SuppressWarnings("unchecked")
+            java.util.List<Map<String, Object>> recipients = (java.util.List<Map<String, Object>>) dm.get("recipients");
+            if (recipients == null || recipients.isEmpty()) continue;
+
+            Map<String, Object> recipient = recipients.get(0);
+            String userId = sstr(recipient.get("id"), null);
+            if (userId == null) continue;
+
+            // upsert DiscordUser
+            DiscordUser user = discordUserRepository.findByDiscordUserId(userId).orElse(null);
+            if (user == null) {
+                user = new DiscordUser();
+                user.setDiscordUserId(userId);
+                user.setFirstSeenAt(java.time.Instant.now());
+            }
+            user.setUsername(sstr(recipient.get("username"), null));
+            user.setGlobalName(sstr(recipient.get("globalName"), null));
+            String avatar = sstr(recipient.get("avatar"), null);
+            if (avatar != null) {
+                user.setAvatarUrl("https://cdn.discordapp.com/avatars/" + userId + "/" + avatar + ".png");
+            }
+            user = discordUserRepository.save(user);
+
+            // upsert Conversation
+            Conversation conv = conversationRepository
+                    .findByChannelIdAndDiscordAccount_Id(channelId, acc.getId())
+                    .orElse(null);
+            if (conv == null) {
+                conv = new Conversation();
+                conv.setChannelId(channelId);
+                conv.setType(Conversation.ConversationType.DM);
+                conv.setStatus(Conversation.ConversationStatus.OPEN);
+                conv.setCreatedAt(java.time.Instant.now());
+            }
+            conv.setDiscordUser(user);
+            conv.setDiscordAccount(acc);
+            conv.setMerchantId(acc.getMerchantId());
+            String displayName = user.getGlobalName() != null ? user.getGlobalName() : user.getUsername();
+            conv.setChannelName(displayName);
+            conversationRepository.saveAndFlush(conv);
+            saved++;
+        }
+
+        log.info("[DM频道上报] agent={} accountId={} 上报={}, 保存={}", server.getName(), accountId, dms.size(), saved);
+        return ResponseEntity.ok(Map.of("success", true, "saved", saved, "total", dms.size()));
+    }
+
+    /**
+     * Agent 上报账号 token 状态（失效/恢复）
+     * agent 在消息轮询、发消息、拉好友等场景检测到 401 时调用
+     */
+    @PostMapping("/accounts/token-status")
+    public ResponseEntity<Map<String, Object>> reportTokenStatus(@RequestBody Map<String, Object> body) {
+        String agentToken = (String) body.get("token");
+        AgentServer server = agentServerRepository.findByToken(agentToken)
+                .orElseThrow(() -> new IllegalArgumentException("无效的 agent token"));
+
+        Long accountId = Long.valueOf(body.get("accountId").toString());
+        boolean valid = !Boolean.FALSE.equals(body.get("valid"));  // 默认 true
+        String reason = sstr(body.get("reason"), valid ? "ok" : "401 Unauthorized");
+
+        DiscordAccount acc = discordAccountRepository.findById(accountId).orElse(null);
+        if (acc == null) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "账号不存在: " + accountId));
+        }
+
+        boolean changed = !Boolean.valueOf(valid).equals(acc.getTokenValid());
+        acc.setTokenValid(valid);
+        acc.setTokenCheckedAt(Instant.now());
+        if (!valid) {
+            acc.setLastError(reason);
+        } else {
+            acc.setLastError(null);
+        }
+        discordAccountRepository.save(acc);
+
+        if (changed) {
+            log.warn("[Token状态] agent={} accountId={} name={} valid={} reason={}",
+                server.getName(), accountId, acc.getName(), valid, reason);
+        } else {
+            log.debug("[Token状态] agent={} accountId={} valid={} (未变化)",
+                server.getName(), accountId, valid);
+        }
+
+        return ResponseEntity.ok(Map.of("success", true, "accountId", accountId, "tokenValid", valid));
     }
 }

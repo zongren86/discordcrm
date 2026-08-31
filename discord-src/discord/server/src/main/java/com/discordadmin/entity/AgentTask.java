@@ -40,11 +40,11 @@ public class AgentTask {
     private String status = "PENDING";
 
     /** 任务参数（JSON，随 type 不同而不同） */
-    @Column(name = "params", columnDefinition = "TEXT")
+    @Column(name = "params", columnDefinition = "MEDIUMTEXT")
     private String params;
 
     /** 执行结果（JSON） */
-    @Column(name = "result", columnDefinition = "TEXT")
+    @Column(name = "result", columnDefinition = "MEDIUMTEXT")
     private String result;
 
     /** 任务发起人 userId */

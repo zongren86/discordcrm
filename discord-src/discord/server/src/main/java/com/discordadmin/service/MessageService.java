@@ -742,9 +742,6 @@ public class MessageService {
                         String mimeType = contentType != null ? contentType : "application/octet-stream";
                         String name = fileName != null ? fileName : "attachment";
                         
-                        if ("AGENT".equals(account.getSource())) {
-                            throw new IllegalStateException("文件/图片暂不支持代理模式发送，请先使用文本消息");
-                        }
                         if (account.getAccountType() == DiscordAccount.AccountType.USER) {
                             com.fasterxml.jackson.databind.JsonNode resp = discordUserClient.sendMessageWithFile(
                                     account.getToken(), conversation.getChannelId(), "",
@@ -1526,35 +1523,55 @@ private boolean isLocalUploadUrl(String url) {
             discordAttachmentUrl = gifUrl;
             sentContent = gifUrl;
         } else if (isLocalUpload) {
-            // 本地服务器上传的文件：下载后重新上传到 Discord CDN
+            // 本地服务器上传的文件
             log.info("发送本地上传文件: {}", gifUrl);
-            var localResult = downloadAndUploadGif(account, conversation, gifUrl, title);
-            discordMessageId = localResult.messageId();
-            discordAttachmentUrl = localResult.attachmentUrl();
-            sentContent = localResult.sentContent();
+            if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
+                var agentResult = sendGifViaAgent(account, conversation, gifUrl, title);
+                discordMessageId = agentResult.messageId();
+                discordAttachmentUrl = agentResult.attachmentUrl();
+                sentContent = agentResult.sentContent();
+            } else {
+                var localResult = downloadAndUploadGif(account, conversation, gifUrl, title);
+                discordMessageId = localResult.messageId();
+                discordAttachmentUrl = localResult.attachmentUrl();
+                sentContent = localResult.sentContent();
+            }
         } else if (isDirectMediaUrl(gifUrl)) {
             // 直接媒体URL：直接发送，Discord 会自动 embedding 显示
             log.info("发送直接媒体URL: {}", gifUrl);
-            try {
-                discordMessageId = discordUserClient.sendMessage(
-                        account.getToken(), conversation.getChannelId(), gifUrl);
-                discordAttachmentUrl = gifUrl;
-                sentContent = gifUrl;
-            } catch (Exception e) {
-                log.warn("直接发送URL失败，尝试下载上传: {}", e.getMessage());
-                // 降级：下载后上传
+            if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
+                var agentResult = sendGifViaAgent(account, conversation, gifUrl, title);
+                discordMessageId = agentResult.messageId();
+                discordAttachmentUrl = agentResult.attachmentUrl();
+                sentContent = agentResult.sentContent();
+            } else {
+                try {
+                    discordMessageId = discordUserClient.sendMessage(
+                            account.getToken(), conversation.getChannelId(), gifUrl);
+                    discordAttachmentUrl = gifUrl;
+                    sentContent = gifUrl;
+                } catch (Exception e) {
+                    log.warn("直接发送URL失败，尝试下载上传: {}", e.getMessage());
+                    var result = downloadAndUploadGif(account, conversation, gifUrl, title);
+                    discordMessageId = result.messageId();
+                    discordAttachmentUrl = result.attachmentUrl();
+                    sentContent = result.sentContent();
+                }
+            }
+        } else {
+            // 分享链接：下载后作为附件上传
+            log.info("下载并上传GIF: {}", gifUrl);
+            if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
+                var agentResult = sendGifViaAgent(account, conversation, gifUrl, title);
+                discordMessageId = agentResult.messageId();
+                discordAttachmentUrl = agentResult.attachmentUrl();
+                sentContent = agentResult.sentContent();
+            } else {
                 var result = downloadAndUploadGif(account, conversation, gifUrl, title);
                 discordMessageId = result.messageId();
                 discordAttachmentUrl = result.attachmentUrl();
                 sentContent = result.sentContent();
             }
-        } else {
-            // 分享链接：下载后作为附件上传
-            log.info("下载并上传GIF: {}", gifUrl);
-            var result = downloadAndUploadGif(account, conversation, gifUrl, title);
-            discordMessageId = result.messageId();
-            discordAttachmentUrl = result.attachmentUrl();
-            sentContent = result.sentContent();
         }
 
         // 保存消息记录（先查重，避免唯一索引冲突）
@@ -1607,6 +1624,60 @@ private boolean isLocalUploadUrl(String url) {
     /**
      * 判断 URL 是否为直接媒体链接（Discord 可直接 embedding）
      */
+
+    /**
+     * AGENT 账号通过 agent 机器发送 GIF/图片/文件
+     * 下载文件→base64→调 agent SEND_MESSAGE with files
+     */
+    private GifSendResult sendGifViaAgent(DiscordAccount account, Conversation conversation,
+                                           String url, String title) {
+        try {
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(30)).build();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url)).timeout(Duration.ofSeconds(60)).GET().build();
+            HttpResponse<byte[]> response = client.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            if (response.statusCode() != 200) {
+                throw new IllegalStateException("下载文件失败 HTTP " + response.statusCode());
+            }
+            byte[] data = response.body();
+
+            String fileName = determineFileName(url, title);
+            String mimeType = determineMimeType(url, data);
+
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> params = new java.util.HashMap<>();
+            params.put("token", account.getToken());
+            params.put("channelId", conversation.getChannelId());
+            params.put("content", "");
+            java.util.List<java.util.Map<String, String>> files = new java.util.ArrayList<>();
+            java.util.Map<String, String> fm = new java.util.HashMap<>();
+            fm.put("filename", fileName);
+            fm.put("contentType", mimeType);
+            fm.put("dataBase64", java.util.Base64.getEncoder().encodeToString(data));
+            files.add(fm);
+            params.put("files", files);
+
+            String paramsJson = om.writeValueAsString(params);
+            com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
+                    account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
+            log.info("[AgentGIF] taskId={}, account={}, url={}, size={}KB",
+                    task.getId(), account.getName(), url, data.length / 1024);
+
+            String resultJson = agentTaskService.waitForTaskResult(task.getId(), 30000);
+            com.fasterxml.jackson.databind.JsonNode r = om.readTree(resultJson);
+            String discordMessageId = r.path("discordMessageId").asText(null);
+            String cdnUrl = r.path("cdnUrl").asText(null);
+            if (discordMessageId == null) {
+                throw new IllegalStateException("Agent 未返回 discordMessageId: " + r.path("error").asText("未知原因"));
+            }
+            return new GifSendResult(discordMessageId, cdnUrl != null ? cdnUrl : url, url);
+        } catch (Exception e) {
+            log.error("[AgentGIF] 发送失败: {}", e.getMessage(), e);
+            throw new IllegalStateException("Agent 发 GIF/文件失败: " + e.getMessage(), e);
+        }
+    }
+
     public boolean isDirectMediaUrl(String url) {
         if (url == null || url.isBlank()) return false;
         String lowerUrl = url.toLowerCase();
@@ -1656,9 +1727,6 @@ private boolean isLocalUploadUrl(String url) {
             String fileName = determineFileName(gifUrl, title);
             String mimeType = determineMimeType(gifUrl, gifData);
 
-            if ("AGENT".equals(account.getSource())) {
-                throw new IllegalStateException("GIF/图片暂不支持代理模式发送，请先使用文本消息");
-            }
             // 3. 上传到 Discord
             JsonNode resp = discordUserClient.sendMessageWithFile(
                     account.getToken(),

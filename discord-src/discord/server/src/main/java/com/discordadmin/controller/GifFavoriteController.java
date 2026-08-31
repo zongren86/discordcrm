@@ -11,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -41,21 +40,17 @@ public class GifFavoriteController {
         this.gifFavoriteService = gifFavoriteService;
     }
 
+    /**
+     * 查询收藏列表 —— 基于当前登录用户 userId（跨所有 Discord 账号共享）
+     */
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> listFavorites(
-            @RequestParam(value = "accountId", required = false) Long accountId,
             @RequestParam(value = "type", required = false) String type) {
-        Long targetAccountId = accountId;
-        
-        if (SecurityUtils.isPlatformAdmin() && targetAccountId == null) {
+        Long userId = SecurityUtils.currentUserId();
+        if (userId == null) {
             return ResponseEntity.ok(List.of());
         }
-        
-        if (targetAccountId == null) {
-            return ResponseEntity.badRequest().body(List.of());
-        }
-        
-        List<GifFavorite> favorites = gifFavoriteService.getFavoritesByAccount(targetAccountId);
+        List<GifFavorite> favorites = gifFavoriteService.getFavoritesByUserId(userId);
         if (type != null && !type.isEmpty()) {
             final String filterType = type;
             favorites = favorites.stream()
@@ -65,11 +60,10 @@ public class GifFavoriteController {
         List<Map<String, Object>> result = favorites.stream()
                 .map(this::toDto)
                 .collect(Collectors.toList());
-        
         return ResponseEntity.ok(result);
     }
-@Transactional
 
+    @Transactional
     @PostMapping
     public ResponseEntity<Map<String, Object>> addFavorite(@RequestBody Map<String, String> body) {
         String gifUrl = body.get("gifUrl");
@@ -77,33 +71,29 @@ public class GifFavoriteController {
         String title = body.get("title");
         String type = body.getOrDefault("type", "gif");
         String convertedGifUrl = body.get("convertedGifUrl");
-        
+
         if (gifUrl == null || gifUrl.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "URL 不能为空"));
         }
-        
+
         Long currentUserId = SecurityUtils.currentUserId();
         GifFavorite favorite = gifFavoriteService.addFavorite(accountId, gifUrl, title, type, convertedGifUrl, currentUserId);
         return ResponseEntity.ok(toDto(favorite));
     }
-@Transactional
 
+    @Transactional
     @DeleteMapping("/{id}")
-    public ResponseEntity<Map<String, Object>> removeFavorite(
-            @PathVariable Long id,
-            @RequestParam(required = false) Long accountId) {
+    public ResponseEntity<Map<String, Object>> removeFavorite(@PathVariable Long id) {
         Long currentUserId = SecurityUtils.currentUserId();
-        gifFavoriteService.removeFavorite(id, accountId, currentUserId);
+        gifFavoriteService.removeFavoriteByUserId(id, currentUserId);
         return ResponseEntity.ok(Map.of("success", true));
     }
 
     @GetMapping("/check")
-    public ResponseEntity<Map<String, Object>> checkFavorited(
-            @RequestParam Long accountId,
-            @RequestParam String gifUrl,
-            @RequestParam(value = "type", required = false) String type) {
+    public ResponseEntity<Map<String, Object>> checkFavorited(@RequestParam String gifUrl) {
         Long currentUserId = SecurityUtils.currentUserId();
-        boolean isFavorited = gifFavoriteService.isFavorited(accountId, currentUserId, gifUrl);
+        boolean isFavorited = currentUserId != null
+                && gifFavoriteService.isFavorited(null, currentUserId, gifUrl);
         Map<String, Object> result = new HashMap<>();
         result.put("favorited", isFavorited);
         return ResponseEntity.ok(result);
@@ -114,35 +104,28 @@ public class GifFavoriteController {
         String normalized = gifFavoriteService.normalizeGifUrl(url);
         return ResponseEntity.ok(Map.of("originalUrl", url, "normalizedUrl", normalized));
     }
-@Transactional
 
+    @Transactional
     @PostMapping("/upload-gif")
     public ResponseEntity<Map<String, String>> uploadGif(@RequestParam("file") MultipartFile file) {
         if (file == null || file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "文件不能为空"));
         }
-        
         try {
             String originalFilename = file.getOriginalFilename();
-            String ext = originalFilename != null && originalFilename.contains(".") 
-                    ? originalFilename.substring(originalFilename.lastIndexOf(".") + 1) 
+            String ext = originalFilename != null && originalFilename.contains(".")
+                    ? originalFilename.substring(originalFilename.lastIndexOf(".") + 1)
                     : "gif";
-            
             String newFilename = "sticker_" + UUID.randomUUID().toString().replace("-", "") + "." + ext;
-            
             Path uploadDir = Paths.get(uploadPath, "stickers").toAbsolutePath();
             if (!Files.exists(uploadDir)) {
                 Files.createDirectories(uploadDir);
             }
-            
             Path filePath = uploadDir.resolve(newFilename);
             Files.write(filePath, file.getBytes());
-            
             String fileUrl = baseUrl + "/uploads/stickers/" + newFilename;
-            
             log.info("GIF 文件上传成功: {}", fileUrl);
             return ResponseEntity.ok(Map.of("url", fileUrl, "filename", newFilename));
-            
         } catch (IOException e) {
             log.error("GIF 文件上传失败", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "上传失败: " + e.getMessage()));

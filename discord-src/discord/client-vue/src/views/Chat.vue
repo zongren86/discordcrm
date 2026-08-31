@@ -2276,7 +2276,7 @@ async function handleStickerUnfavorite(sticker) {
   const fav = stickerFavorites.value.find(f => url.includes((f.gifUrl || '').split('/').pop()))
   if (fav) {
     try {
-      await removeGifFavorite(fav.id, currentAccountId.value)
+      await removeGifFavorite(fav.id)
       await loadGifFavorites()
       ElMessage.success('已取消收藏')
     } catch (e) {
@@ -2813,7 +2813,7 @@ async function handleUnfavoriteGif(msg) {
   if (!favorite) return
   
   try {
-    await removeGifFavorite(favorite.id, currentAccountId.value)
+    await removeGifFavorite(favorite.id)
     ElMessage.success('已取消收藏')
     await loadGifFavorites()
   } catch (e) {
@@ -2912,7 +2912,7 @@ async function handleUnfavoriteById(id) {
   if (!currentAccountId.value) return
   
   try {
-    await removeGifFavorite(id, currentAccountId.value)
+    await removeGifFavorite(id)
     ElMessage.success('已取消收藏')
     await loadGifFavorites()
   } catch (e) {
@@ -3335,6 +3335,7 @@ function handleGlobalKeydown(e) {
     console.log('[GLOBAL] Alt/Cmd+W matched!')
     e.preventDefault()
     e.stopPropagation()
+    e.stopImmediatePropagation()  // capture阶段彻底拦截，阻止Chrome关闭标签页
     if (inputText.value.trim()) {
       doTranslateInput()
     } else {
@@ -4505,7 +4506,7 @@ onMounted(async () => {
   await nextTick()
   bindTextareaKeydown()
 
-  window.addEventListener('keydown', handleGlobalKeydown);
+  window.addEventListener('keydown', handleGlobalKeydown, true); // capture阶段，优先于浏览器快捷键
   // 添加滚动监听
   document.addEventListener('scroll', handleScroll, true);
   try { await accounts.fetchAccounts() } catch (e) {}
@@ -4532,7 +4533,7 @@ onUnmounted(() => {
   const allTextareas = document.querySelectorAll('.msg-input textarea.el-textarea__inner')
   allTextareas.forEach(ta => ta.removeEventListener('keydown', onInputKeydown))
   // 移除全局键盘监听
-  window.removeEventListener('keydown', handleGlobalKeydown);
+  window.removeEventListener('keydown', handleGlobalKeydown, true);
   // 移除滚动监听
   document.removeEventListener('scroll', handleScroll, true);
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }

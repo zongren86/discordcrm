@@ -573,11 +573,11 @@ export function uploadGifFile(file) {
   });
 }
 
-export function removeGifFavorite(id, accountId) {
-  return http.delete(`/gif-favorites/${id}`, { params: { accountId } })
+export function removeGifFavorite(id) {
+  return http.delete(`/gif-favorites/${id}`)
 }
-export function checkGifFavorited(accountId, gifUrl) {
-  return http.get('/gif-favorites/check', { params: { accountId, gifUrl } })
+export function checkGifFavorited(gifUrl) {
+  return http.get('/gif-favorites/check', { params: { gifUrl } })
 }
 export function normalizeGifUrl(url) {
   return http.get('/gif-favorites/normalize-url', { params: { url } })

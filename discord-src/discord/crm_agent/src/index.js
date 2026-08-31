@@ -14,7 +14,7 @@
 })();
 
 const { http, cfg } = require('./http');
-const { discordHttp, fetchFriends, sendMessageWithFiles } = require('./discord');
+const { discordHttp, fetchFriends, fetchDmChannels, sendMessageWithFiles } = require('./discord');
 const { captureDiscordAccount, launchBrowserOnly } = require('./browser');
 const fs = require('fs');
 const path = require('path');
@@ -210,6 +210,9 @@ async function executeTask(task) {
                     : status === 429 ? 'Discord 限流（429 Too Many Requests）'
                     : (err.response?.data?.message || err.message);
           console.error(`[任务] 发消息失败: ${msg}`);
+          if (status === 401 && params.accountId) {
+            reportTokenInvalid(params.accountId, `accountId=${params.accountId}`);
+          }
           await reportTask(task.id, 'FAILED', { error: msg, status });
         }
         break;
@@ -254,7 +257,30 @@ async function executeTask(task) {
           };
           await http.post('/agent-servers/friends/report', payload);
           console.log(`[任务] ✅ 好友数据已上报 ${friends.length} 条`);
-          await reportTask(task.id, 'SUCCESS', { friendCount: friends.length, accepted, pending });
+
+          // 第二步: 拉取 DM 频道, 上报到服务器创建 Conversation
+          let dmCount = 0;
+          try {
+            console.log(`[任务] 拉取 DM 频道...`);
+            const channels = await fetchDmChannels(token);
+            // 1:1 DM(type=1): 只有1个recipient; 群组DM(type=3): 多个recipients
+            const dms = (channels || []).map(ch => ({
+              channelId: ch.id,
+              channelType: ch.type,
+              recipients: (ch.recipients || []).map(r => ({
+                id: r.id, username: r.username, globalName: r.global_name || r.username, avatar: r.avatar,
+              })),
+            }));
+            await http.post('/agent-servers/dm-channels/report', {
+              token: cfg.token, accountId, dms,
+            });
+            dmCount = dms.filter(d => d.channelType === 1).length;
+            console.log(`[任务] ✅ DM 频道已上报: ${dms.length} 个 (其中 1:1=${dmCount})`);
+          } catch (dmErr) {
+            console.warn(`[任务] DM 频道拉取失败(不影响好友同步): ${dmErr.message}`);
+          }
+
+          await reportTask(task.id, 'SUCCESS', { friendCount: friends.length, accepted, pending, dmCount });
         } catch (err) {
           console.error(`[任务] 拉好友失败: ${err.message}`);
           await reportTask(task.id, 'FAILED', { error: err.message });
@@ -307,6 +333,21 @@ main().catch(err => {
 
 // agent 负责的 AGENT 采集账号列表
 let managedAccounts = [];
+// Token 失效上报节流: Map<accountId, lastReportTimestamp>，5分钟内不重复上报
+const tokenInvalidReportedAt = new Map();
+function reportTokenInvalid(accountId, accountName) {
+  const now = Date.now();
+  const last = tokenInvalidReportedAt.get(accountId) || 0;
+  if (now - last < 5 * 60 * 1000) return;  // 5分钟节流
+  tokenInvalidReportedAt.set(accountId, now);
+  http.post('/agent-servers/accounts/token-status', {
+    token: cfg.token, accountId, valid: false, reason: '401 Unauthorized (消息轮询/API调用返回401)',
+  }).then(() => {
+    console.warn(`[Token上报] ${accountName}(${accountId}) Token失效已同步到服务器`);
+  }).catch(e => {
+    console.warn(`[Token上报] ${accountName} 上报失败: ${e.message}`);
+  });
+}
 // 每个账号已见消息 ID 集合: Map<accountId, Set<discordMessageId>>
 const seenMessageIds = new Map();
 const ACCOUNT_REFRESH_MS = 30000;
@@ -558,8 +599,12 @@ async function pollOneAccount(acc, channelLimit) {
     }
   } catch (err) {
     const st = err.response?.status;
-    if (st === 401) console.warn(`[消息轮询] ${acc.name}: Token 已失效`);
-    else if (st === 429) console.debug(`[消息轮询] ${acc.name}: 被限流`);
+    if (st === 401) {
+      console.warn(`[消息轮询] ${acc.name}: Token 已失效`);
+      reportTokenInvalid(acc.id, acc.name);
+    } else if (st === 429) {
+      console.debug(`[消息轮询] ${acc.name}: 被限流`);
+    }
   }
 }
 

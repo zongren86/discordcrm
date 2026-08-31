@@ -347,6 +347,18 @@ async function fetchFriends(token) {
 }
 
 /**
+ * 拉取账号的所有 DM 频道（含 1:1 和群组）
+ * Discord API: GET /users/@me/channels
+ * 返回: [{ id, type, recipients: [{id, username, global_name, avatar}], ... }]
+ */
+async function fetchDmChannels(token) {
+  const resp = await discordHttp.get('/users/@me/channels', {
+    headers: { Authorization: token }
+  });
+  return resp.data;
+}
+
+/**
  * 发送带附件的消息（multipart/form-data）
  * Discord API: POST /channels/{channelId}/messages
  * body: content + 多个 files (file[0], file[1], ...)
@@ -384,4 +396,4 @@ async function sendMessageWithFiles(token, channelId, content, files) {
   return resp.data;
 }
 
-module.exports = { discordHttp, fetchFriends, sendMessageWithFiles };
+module.exports = { discordHttp, fetchFriends, fetchDmChannels, sendMessageWithFiles };
