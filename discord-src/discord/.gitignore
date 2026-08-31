@@ -39,3 +39,12 @@ deploy-package/
 server-admin/logs/
 *.tar.gz
 *.log.gz
+
+# 备份文件（Agent 脚本误生成）
+*.bak
+
+# 旧版本 agent 包残留
+release/
+
+# macOS
+.DS_Store

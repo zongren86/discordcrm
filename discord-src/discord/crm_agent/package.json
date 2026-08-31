@@ -6,7 +6,10 @@
   "type": "commonjs",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "preversion": "node -e \"\nconst fs=require('fs');\nconst pkg=JSON.parse(fs.readFileSync('package.json'));\nconst cfgPath='config.json';\nlet cfg={};\nif(fs.existsSync(cfgPath)) cfg=JSON.parse(fs.readFileSync(cfgPath));\ncfg.version=pkg.version;\nfs.writeFileSync(cfgPath, JSON.stringify(cfg,null,2)+'\\n');\nconsole.log('  \u2192 \u540c\u6b65 config.json version:', pkg.version);\n\"",
+    "version": "node -e \"\nconst {execSync}=require('child_process');\nconst fs=require('fs');\nconst pkg=JSON.parse(fs.readFileSync('package.json'));\nconst zipFile='../server/src/main/resources/crm_agent-v'+pkg.version+'.zip';\ntry { execSync('rm -f '+zipFile, {stdio:'pipe'}); } catch {}\ntry { execSync('cd .. && zip -r '+zipFile+' crm_agent -x \"*/node_modules/*\" \"*/data/*\" \"*/.git/*\" \"*.bak\" \"release/*\" \"../release/*\"', {stdio:'pipe'}); console.log('  \u2192 \u6253\u5305 '+zipFile); } catch(e) { console.log('  \u2192 zip \u8df3\u8fc7:', zipFile); }\n\"",
+    "postversion": "echo '\u2705 \u7248\u672c\u53d1\u5e03\u5b8c\u6210\uff0c\u8bb0\u5f97 git push + git push --tags'"
   },
   "dependencies": {
     "axios": "^1.7.7",
