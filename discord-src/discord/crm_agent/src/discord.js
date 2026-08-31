@@ -193,7 +193,18 @@ const discordHttp = axios.create(axiosConfig);
 
 // 异步自检 + 自动 fallback
 (async function init() {
-  if (!proxyUrl) return;  // 没配代理, 等 GFW 拦截提示
+  if (!proxyUrl) {
+    // 没配代理 → 直接测裸连 (猫熊VPN/TUN 模式)
+    console.log('[Discord] 🧪 裸连自检中 (让 VPN/TUN 接管)...');
+    try {
+      await axios.get('https://discord.com/api/v10/gateway', { timeout: 8000, validateStatus: () => true });
+      console.log('[Discord] ✅ 裸连自检通过! VPN/TUN 工作正常');
+    } catch(e) {
+      console.error('[Discord] ❌ 裸连也不通! VPN/TUN 可能没启动');
+      console.error('[Discord] 💡 确认猫熊VPN正在运行且已连接');
+    }
+    return;
+  }
   const working = await findWorkingProxy();
   if (working && working !== agentOrProxy) {
     agentOrProxy = working;
