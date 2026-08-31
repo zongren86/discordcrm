@@ -391,7 +391,19 @@ public class AgentServerController {
         try {
             Path sourceDir = resolveAgentSourceDir();
             if (sourceDir != null) {
-                // 从 config.json 的 version 字段读（单一配置源）
+                // 优先从 package.json 读（npm 标准），兜底 config.json
+                Path pkgFile = sourceDir.resolve("package.json");
+                if (Files.exists(pkgFile)) {
+                    String pkgJson = Files.readString(pkgFile);
+                    int pIdx = pkgJson.indexOf("\"version\"");
+                    if (pIdx >= 0) {
+                        int pColon = pkgJson.indexOf(':', pIdx + 1);
+                        int pQ1 = pkgJson.indexOf('"', pColon + 1);
+                        int pQ2 = pkgJson.indexOf('"', pQ1 + 1);
+                        if (pQ2 > pQ1) return pkgJson.substring(pQ1 + 1, pQ2);
+                    }
+                }
+                // 兜底 config.json
                 Path cfgFile = sourceDir.resolve("config.json");
                 if (Files.exists(cfgFile)) {
                     String json = Files.readString(cfgFile);
