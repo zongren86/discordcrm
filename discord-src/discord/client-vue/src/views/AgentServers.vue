@@ -45,10 +45,12 @@
           <template #default="{ row }">{{ row.browserType || '-' }}</template>
         </el-table-column>
 
-        <el-table-column label="账号数" width="90" align="center">
+        <el-table-column label="账号数" width="110" align="center">
           <template #default="{ row }">
-            <el-tag v-if="row.accountCount > 0" type="primary" effect="light" round>{{ row.accountCount }}</el-tag>
-            <span v-else class="text-muted">0</span>
+            <span v-if="row.accountCount > 0" :style="{ color: row.accountCount >= (row.maxAccounts || 500) ? '#f56c6c' : '#409eff' }">
+              {{ row.accountCount }} / {{ row.maxAccounts || 500 }}
+            </span>
+            <span v-else class="text-muted">0 / {{ row.maxAccounts || 500 }}</span>
           </template>
         </el-table-column>
 

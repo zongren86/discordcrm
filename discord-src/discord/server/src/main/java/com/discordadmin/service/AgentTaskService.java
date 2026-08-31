@@ -223,6 +223,15 @@ public class AgentTaskService {
             account.setBrowserProfilePath(browserProfilePath);
         }
         if (server != null) {
+            // 校验该代理节点账号上限
+            int max = server.getMaxAccounts() != null ? server.getMaxAccounts() : 500;
+            long current = discordAccountRepository.countByAgentServerId(server.getId());
+            if (current >= max) {
+                throw new RuntimeException(
+                    "代理节点 [" + server.getName() + "] 已达账号上限 (" + current + "/" + max + ")，" +
+                    "请先解绑部分账号或在代理管理中调高上限"
+                );
+            }
             account.setAgentServerId(server.getId());
         }
         account.setSource("AGENT");

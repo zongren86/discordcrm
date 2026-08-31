@@ -32,11 +32,11 @@ public class AgentServer {
     @Column(name = "token", nullable = false, length = 128)
     private String token;
 
-    /** 代理服务器地址（agent 上报时可填，如 http://192.168.1.100:3000） */
+    /** 代理服务器地址（agent 上报时可填） */
     @Column(name = "server_address", length = 512)
     private String serverAddress;
 
-    /** 所属商户ID（null = 平台级） */
+    /** 所属商户ID */
     @Column(name = "merchant_id")
     private Long merchantId;
 
@@ -48,13 +48,17 @@ public class AgentServer {
     @Column(name = "node_version", length = 64)
     private String nodeVersion;
 
-    /** 浏览器类型（chromium / firefox） */
+    /** 浏览器类型 */
     @Column(name = "browser_type", length = 32)
     private String browserType;
 
     /** 备注 */
     @Column(name = "notes", length = 500)
     private String notes;
+
+    /** 该代理节点最多允许管理的账号数，默认 500 */
+    @Column(name = "max_accounts")
+    private Integer maxAccounts = 500;
 
     /** 最后一次心跳时间 */
     @Column(name = "last_seen_at")

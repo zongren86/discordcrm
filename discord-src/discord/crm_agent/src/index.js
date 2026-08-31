@@ -426,8 +426,15 @@ async function pollOneAccount(acc) {
   }
 }
 
+let pollInProgress = false;
 async function pollMessages() {
   if (managedAccounts.length === 0) return;
-  // 并发 5 — 同时请求 5 个账号的 Discord API，平衡吞吐和限流
-  await pool(managedAccounts, 5, pollOneAccount);
+  if (pollInProgress) return;  // 防重入：上一轮还没跑完就跳过本轮
+  pollInProgress = true;
+  try {
+    // 并发 10 — 500 账号每 channel 平均 200ms，500×3ch/10 ≈ 30s 一轮
+    await pool(managedAccounts, 10, pollOneAccount);
+  } finally {
+    pollInProgress = false;
+  }
 }
