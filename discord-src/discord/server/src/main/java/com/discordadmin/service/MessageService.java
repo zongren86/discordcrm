@@ -348,16 +348,12 @@ public class MessageService {
             textToSend = content != null ? content : "[语音消息]";
         }
 
-        // 计算前端默认显示内容 (translatedContent)：
-        // - 源语言=目标语言（textToSend 和 content 相同）：不需要翻译，直接用原文
-        // - 本身就是中文：直接用原文
-        // - 其他：翻译成中文让管理员能看懂
+        // 前端默认显示中文译文（translatedContent），"查看原文"显示 sentContent
+        // 规则：只要用户输入非中文 → 必须翻译成中文存 translatedContent
+        // 不管目标语言是什么（用户可能用英文输入，英文目标，也要翻译成中文给管理员看）
         String zhTranslation = null;
         if (!isVoiceMessage && content != null && !content.isBlank() && !isPureNumber(content)) {
-            if (content.equalsIgnoreCase(textToSend)) {
-                zhTranslation = content;
-                log.info("[sendReply] 源语言=目标语言({}), 跳过中文翻译", targetLang);
-            } else if (containsChinese(content)) {
+            if (containsChinese(content)) {
                 zhTranslation = content;
             } else {
                 zhTranslation = translationServiceFactory.translate(content, "zh-CN", merchantId).orElse(content);
