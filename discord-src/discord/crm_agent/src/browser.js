@@ -235,9 +235,9 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
     headless: false,
     args: getLaunchArgs(),
     ignoreHTTPSErrors: true,
+    // 唤起浏览器时设 null 禁用 Playwright 默认 1280x720 viewport，让 Chrome 窗口自然展开
+    viewport: null,  // 唤起浏览器禁用 Playwright viewport，让 Chrome 窗口自然展开可拖拽
   };
-  // 唤起浏览器时不传 viewport，让 Chrome 窗口自然展开（用户可拖拽调整）
-  if (browserConfig.viewport) launchOpts.viewport = browserConfig.viewport;
   if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
   const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 
