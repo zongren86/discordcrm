@@ -610,8 +610,6 @@ public class AgentServerController {
                 String channelId = (String) m.get("channelId");
                 String discordMsgId = (String) m.get("discordMessageId");
                 String content = (String) m.getOrDefault("content", "");
-                // ==== 统一入口解码 HTML 实体（emoji 等）====
-                content = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(content);
                 boolean isFromMe = Boolean.TRUE.equals(m.get("isFromMe"));
 
                 // 解析完整字段

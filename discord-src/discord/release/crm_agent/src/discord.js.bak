@@ -168,47 +168,6 @@ const proxyUrl = detectProxyUrl();
 // buildAgent 先返回临时 agent, 启动时再 findWorkingProxy 替换
 let agentOrProxy = proxyUrl ? buildAgent(proxyUrl) : null;
 
-/**
- * 安全地把 JSON 里的大整数（16-20 位 Snowflake ID）转成字符串字面量
- * 逐字符扫描，维护 inString 状态，只在非字符串区域替换
- * 绝对不破坏字符串内部的数字（比如 content 里的数字、URL 里的 ID）
- */
-function convertBigIntsInJson(raw) {
-  if (typeof raw !== 'string') return raw;
-  let inString = false, escapeNext = false;
-  let out = '', buf = '';
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
-    if (escapeNext) { out += ch; escapeNext = false; continue; }
-    if (ch === '\\' && inString) { out += ch; escapeNext = true; continue; }
-    if (ch === '"') {
-      if (!inString && buf) {
-        if (buf.length >= 16 && buf.length <= 20) out += '"' + buf + '"';
-        else out += buf;
-        buf = '';
-      }
-      inString = !inString;
-      out += ch;
-      continue;
-    }
-    if (inString) { out += ch; continue; }
-    if (/[0-9]/.test(ch)) { buf += ch; }
-    else {
-      if (buf) {
-        if (buf.length >= 16 && buf.length <= 20) out += '"' + buf + '"';
-        else out += buf;
-        buf = '';
-      }
-      out += ch;
-    }
-  }
-  if (buf) {
-    if (buf.length >= 16 && buf.length <= 20) out += '"' + buf + '"';
-    else out += buf;
-  }
-  return out;
-}
-
 // 组装 axios 配置
 const axiosConfig = {
   baseURL: 'https://discord.com/api/v10',
@@ -218,11 +177,12 @@ const axiosConfig = {
     'Content-Type': 'application/json',
   },
   // Snowflake ID 19 位，超过 JS Number.MAX_SAFE_INTEGER (2^53-1 = 9007199254740991)
-  // 用逐字符扫描把 JSON 属性值里的长整数（16-20 位）转成字符串，再 JSON.parse
-  // 安全：绝对不破坏字符串内部的数字（如 content 里的数字、URL 里的 ID）
+  // 先用正则把原始 JSON 里的长整数（16-20 位）转成字符串字面量，再 JSON.parse，避免精度丢失
   transformResponse: [(raw) => {
     if (typeof raw !== 'string') return raw;
-    const fixed = convertBigIntsInJson(raw);
+    // 匹配 JSON 里的整数：前面是 : 或 , 或 [ 或开头，后面是 16-20 位数字，结尾是 , } ] 或空白
+    // 用负向后顾排除字符串内的数字（JSON 字符串里数字前必有引号，前面不是 :,[, 等）
+    const fixed = raw.replace(/(?<=[\s:\[,])\s*(\d{16,20})(?=[\s,}\]])/g, '"$1"');
     try { return JSON.parse(fixed); } catch { return raw; }
   }],
 };

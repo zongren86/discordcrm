@@ -322,11 +322,6 @@ public class MessageService {
                               Integer audioDuration, String audioFileName, String agentDisplayName) {
         boolean isVoiceMessage = "voice".equals(messageType) && audioData != null && !audioData.isBlank();
 
-        // ==== 统一入口解码 HTML 实体（emoji 等）====
-        if (content != null) {
-            content = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(content);
-        }
-
         if (!isVoiceMessage && (content == null || content.isBlank())) {
             throw new IllegalArgumentException("消息内容不能为空");
         }
@@ -347,9 +342,8 @@ public class MessageService {
 
         String textToSend = content;
         if (!isVoiceMessage && content != null && !content.isBlank() && !isPureNumber(content)) {
-            textToSend = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(
-                    translationServiceFactory.translate(content, targetLang, merchantId)
-                            .orElse(content));
+            textToSend = translationServiceFactory.translate(content, targetLang, merchantId)
+                    .orElse(content);
         } else if (isVoiceMessage) {
             textToSend = content != null ? content : "[语音消息]";
         }
@@ -362,8 +356,7 @@ public class MessageService {
             if (containsChinese(content)) {
                 zhTranslation = content;
             } else {
-                zhTranslation = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(
-                        translationServiceFactory.translate(content, "zh-CN", merchantId).orElse(content));
+                zhTranslation = translationServiceFactory.translate(content, "zh-CN", merchantId).orElse(content);
             }
         }
 
@@ -2127,9 +2120,6 @@ private boolean isLocalUploadUrl(String url) {
     @Transactional
     public void saveAgentPulledMessage(Long accountId, String channelId, String discordMsgId,
                                         String content, boolean isFromMe) {
-        // ==== 统一入口解码 HTML 实体（emoji 等）====
-        content = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(content);
-        
         // 1. 去重
         if (messageRepository.findByDiscordMessageId(discordMsgId).isPresent()) {
             return;
@@ -2182,9 +2172,6 @@ private boolean isLocalUploadUrl(String url) {
                     cv.setChannelName("DM/" + channelId.substring(0, Math.min(8, channelId.length())));
                     return conversationRepository.save(cv);
                 });
-        // ==== 统一入口解码 HTML 实体（emoji 等）====
-        content = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(content);
-        
         // 3. 算 translatedContent：非中文 → 译成中文
         String safeContent = content != null ? content : "";
         String translatedContent = safeContent;

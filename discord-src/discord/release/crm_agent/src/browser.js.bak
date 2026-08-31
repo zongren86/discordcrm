@@ -145,9 +145,6 @@ const SYSTEM_CHROME = findSystemChrome();
 
 
 function getLaunchArgs() {
-  // 注意：绝对不允许 --no-sandbox —— 这会导致 Chrome 弹出警告
-  // Playwright 会在 chromiumSandbox !== true 时自动加 --no-sandbox，
-  // 所以 launchOpts 必须设 chromiumSandbox: true（下面两处已设）
   return [
     '--disable-blink-features=AutomationControlled',
     '--disable-dev-shm-usage',
@@ -161,7 +158,7 @@ function getLaunchArgs() {
     '--disable-breakpad',
     '--no-title-update',
     '--no-window-animation',
-  ].filter(a => !a.includes('--no-sandbox'));  // 双重保险：过滤掉任何误加的 --no-sandbox
+  ];
 }
 
 function getInitScript() {
@@ -237,7 +234,7 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   const launchOpts = {
     headless: false,
     chromiumSandbox: true,  // 强制 Playwright 不自动追加 --no-sandbox
-    args: getLaunchArgs().filter(a => !a.includes('--no-sandbox')),  // 双重保险
+    args: getLaunchArgs(),
     ignoreHTTPSErrors: true,
     // 唤起浏览器时设 null 禁用 Playwright 默认 1280x720 viewport，让 Chrome 窗口自然展开
     viewport: null,  // 唤起浏览器禁用 Playwright viewport，让 Chrome 窗口自然展开可拖拽
@@ -268,7 +265,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       headless: browserConfig.headless ?? false,
       chromiumSandbox: true,  // 强制 Playwright 不自动追加 --no-sandbox
       viewport: browserConfig.viewport || { width: 1280, height: 800 },
-      args: getLaunchArgs().filter(a => !a.includes('--no-sandbox')),  // 双重保险
+      args: getLaunchArgs(),
       ignoreHTTPSErrors: true,
     };
     if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
@@ -381,36 +378,11 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       const r = await page.evaluate(async (t) => {
         try {
           const resp = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: t } });
-          if (!resp.ok) return { ok: false };
-          // 关键: 用 resp.text() 拿原始 JSON 文本, 不用 resp.json()
-          // 因为浏览器 JSON.parse 会把 19 位 Snowflake ID 当成 Number → 精度丢失!
-          const text = await resp.text();
-          // 用正则从 JSON 文本里安全提取字段 (Snowflake ID 保持字符串)
-          const extract = (key) => {
-            const re = new RegExp('"' + key + '"\\s*:\\s*(\\d+|"[^"]*")');
-            const m = text.match(re);
-            if (!m) return null;
-            let v = m[1];
-            if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
-            return v;
-          };
-          return {
-            ok: true,
-            id: extract('id'),
-            username: extract('username') || '',
-            global_name: extract('global_name') || '',
-            email: extract('email'),
-            avatar: extract('avatar'),
-          };
+          if (resp.ok) return { ok: true, data: await resp.json() };
         } catch {}
         return { ok: false };
       }, token);
-      if (r && r.ok) {
-        return {
-          id: r.id, username: r.username,
-          global_name: r.global_name, email: r.email, avatar: r.avatar,
-        };
-      }
+      if (r && r.ok) return r.data;
     } catch {}
     return null;
   };
