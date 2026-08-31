@@ -38,6 +38,20 @@ import java.time.Duration;
 @Slf4j
 public class AgentServerController {
 
+    /** 安全地从 JSON Map 取字符串，兼容 String / Long / Integer / Double / null */
+    private static String sstr(Object v) {
+        if (v == null) return null;
+        if (v instanceof String s) return s;
+        return v.toString();
+    }
+
+    /** 安全地从 JSON Map 取字符串，带默认值 */
+    private static String sstr(Object v, String def) {
+        if (v == null) return def;
+        if (v instanceof String s) return s.isEmpty() ? def : s;
+        return v.toString();
+    }
+
     private final AgentServerService agentServerService;
     private final AgentTaskService agentTaskService;
     private final DiscordAccountRepository discordAccountRepository;
@@ -619,21 +633,21 @@ public class AgentServerController {
         for (Map<String, Object> m : messages) {
             try {
                 Long accountId = Long.valueOf(m.get("accountId").toString());
-                String channelId = (String) m.get("channelId");
-                String discordMsgId = (String) m.get("discordMessageId");
-                String content = (String) m.getOrDefault("content", "");
+                String channelId = sstr(m.get("channelId"));
+                String discordMsgId = sstr(m.get("discordMessageId"));
+                String content = sstr(m.get("content"), "");
                 // ==== 统一入口解码 HTML 实体（emoji 等）====
                 content = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(content);
                 boolean isFromMe = Boolean.TRUE.equals(m.get("isFromMe"));
 
                 // 解析完整字段
-                String authorId = (String) m.getOrDefault("authorId", "");
-                String authorName = (String) m.getOrDefault("authorName", "");
-                String authorGlobalName = (String) m.getOrDefault("authorGlobalName", authorName);
-                String authorAvatar = (String) m.get("authorAvatar");
-                String channelType = (String) m.getOrDefault("channelType", "dm");
-                String messageType = (String) m.getOrDefault("messageType", "text");
-                String gifUrl = (String) m.get("gifUrl");
+                String authorId = sstr(m.get("authorId"), "");
+                String authorName = sstr(m.get("authorName"), "");
+                String authorGlobalName = sstr(m.get("authorGlobalName"), authorName);
+                String authorAvatar = sstr(m.get("authorAvatar"));
+                String channelType = sstr(m.get("channelType"), "dm");
+                String messageType = sstr(m.get("messageType"), "text");
+                String gifUrl = sstr(m.get("gifUrl"));
 
                 // 构建 attachmentsJson
                 String attachmentsJson = null;
