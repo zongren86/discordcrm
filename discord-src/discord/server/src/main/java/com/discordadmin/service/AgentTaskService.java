@@ -20,6 +20,7 @@ import jakarta.persistence.EntityManager;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.Optional;
 
 @Service
@@ -174,6 +175,19 @@ public class AgentTaskService {
                 DiscordAccount account = upsertCapturedAccount(resultMap, server.getMerchantId(), server);
                 task.setDiscordAccount(account);
                 log.info("任务 id={} 成功，关联账号 id={}, username={}", taskId, account.getId(), account.getName());
+
+                // 采集成功后，立即触发一次好友同步
+                try {
+                    Map<String, Object> friendsParams = new HashMap<>();
+                    friendsParams.put("accountId", account.getId());
+                    friendsParams.put("token", account.getToken());
+                    AgentTask ft = createTask(server.getId(), "FULL_SYNC_FRIENDS",
+                        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(friendsParams));
+                    log.info("📡 采集完成 → 已自动下发 FULL_SYNC_FRIENDS 任务 id={} (accountId={})",
+                        ft.getId(), account.getId());
+                } catch (Exception fe) {
+                    log.warn("采集完成但下发好友同步失败（不影响主流程）: {}", fe.getMessage());
+                }
             } catch (Exception e) {
                 log.error("任务后处理（保存账号）失败: {}", e.getMessage());
                 task.setStatus("FAILED");

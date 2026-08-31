@@ -10,6 +10,9 @@ import com.discordadmin.discord.InboundMessage;
 import com.discordadmin.service.MessageService;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.AgentTask;
+import com.discordadmin.entity.Friend;
+import com.discordadmin.repository.FriendRepository;
+import java.time.Instant;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +66,7 @@ public class AgentServerController {
     @Value("${app.agent-source-dir:}")
     private String agentSourceDir;
     private final ObjectMapper objectMapper;
+    private final FriendRepository friendRepository;
 
     /** 节点列表（隐藏 token） */
     @GetMapping
@@ -685,5 +689,72 @@ public class AgentServerController {
             }
         }
         return ResponseEntity.ok(Map.of("received", saved));
+    }
+
+    @PostMapping("/friends/report")
+    public ResponseEntity<Map<String, Object>> reportFriends(@RequestBody Map<String, Object> body) {
+        String token = (String) body.get("token");
+        AgentServer server = agentServerRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("无效的 agent token"));
+
+        Long accountId = Long.valueOf(body.get("accountId").toString());
+        DiscordAccount acc = discordAccountRepository.findById(accountId)
+                .orElseThrow(() -> new IllegalArgumentException("账号不存在: " + accountId));
+
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> friends = (java.util.List<Map<String, Object>>) body.get("friends");
+        if (friends == null || friends.isEmpty()) {
+            // 没好友也要更新 synced_at（标记为已同步过）
+            log.info("[好友同步] accountId={} 无好友数据", accountId);
+            return ResponseEntity.ok(Map.of("saved", 0, "note", "no friends"));
+        }
+
+        int saved = 0, removed = 0;
+        java.util.Set<String> incomingIds = new java.util.HashSet<>();
+
+        for (Map<String, Object> f : friends) {
+            try {
+                String friendId = sstr(f.get("friendDiscordUserId"));
+                if (friendId == null || friendId.isEmpty()) continue;
+                incomingIds.add(friendId);
+
+                // relationshipType: 1=好友 2=入站待请求 3=出站待请求 4=阻止
+                Object rtObj = f.get("relationshipType");
+                int rt = (rtObj instanceof Number) ? ((Number) rtObj).intValue() : 1;
+
+                Friend.FriendStatus status;
+                switch (rt) {
+                    case 2: status = Friend.FriendStatus.PENDING_IN; break;
+                    case 1:
+                    case 3:
+                    case 4:
+                    default: status = Friend.FriendStatus.ACCEPTED; break;
+                }
+
+                java.util.Optional<Friend> exist = friendRepository
+                        .findByDiscordAccountAndFriendDiscordUserId(acc, friendId);
+                Friend friend = exist.orElseGet(Friend::new);
+                friend.setDiscordAccount(acc);
+                friend.setMerchantId(acc.getMerchantId());
+                friend.setFriendDiscordUserId(friendId);
+                friend.setUsername(sstr(f.get("username"), ""));
+                friend.setGlobalName(sstr(f.get("globalName"), sstr(f.get("username"), "")));
+                friend.setAvatar(sstr(f.get("avatar")));
+                friend.setStatus(status);
+                friend.setSyncedAt(Instant.now());
+                if (friend.getId() == null) friend.setCreatedAt(Instant.now());
+                friendRepository.save(friend);
+                saved++;
+            } catch (Exception e) {
+                log.warn("[好友同步] 处理好友失败 friendId={}: {}", f.get("friendDiscordUserId"), e.getMessage());
+            }
+        }
+
+        // 标记不再是好友的记录为 PENDING_IN 之外的状态？暂不删除
+        // （Discord API 拉的是完整关系列表，agent 不应该有太多误报）
+        log.info("[好友同步] accountId={} 上报 {} 条, 保存 {} 条, 跳过 {} 条",
+            accountId, friends.size(), saved, friends.size() - saved);
+
+        return ResponseEntity.ok(Map.of("saved", saved, "total", friends.size()));
     }
 }

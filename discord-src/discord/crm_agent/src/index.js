@@ -14,7 +14,7 @@
 })();
 
 const { http, cfg } = require('./http');
-const { discordHttp } = require('./discord');
+const { discordHttp, fetchFriends } = require('./discord');
 const { captureDiscordAccount, launchBrowserOnly } = require('./browser');
 const fs = require('fs');
 const path = require('path');
@@ -197,6 +197,47 @@ async function executeTask(task) {
                     : (err.response?.data?.message || err.message);
           console.error(`[任务] 发消息失败: ${msg}`);
           await reportTask(task.id, 'FAILED', { error: msg, status });
+        }
+        break;
+      }
+
+      case 'FULL_SYNC_FRIENDS': {
+        const params = typeof task.params === 'string'
+          ? (() => { try { return JSON.parse(task.params); } catch { return {}; } })()
+          : (task.params || {});
+        const { token, accountId } = params;
+        if (!token) {
+          await reportTask(task.id, 'FAILED', { error: '缺少 token' });
+          break;
+        }
+        await reportTask(task.id, 'RUNNING');
+        try {
+          console.log(`[任务] 拉取好友列表 (accountId=${accountId})...`);
+          const friends = await fetchFriends(token);
+          // 过滤: type=1 是已接受好友，type=2/3 是待处理
+          const accepted = friends.filter(f => f.type === 1).length;
+          const pending  = friends.filter(f => f.type === 2).length;
+          const blocked  = friends.filter(f => f.type === 4).length;
+          console.log(`[任务] 好友列表拉取完成: 已接受=${accepted} 待处理=${pending} 阻止=${blocked} 总计=${friends.length}`);
+
+          // 上报到后端
+          const payload = {
+            token: cfg.token,
+            accountId,
+            friends: friends.map(f => ({
+              friendDiscordUserId: f.id,
+              username: f.username,
+              globalName: f.global_name || f.username,
+              avatar: f.avatar || null,
+              relationshipType: f.type,  // 1=好友 2=入站待请求 3=出站待请求 4=阻止
+            })),
+          };
+          await http.post('/agent-servers/friends/report', payload);
+          console.log(`[任务] ✅ 好友数据已上报 ${friends.length} 条`);
+          await reportTask(task.id, 'SUCCESS', { friendCount: friends.length, accepted, pending });
+        } catch (err) {
+          console.error(`[任务] 拉好友失败: ${err.message}`);
+          await reportTask(task.id, 'FAILED', { error: err.message });
         }
         break;
       }

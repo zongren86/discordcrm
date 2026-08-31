@@ -333,4 +333,17 @@ discordHttp.interceptors.response.use(
 
 
 
-module.exports = { discordHttp };
+/**
+ * 获取当前 token 账号的好友列表（包括已接受 + 待请求）
+ * Discord API: GET /users/@me/relationships
+ * 返回格式: [{ id, username, global_name, avatar, type, ... }]
+ *   type=1 好友  type=2 待接收  type=3 发送中  type=4 阻止
+ */
+async function fetchFriends(token) {
+  const resp = await discordHttp.get('/users/@me/relationships', {
+    headers: { Authorization: token }
+  });
+  return resp.data;
+}
+
+module.exports = { discordHttp, fetchFriends };
