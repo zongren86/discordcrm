@@ -379,8 +379,9 @@ async function sendMessageWithFiles(token, channelId, content, files) {
     });
   }
 
-  const resp = await axios.post(
-    `${axiosConfig.baseURL}/channels/${channelId}/messages`,
+  // 用 discordHttp（带代理的 axios 实例），不能用原生 axios，否则请求不走代理被 GFW 拦截
+  const resp = await discordHttp.post(
+    `/channels/${channelId}/messages`,
     fd,
     {
       headers: {
