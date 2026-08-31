@@ -25,7 +25,7 @@
         v-loading="menuLoading"
         class="sidebar-menu"
         :default-active="activeMenu"
-        :default-openeds="allOpeneds"
+        v-model:openeds="openeds"
         @select="handleSelect"
         :collapse="theme.sidebarCollapsed"
         :collapse-transition="false"
@@ -180,7 +180,29 @@ const theme = useThemeStore()
 // 菜单加载状态
 const menuLoading = ref(false)
 const menuTree = ref([])
-const allOpeneds = computed(() => collectOpeneds(menuTree.value))
+const openeds = ref([])
+
+// menuTree 异步加载完成后, 强制刷新所有 sub-menu 展开
+watch(menuTree, (tree) => {
+  if (tree && tree.length > 0) {
+    // 两层 nextTick: 确保 DOM 已渲染后再设 openeds
+    nextTick(() => {
+      nextTick(() => {
+        openeds.value = collectOpeneds(tree)
+        // 再用 Element Plus 内部方法强制展开所有 sub-menu
+        setTimeout(() => {
+          document.querySelectorAll('.sidebar-menu .el-sub-menu').forEach(el => {
+            if (!el.classList.contains('is-opened')) {
+              el.classList.add('is-opened')
+              // 触发内部 state 更新
+              el.dispatchEvent(new CustomEvent('sub-menu-expand', { bubbles: true }))
+            }
+          })
+        }, 50)
+      })
+    })
+  }
+}, { deep: true })
 
 // 图标映射表
 const iconMap = {
@@ -613,22 +635,34 @@ onMounted(async () => {
 }
 
 /* sub-menu 标题: 箭头贴右侧, 不独立占位 */
+/* sub-menu title: 用 flex-grow 把箭头推到最右 */
 .sidebar-menu :deep(.el-sub-menu__title) {
   justify-content: flex-start;
 }
-.sidebar-menu :deep(.el-sub-menu__title > .el-icon),
-.sidebar-menu :deep(.el-sub-menu__title > span) {
+.sidebar-menu :deep(.el-sub-menu__title > .el-icon) {
   flex-shrink: 0;
 }
-.sidebar-menu :deep(.el-sub-menu__title > span:last-child) {
-  flex: 1;
+/* 让中间文本 span 吃掉剩余空间 → 箭头自动被推到最右侧 */
+.sidebar-menu :deep(.el-sub-menu__title > span),
+.sidebar-menu :deep(.el-sub-menu__title .el-sub-menu__title-text) {
+  flex: 1 1 auto !important;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+/* 箭头不占多余空间, 贴右侧 */
 .sidebar-menu :deep(.el-sub-menu__icon-arrow) {
   position: static !important;
-  margin-left: auto;
+  margin: 0 !important;
+  flex-shrink: 0;
   font-size: 12px;
   color: var(--color-text-3, #8a919f);
   transition: transform 0.2s ease;
+}
+/* 干掉 Element Plus 可能写的 inline margin-left */
+.sidebar-menu :deep(.el-sub-menu__icon-arrow[style*="margin"]) {
+  margin-left: 0 !important;
 }
 /* 展开时箭头旋转 */
 .sidebar-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title .el-sub-menu__icon-arrow),

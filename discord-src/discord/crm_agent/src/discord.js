@@ -155,4 +155,43 @@ discordHttp.interceptors.response.use(
   }
 );
 
+// ========== 启动时代理连通性自检 ==========
+(async function proxySelfTest() {
+  try {
+    console.log('[Discord] 🧪 代理连通性自检中...');
+    const start = Date.now();
+    const r = await axios.get('https://discord.com/api/v10/gateway', {
+      httpsAgent: agentOrProxy?.request ? agentOrProxy : undefined,
+      httpAgent: agentOrProxy?.request ? agentOrProxy : undefined,
+      timeout: 8000,
+      validateStatus: () => true,  // 不抛异常, 任何 status 都算通
+    });
+    const ms = Date.now() - start;
+    if (r.status >= 200 && r.status < 500) {
+      console.log(`[Discord] ✅ 代理自检通过 (${ms}ms, status=${r.status})`);
+    } else {
+      console.warn(`[Discord] ⚠️ 代理自检返回 status=${r.status}, 可能不支持 HTTPS CONNECT`);
+    }
+  } catch (err) {
+    const code = err.code || 'UNKNOWN';
+    const ms = Date.now();
+    console.error(`[Discord] ❌ 代理自检失败: ${code} — ${err.message?.slice(0, 100)}`);
+    
+    if (code === 'ECONNREFUSED') {
+      console.error(`[Discord] 💡 127.0.0.1:7890 没人监听！请先启动 Clash / v2rayN / Surge 等代理软件`);
+      console.error(`[Discord] 💡 确认代理的 HTTP 端口是 7890，不是的话改 config.json 的 discordProxy 字段`);
+    } else if (code === 'ETIMEDOUT') {
+      console.error(`[Discord] 💡 代理端口连得上但出不去！检查 Clash 规则里 discord.com 有没有走代理`);
+    } else if (code === 'ECONNRESET') {
+      console.error(`[Discord] 💡 连接被重置！代理软件可能不支持 HTTPS CONNECT 隧道`);
+    } else if (code === 'EPROTOCOL') {
+      console.error(`[Discord] 💡 端口不是 HTTP 代理！Clash 的 SOCKS5 端口是 7891，HTTP 是 7890，别搞混了`);
+    }
+    
+    if (!proxyUrl) {
+      console.error(`[Discord] 💡 你根本没配代理！config.json 加: "discordProxy": "http://127.0.0.1:7890"`);
+    }
+  }
+})();
+
 module.exports = { discordHttp };
