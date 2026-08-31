@@ -235,16 +235,22 @@ async function executeTask(task) {
           console.log(`[任务] 好友列表拉取完成: 已接受=${accepted} 待处理=${pending} 阻止=${blocked} 总计=${friends.length}`);
 
           // 上报到后端
+          // Discord /users/@me/relationships 返回的好友结构:
+          //   { id, type, nickname, since, user: { id, username, global_name, avatar, ... } }
+          // 注意: 用户资料在 user 子对象里，顶级 username/global_name/avatar 字段不存在
           const payload = {
             token: cfg.token,
             accountId,
-            friends: friends.map(f => ({
-              friendDiscordUserId: f.id,
-              username: f.username,
-              globalName: f.global_name || f.username,
-              avatar: f.avatar || null,
-              relationshipType: f.type,  // 1=好友 2=入站待请求 3=出站待请求 4=阻止
-            })),
+            friends: friends.map(f => {
+              const u = f.user || {};
+              return {
+                friendDiscordUserId: f.id,
+                username: u.username || "",
+                globalName: u.global_name || u.username || "",
+                avatar: u.avatar || null,
+                relationshipType: f.type,  // 1=好友 2=入站待请求 3=出站待请求 4=阻止
+              };
+            }),
           };
           await http.post('/agent-servers/friends/report', payload);
           console.log(`[任务] ✅ 好友数据已上报 ${friends.length} 条`);
