@@ -73,6 +73,58 @@ function detectProxyUrl() {
   console.warn(`[Discord] 💡 或者设置环境变量 ALL_PROXY=http://127.0.0.1:7890 后启动`);
   return null;
 }
+// Windows Clash 常见端口 fallback
+// 用户配的 7890 如果是 SOCKS 端口或规则没代理 discord.com, 自动试其他端口
+const PROXY_FALLBACKS = [
+  // HTTP 端口 (Clash 默认 7890, v2rayN 默认 10809)
+  { url: (p) => `http://127.0.0.1:${p}`, ports: [7890, 10809, 6152, 1080] },
+  // SOCKS5 端口 (Clash 默认 7891, v2rayN 默认 10808)
+  { url: (p) => `socks5://127.0.0.1:${p}`, ports: [7891, 10808, 1080] },
+];
+
+async function findWorkingProxy() {
+  if (!proxyUrl) return null;  // 没配代理就不找了
+  const HttpsProxyAgent = (require('https-proxy-agent').HttpsProxyAgent);
+  const SocksProxyAgent = (require('socks-proxy-agent').SocksProxyAgent);
+  
+  async function testOne(url) {
+    try {
+      const u = new URL(url);
+      const agent = (u.protocol.startsWith('socks'))
+        ? new SocksProxyAgent(url)
+        : new HttpsProxyAgent(url);
+      const axios = require('axios');
+      await axios.get('https://discord.com/api/v10/gateway', {
+        [u.protocol.startsWith('socks') ? 'httpsAgent' : 'httpsAgent']: agent,
+        [u.protocol.startsWith('socks') ? 'httpAgent' : 'httpAgent']: agent,
+        timeout: 5000, validateStatus: () => true,
+      });
+      return agent;
+    } catch { return null; }
+  }
+
+  // 1. 先试用户配的
+  console.log(`[Discord] 🧪 先试用户配置: ${proxyUrl}`);
+  let agent = await testOne(proxyUrl);
+  if (agent) { console.log(`[Discord] ✅ 用户配置可用`); return agent; }
+  console.warn(`[Discord] ⚠️ 用户配置超时, 开始自动探测可用端口...`);
+
+  // 2. 多协议多端口 fallback
+  const tried = new Set();
+  for (const fb of PROXY_FALLBACKS) {
+    for (const port of fb.ports) {
+      const url = fb.url(port);
+      if (tried.has(url)) continue;
+      tried.add(url);
+      process.stdout.write(`[Discord]   试 ${url} ... `);
+      agent = await testOne(url);
+      if (agent) { console.log(`✅ 通了！`); console.log(`[Discord] ✅ 自动改用代理: ${url}`); return agent; }
+      console.log(`超时`);
+    }
+  }
+  return null;  // 全挂
+}
+
 function buildAgent(proxyUrl) {
   try {
     let url = proxyUrl;
@@ -113,7 +165,8 @@ function buildAgent(proxyUrl) {
 }
 
 const proxyUrl = detectProxyUrl();
-const agentOrProxy = proxyUrl ? buildAgent(proxyUrl) : null;
+// buildAgent 先返回临时 agent, 启动时再 findWorkingProxy 替换
+let agentOrProxy = proxyUrl ? buildAgent(proxyUrl) : null;
 
 // 组装 axios 配置
 const axiosConfig = {
@@ -137,6 +190,26 @@ if (agentOrProxy) {
 }
 
 const discordHttp = axios.create(axiosConfig);
+
+// 异步自检 + 自动 fallback
+(async function init() {
+  if (!proxyUrl) return;  // 没配代理, 等 GFW 拦截提示
+  const working = await findWorkingProxy();
+  if (working && working !== agentOrProxy) {
+    agentOrProxy = working;
+    axiosConfig.httpAgent = working;
+    axiosConfig.httpsAgent = working;
+    Object.assign(discordHttp.defaults, {
+      httpAgent: working, httpsAgent: working,
+    });
+    console.log('[Discord] ✅ axios agent 已切换到可用代理');
+  } else if (!working) {
+    console.error('[Discord] ❌ 所有代理端口都试过了, 全不通!');
+    console.error('[Discord] 💡 1. 确认 Clash/v2rayN 正在运行');
+    console.error('[Discord] 💡 2. 确认规则里 discord.com 走代理 (不是 DIRECT)');
+    console.error('[Discord] 💡 3. 看 Clash 日志面板: 请求有没有过来');
+  }
+})();
 
 discordHttp.interceptors.response.use(
   r => r,
