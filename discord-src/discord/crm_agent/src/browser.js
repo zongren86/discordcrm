@@ -17,50 +17,132 @@ const os = require('os');
  * Linux:   /usr/bin/google-chrome
  * 返回路径字符串（找到真实 Chrome）或 null（用 Playwright 自带 Chromium）
  */
+
 function findSystemChrome() {
+  const fs = require('fs');
+  const path = require('path');
+  const { execSync } = require('child_process');
   const platform = process.platform;
+  const cfg = require('./config').loadConfig();
+
+  // 优先级 0: config.json 显式配置（最可靠）
+  if (cfg.browser && cfg.browser.executablePath && cfg.browser.executablePath.trim()) {
+    const p = cfg.browser.executablePath.trim();
+    if (fs.existsSync(p)) {
+      console.log(`[Browser] ✅ 使用 config.json 配置的浏览器: ${p}`);
+      return p;
+    } else {
+      console.warn(`[Browser] ⚠️ config.json executablePath 不存在: ${p}`);
+    }
+  }
+
   const candidates = [];
 
   if (platform === 'win32') {
+    // 用 path.join 构建，避免反斜杠转义 bug
+    const pf = process.env['ProgramFiles'] || 'C:\\Program Files';
+    const pf86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
     const localAppData = process.env.LOCALAPPDATA || '';
+
+    // Chrome 全版本
     candidates.push(
-      'C:\Program Files\Google\Chrome\Application\chrome.exe',
-      'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
-      path.join(localAppData, 'Google\Chrome\Application\chrome.exe'),
-      'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
-      'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
-      path.join(localAppData, 'Microsoft\Edge\Application\msedge.exe'),
+      path.join(pf, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(pf86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+      // Beta / Dev / Canary
+      path.join(localAppData, 'Google', 'Chrome Beta', 'Application', 'chrome.exe'),
+      path.join(localAppData, 'Google', 'Chrome Dev', 'Application', 'chrome.exe'),
+      path.join(localAppData, 'Google', 'Chrome SxS', 'Application', 'chrome.exe'),
+      // Edge 全版本
+      path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      path.join(pf86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      path.join(localAppData, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+      path.join(localAppData, 'Microsoft', 'Edge Beta', 'Application', 'msedge.exe'),
+      path.join(localAppData, 'Microsoft', 'Edge Dev', 'Application', 'msedge.exe'),
+      path.join(localAppData, 'Microsoft', 'Edge SxS', 'Application', 'msedge.exe'),
+      // 便携版常见位置
+      path.join(pf, 'Chromium', 'Application', 'chrome.exe'),
+      path.join(pf86, 'Chromium', 'Application', 'chrome.exe'),
     );
+
+    // PowerShell where.exe 动态查找（最靠谱）
+    try {
+      const out1 = execSync('where chrome 2>nul', { encoding: 'utf8' });
+      out1.split('\n').filter(Boolean).forEach(l => candidates.push(l.trim()));
+    } catch {}
+    try {
+      const out2 = execSync('where msedge 2>nul', { encoding: 'utf8' });
+      out2.split('\n').filter(Boolean).forEach(l => candidates.push(l.trim()));
+    } catch {}
+
   } else if (platform === 'darwin') {
     candidates.push(
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-      '/Applications/Chromium.app/Contents/MacOS/Chromium',
+      '/Applications/Google Chrome Beta.app/Contents/MacOS/Google Chrome Beta',
+      '/Applications/Google Chrome Dev.app/Contents/MacOS/Google Chrome Dev',
+      '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
       '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+      '/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta',
+      '/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev',
+      '/Applications/Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary',
+      '/Applications/Chromium.app/Contents/MacOS/Chromium',
     );
+    try {
+      const out = execSync('mdfind "kMDItemCFBundleIdentifier == com.google.Chrome" | head -1', { encoding: 'utf8' });
+      if (out.trim()) candidates.push(out.trim() + '/Contents/MacOS/Google Chrome');
+    } catch {}
+
   } else {
     candidates.push(
       '/usr/bin/google-chrome',
       '/usr/bin/google-chrome-stable',
       '/usr/bin/chromium',
       '/usr/bin/chromium-browser',
+      '/snap/bin/chromium',
     );
   }
 
+  // 去重 + 存在性检查
+  const seen = new Set();
   for (const p of candidates) {
+    if (!p || seen.has(p)) continue;
+    seen.add(p);
     try {
       if (fs.existsSync(p)) {
-        const name = p.includes('msedge') ? 'Edge' : (p.includes('Chromium') && !p.includes('Chrome') ? 'Chromium' : 'Chrome');
+        const name = p.toLowerCase().includes('edge') ? 'Edge' 
+                   : p.toLowerCase().includes('beta') ? 'Chrome Beta'
+                   : p.toLowerCase().includes('dev') ? 'Chrome Dev'
+                   : p.toLowerCase().includes('sx') ? 'Chrome Canary'
+                   : p.includes('Chromium') ? 'Chromium' : 'Chrome';
         console.log(`[Browser] ✅ 发现系统 ${name}: ${p}`);
         return p;
       }
     } catch {}
   }
 
+  // Playwright channel 兜底（Playwright 自己也有一套查找逻辑）
+  try {
+    const { chromium } = require('playwright');
+    const channels = ['chrome', 'msedge', 'chrome-beta', 'msedge-beta'];
+    for (const ch of channels) {
+      try {
+        const p = chromium.executablePath(ch);
+        if (p && fs.existsSync(p)) {
+          console.log(`[Browser] ✅ Playwright channel 发现: ${ch} → ${p}`);
+          return p;
+        }
+      } catch {}
+    }
+  } catch {}
+
   console.log('[Browser] ⚠️ 未找到系统 Chrome/Edge，使用 Playwright 自带 Chromium（风控风险更高）');
+  console.log('[Browser] 💡 解决方法 A: 安装 Chrome 浏览器');
+  console.log('[Browser] 💡 解决方法 B: config.json 加 "browser": { "executablePath": "C:\\\\path\\\\to\\\\chrome.exe" }');
   return null;
 }
 
 const SYSTEM_CHROME = findSystemChrome();
+
 
 function getLaunchArgs() {
   return [
@@ -157,7 +239,6 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
     ignoreHTTPSErrors: true,
   };
   if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
-  else launchOpts.channel = 'chrome';  // 试试 Playwright 的 chrome channel
   const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 
   const page = context.pages()[0] || await context.newPage();
