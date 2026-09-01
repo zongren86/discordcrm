@@ -538,7 +538,37 @@ async function extractAccountFromContext(context) {
   const page = pages.find(p => (p.url() || '').includes('discord')) || pages[0];
   if (!page) return null;
 
-  // 先尝试从 localStorage/sessionStorage/IndexedDB 扫 token
+  // ⭐ 方案1: 网络拦截（最可靠 —— Discord 前端自动刷新 token 后会从内存带出来）
+  let capturedToken = null;
+  const reqHandler = (request) => {
+    try {
+      const auth = request.headers()['authorization'] || request.headers()['Authorization'];
+      if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
+        capturedToken = auth;
+      }
+    } catch {}
+  };
+  context.on('request', reqHandler);
+
+  // 给 Discord 一点时间发 API 请求（打开页面它会自动请求 /users/@me /gateway 等）
+  console.log('[Browser] 网络拦截已就绪，等待 Discord API 请求抓 token...');
+  // 强制触发一次 API 调用 —— 让页面 goto 当前URL触发 Discords SDK 请求
+  try {
+    const curUrl = page.url() || 'https://discord.com/app';
+    await page.goto(curUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {});
+  } catch {}
+  // 等待 4 秒让网络请求飞回来
+  for (let i = 0; i < 8; i++) {
+    await new Promise(r => setTimeout(r, 500));
+    if (capturedToken) {
+      console.log(`[Browser] 🎯 网络拦截抓到 token (${capturedToken.length} chars)`);
+      break;
+    }
+  }
+  // 移除监听避免污染后续流程
+  context.off('request', reqHandler);
+
+  // 先尝试从 localStorage/sessionStorage/IndexedDB 扫 token（补充：万一 storage 里也有呢）
   let token = null;
   try {
     token = await page.evaluate(async () => {
@@ -596,8 +626,18 @@ async function extractAccountFromContext(context) {
     });
   } catch {}
 
+  // 优先用网络拦截抓到的（更可靠）
+  if (capturedToken && !token) {
+    token = capturedToken;
+    console.log(`[Browser] 用网络拦截 token (${token.length} chars)`);
+  } else if (capturedToken && token && capturedToken !== token) {
+    // 两边都有但不一致 → 用网络拦截的（Discord 可能已用 cookie 刷新了）
+    console.log('[Browser] ⚠️ storage token vs 网络拦截 token 不一致 → 用网络拦截的（可能已刷新）');
+    token = capturedToken;
+  }
+
   if (!token) {
-    console.log('[Browser] 扫描 storage 未找到 token');
+    console.log('[Browser] 网络拦截 + storage 均未找到 token');
     return null;
   }
 
