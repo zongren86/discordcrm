@@ -287,7 +287,8 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   // 只清 webdriver 标记（零开销，Discord 核心检测项）
   await page.addInitScript(`Object.defineProperty(navigator, 'webdriver', { get: () => undefined });`);
   try {
-    await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
+    // 已有profile: 用discord.com让服务器根据cookie自动判断，省一次302
+  await page.goto('https://discord.com', { waitUntil: 'load', timeout: 15000 }).catch(() => {});
   } catch {}
   console.log('[Browser] ✅ 浏览器已打开');
   return { context, page };
