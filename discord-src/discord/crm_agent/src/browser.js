@@ -559,13 +559,9 @@ async function extractAccountFromContext(context) {
   };
   context.on('response', reqHandler);
 
-  // 给 Discord 一点时间发 API 请求（打开页面它会自动请求 /users/@me /gateway 等）
+  // 给 Discord 一点时间发 API 请求（页面已经打开，Discord SDK 会自动请求 /users/@me /gateway）
   console.log('[Browser] 网络拦截已就绪，等待 Discord API 请求抓 token...');
-  // 强制触发一次 API 调用 —— 让页面 goto 当前URL触发 Discords SDK 请求
-  try {
-    const curUrl = page.url() || 'https://discord.com/app';
-    await page.goto(curUrl, { waitUntil: 'domcontentloaded', timeout: 8000 }).catch(() => {});
-  } catch {}
+  // 注意: 不再 goto —— 页面已经是 discord.com/app，重新导航只会让用户看到加载闪烁
   // 等待 4 秒让网络请求飞回来
   for (let i = 0; i < 8; i++) {
     await new Promise(r => setTimeout(r, 500));
