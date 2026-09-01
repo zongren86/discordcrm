@@ -286,6 +286,8 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
     let context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 
   const page = context.pages()[0] || await context.newPage();
+  // 只清 webdriver 标记（零开销，Discord 核心检测项）
+  await page.addInitScript(`Object.defineProperty(navigator, 'webdriver', { get: () => undefined });`);
   try {
     await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
   } catch {}
