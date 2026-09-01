@@ -16,12 +16,18 @@ if not exist "config.json" (
 
 if not exist "node_modules" (
     echo [INFO] Installing dependencies...
-    call npm install --no-audit --no-fund --registry=https://registry.npmmirror.com
+    REM 先试官方源（国内走 npmmirror，海外走官方）
+    call npm install --no-audit --no-fund --registry=https://registry.npmjs.org
     if errorlevel 1 (
-        echo [ERROR] npm install failed
-        pause
-        exit /b 1
+        echo [WARN] 官方源失败，重试 npmmirror...
+        call npm install --no-audit --no-fund --registry=https://registry.npmmirror.com
+        if errorlevel 1 (
+            echo [ERROR] npm install failed. Try: npm config set registry https://registry.npmmirror.com
+            pause
+            exit /b 1
+        )
     )
+    REM 注意：不需要 playwright install chromium，我们用系统 Chrome
 )
 
 node src/index.js
