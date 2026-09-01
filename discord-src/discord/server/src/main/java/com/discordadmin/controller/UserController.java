@@ -3,6 +3,8 @@ package com.discordadmin.controller;
 import com.discordadmin.entity.Agent;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.service.UserService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -13,6 +15,7 @@ import java.util.Set;
 @RequestMapping("/api/users")
 public class UserController {
 
+    private static final Logger log = LoggerFactory.getLogger(UserController.class);
     private final UserService userService;
 
     public UserController(UserService userService) {
@@ -26,12 +29,22 @@ public class UserController {
 
     @PostMapping
     public Agent create(@RequestBody UserService.UserRequest req) {
-        return userService.create(req);
+        log.info("[UserController] create req: username={}, accountType={}, merchantId={}",
+                req.username(), req.accountType(), req.merchantId());
+        Agent result = userService.create(req);
+        log.info("[UserController] create result: id={}, accountType={}, merchantId={}",
+                result.getId(), result.getAccountType(), result.getMerchantId());
+        return result;
     }
 
     @PutMapping("/{id}")
     public Agent update(@PathVariable Long id, @RequestBody UserService.UserRequest req) {
-        return userService.update(id, req);
+        log.info("[UserController] update id={} req: accountType={}, merchantId={}, clearMerchantId={}",
+                id, req.accountType(), req.merchantId(), req.clearMerchantId());
+        Agent result = userService.update(id, req);
+        log.info("[UserController] update id={} result: accountType={}, merchantId={}",
+                id, result.getAccountType(), result.getMerchantId());
+        return result;
     }
 
     /** 配置用户角色（可多选） */
