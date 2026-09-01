@@ -286,7 +286,6 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
     let context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 
   const page = context.pages()[0] || await context.newPage();
-  await page.addInitScript(getInitScript());
   try {
     await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
   } catch {}
@@ -329,9 +328,9 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 
   // 网络拦截抓 Authorization header（最可靠）
   let capturedToken = null;
-  context.on('request', (request) => {
+  context.on('response', (response) => {
     try {
-      const headers = request.headers();
+      const headers = response.headers();
       const auth = headers['authorization'] || headers['Authorization'];
       if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
         if (!capturedToken || capturedToken !== auth) {
@@ -540,15 +539,15 @@ async function extractAccountFromContext(context) {
 
   // ⭐ 方案1: 网络拦截（最可靠 —— Discord 前端自动刷新 token 后会从内存带出来）
   let capturedToken = null;
-  const reqHandler = (request) => {
+  const reqHandler = (response) => {
     try {
-      const auth = request.headers()['authorization'] || request.headers()['Authorization'];
+      const auth = response.headers()['authorization'] || response.headers()['Authorization'];
       if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
         capturedToken = auth;
       }
     } catch {}
   };
-  context.on('request', reqHandler);
+  context.on('response', reqHandler);
 
   // 给 Discord 一点时间发 API 请求（打开页面它会自动请求 /users/@me /gateway 等）
   console.log('[Browser] 网络拦截已就绪，等待 Discord API 请求抓 token...');
@@ -566,7 +565,7 @@ async function extractAccountFromContext(context) {
     }
   }
   // 移除监听避免污染后续流程
-  context.off('request', reqHandler);
+  context.off('response', reqHandler);
 
   // 先尝试从 localStorage/sessionStorage/IndexedDB 扫 token（补充：万一 storage 里也有呢）
   let token = null;
