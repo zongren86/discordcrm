@@ -437,8 +437,9 @@ async function saveCreate() {
     }
     if (isMerchantUser.value) {
       payload.merchantId = auth.agent?.merchantId
-    } else if (createDialog.form.accountType === 1) {
-      payload.merchantId = createDialog.form.merchantId
+    } else {
+      // 平台管理员视角：无论 accountType 是 0 还是 1，都把表单里选的 merchantId 传过去
+      payload.merchantId = createDialog.form.merchantId ?? null
     }
     await api.post('/users', payload)
     ElMessage.success('已创建')
@@ -498,8 +499,8 @@ async function saveEdit() {
     }
     if (isMerchantUser.value) {
       payload.merchantId = auth.agent?.merchantId
-    } else if (editDialog.form.accountType === 1) {
-      payload.merchantId = editDialog.form.merchantId
+    } else {
+      payload.merchantId = editDialog.form.merchantId ?? null
     }
     await api.put(`/users/${editDialog.editId}`, payload)
     ElMessage.success('已更新')
