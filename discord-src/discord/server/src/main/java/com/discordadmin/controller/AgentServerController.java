@@ -279,13 +279,31 @@ public class AgentServerController {
     @GetMapping("/package")
     public ResponseEntity<Resource> downloadAgentPackage() {
         try {
+            byte[] zipBytes;
+            // 优先: 源码目录存在 (开发模式), 动态打包
             Path sourceDir = resolveAgentSourceDir();
-            if (sourceDir == null || !Files.isDirectory(sourceDir)) {
-                return ResponseEntity.status(500).body(null);
+            if (sourceDir != null && Files.isDirectory(sourceDir)) {
+                zipBytes = buildZip(sourceDir);
+            } else {
+                // 兜底: jar 内嵌 zip (生产模式)
+                String zipName = "crm_agent-v" + readAgentVersion() + ".zip";
+                try (var is = getClass().getClassLoader().getResourceAsStream(zipName)) {
+                    if (is == null) {
+                        // 再试旧名字
+                        try (var is2 = getClass().getClassLoader().getResourceAsStream("agent-package.zip")) {
+                            if (is2 == null) {
+                                log.error("未找到内嵌 agent zip, classpath 资源列表:");
+                                return ResponseEntity.status(500).body(null);
+                            }
+                            zipBytes = is2.readAllBytes();
+                        }
+                    } else {
+                        zipBytes = is.readAllBytes();
+                    }
+                }
             }
-            byte[] zipBytes = buildZip(sourceDir);
-            ByteArrayResource resource = new ByteArrayResource(zipBytes);
             String filename = "crm_agent-v" + readAgentVersion() + ".zip";
+            ByteArrayResource resource = new ByteArrayResource(zipBytes);
             return ResponseEntity.ok()
                     .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
                     .contentType(org.springframework.http.MediaType.parseMediaType("application/zip"))
