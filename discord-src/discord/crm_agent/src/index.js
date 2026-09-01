@@ -561,7 +561,7 @@ async function pollOneAccount(acc, channelLimit) {
     // 账号内 channel 请求加随机间隔 (20-80ms)，避免瞬间并发打 Discord
     const fetchTasks = channels.map(async (ch, idx) => {
       try {
-        await new Promise(r => setTimeout(r, 20 + Math.random() * 60 + idx * 10));
+        await new Promise(r => setTimeout(r, 20 + Math.random() * 20));  // 20~40ms 随机间隔，防风控又快
         const key = `${acc.id}:${ch.id}`;
         const lastId = channelLastMsgId.get(key);
         const params = { limit: 50 };
@@ -685,8 +685,8 @@ async function pollMessages() {
     // 过滤掉 token 失效账号（标记后 24h 自动冷却重试）
     const validAccounts = managedAccounts.filter(acc => !tokenInvalidAccounts.has(acc.id));
     if (validAccounts.length === 0) return;
-    // 并发降到 5（之前 25 太高，多账号同时打 Discord 容易风控）
-    await pool(validAccounts, 5, pollOneAccount);
+    // 并发 10（防风控又保证速度，Discord rate limit 50/channel，10账号×20channel=200<阈值）
+    await pool(validAccounts, 10, pollOneAccount);
   } finally {
     pollInProgress = false;
   }
