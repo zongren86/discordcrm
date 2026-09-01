@@ -148,11 +148,9 @@ function getLaunchArgs() {
     // ⚠️ 绝对不能用 --no-sandbox、--disable-blink-features=AutomationControlled 等反风控的参数
     // 真正的反检测靠下面这些 + initScript + 使用系统 Chrome
     return [
-      '--disable-dev-shm-usage',
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-infobars',
-      '--no-pings',                      // 不发导航通知
       
     ];
   }
@@ -273,7 +271,7 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   const launchOpts = {
     headless: false,
     chromiumSandbox: false,
-    args: getLaunchArgs().filter(a => !a.includes('--no-sandbox')),  // 双重保险
+    args: getLaunchArgs(),
     ignoreHTTPSErrors: true,
     // 唤起浏览器时设 null 禁用 Playwright 默认 1280x720 viewport，让 Chrome 窗口自然展开
     viewport: undefined,
@@ -310,7 +308,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       headless: browserConfig.headless ?? false,
       chromiumSandbox: false,
       viewport: browserConfig.viewport || { width: 1280, height: 800 },
-      args: getLaunchArgs().filter(a => !a.includes('--no-sandbox')),  // 双重保险
+      args: getLaunchArgs(),
       ignoreHTTPSErrors: true,
     };
     if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
