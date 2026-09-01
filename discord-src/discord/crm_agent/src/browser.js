@@ -288,7 +288,8 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   await page.addInitScript(`Object.defineProperty(navigator, 'webdriver', { get: () => undefined });`);
   try {
     // 已有profile: 用discord.com让服务器根据cookie自动判断，省一次302
-  await page.goto('https://discord.com', { waitUntil: 'load', timeout: 15000 }).catch(() => {});
+  // 已有profile: 直接进 /app，服务器根据cookie判断登录态，302到/login如果没登录
+  await page.goto('https://discord.com/app', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
   } catch {}
   console.log('[Browser] ✅ 浏览器已打开');
   return { context, page };
@@ -343,24 +344,32 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   });
 
   console.log('[Browser] 打开 Discord 登录页...');
+  let gotoOk = false;
   try {
     await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded', timeout: 10000 });
+    gotoOk = true;
+    console.log('[Browser] ✅ Discord 登录页已加载');
   } catch (e) {
-    console.warn('[Browser] Discord 登录页加载较慢，继续在后台等待...');
+    console.warn('[Browser] Discord 登录页加载较慢，快速等待...');
   }
 
-  console.log('[Browser] 等待 Discord 页面就绪...');
-  for (let i = 0; i < 15; i++) {
-    await new Promise(r => setTimeout(r, 1000));
-    if (await pageReady(page)) break;
-    if (!isContextAlive(context)) {
-      await safeClose(context);
-      throw new Error('用户关闭了浏览器');
+  // goto 成功就不用等了；失败才进入快速轮询（200ms x 25 = 5s）
+  if (!gotoOk) {
+    console.log('[Browser] 快速等待页面就绪...');
+    for (let i = 0; i < 25; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      if (await pageReady(page)) {
+        console.log(`[Browser] ✅ 页面就绪（${(i+1)*200}ms）`);
+        break;
+      }
+      if (!isContextAlive(context)) {
+        await safeClose(context);
+        throw new Error('用户关闭了浏览器');
+      }
+      const pages = context.pages();
+      page = pages.find(p => (p.url() || '').includes('discord')) || page;
     }
-    const pages = context.pages();
-    page = pages.find(p => (p.url() || '').includes('discord')) || page;
   }
-
   const result = { token: null, userId: null, username: null, email: null, avatarUrl: null };
 
   const scanStorage = async () => {
