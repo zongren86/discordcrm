@@ -272,12 +272,16 @@ public class AuthController {
         Map<String, Object> result = new HashMap<>();
         result.put("agentId", agent.agentId());
         result.put("username", agent.username());
-        result.put("accountType", agent.accountType());
-        result.put("merchantId", agent.merchantId());
 
+        // 从数据库实时取，避免 JWT 过时
         Agent agentEntity = agentRepository.findById(agent.agentId()).orElse(null);
+        if (agentEntity == null) {
+            throw new IllegalArgumentException("用户不存在");
+        }
+        result.put("accountType", agentEntity.getAccountType());
+        result.put("merchantId", agentEntity.getMerchantId());
+
         if (agentEntity != null) {
-            result.put("displayName", agentEntity.getDisplayName());
             List<String> permissions = getAgentPermissions(agentEntity);
             result.put("permissions", permissions);
             
