@@ -468,7 +468,7 @@ public class AgentServerController {
                 }
             }
         } catch (Exception ignored) {}
-        return "1.15.1";
+        return "1.15.2";
     }
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
     private byte[] buildZip(Path sourceDir) throws IOException {

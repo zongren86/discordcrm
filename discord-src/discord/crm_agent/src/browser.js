@@ -153,7 +153,7 @@ function getLaunchArgs() {
       '--no-default-browser-check',
       '--disable-infobars',
       '--no-pings',                      // 不发导航通知
-      '--disable-features=IsolateOrigins,site-per-process',  // 减少进程特征
+      
     ];
   }
 
@@ -272,11 +272,11 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
   console.log('[Browser] 唤起持久化浏览器 profile...');
   const launchOpts = {
     headless: false,
-    chromiumSandbox: true,  // 强制 Playwright 不自动追加 --no-sandbox
+    chromiumSandbox: false,
     args: getLaunchArgs().filter(a => !a.includes('--no-sandbox')),  // 双重保险
     ignoreHTTPSErrors: true,
     // 唤起浏览器时设 null 禁用 Playwright 默认 1280x720 viewport，让 Chrome 窗口自然展开
-    viewport: null,  // 唤起浏览器禁用 Playwright viewport，让 Chrome 窗口自然展开可拖拽
+    viewport: undefined,
   };
   if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
   // 注入真实 Windows Chrome UA + 真实视口
@@ -307,7 +307,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   try {
     const launchOpts = {
       headless: browserConfig.headless ?? false,
-      chromiumSandbox: true,  // 强制 Playwright 不自动追加 --no-sandbox
+      chromiumSandbox: false,
       viewport: browserConfig.viewport || { width: 1280, height: 800 },
       args: getLaunchArgs().filter(a => !a.includes('--no-sandbox')),  // 双重保险
       ignoreHTTPSErrors: true,
