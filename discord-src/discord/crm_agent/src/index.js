@@ -142,6 +142,14 @@ async function executeTask(task) {
           const { context } = await launchBrowserOnly(profilePath, cfg.browser || {});
           console.log('[任务] ✅ 浏览器已打开');
 
+          // ⚠️ 关键: 浏览器打开时暂停该账号的消息轮询
+          // 用户在浏览器里手动操作（加好友等）走 Cookie session
+          // agent 后台轮询走 API token → 同账号同IP双通道会触发 Discord 风控
+          if (accountId) {
+            browserOpenAccounts.add(accountId);
+            console.log(`[风控] 账号 ${accountId} 浏览器打开中 → 暂停消息轮询`);
+          }
+
           // ⚡ 关键: 唤起后自动扫描当前 token，上报后端更新
           await new Promise(r => setTimeout(r, 3000));
           const extracted = await extractAccountFromContext(context);
@@ -185,12 +193,16 @@ async function executeTask(task) {
             console.warn('[任务] 未扫描到 token，浏览器等待用户登录...');
           }
 
-          // 浏览器保持打开，监听关闭事件
+          // 浏览器保持打开，监听关闭事件 → 恢复轮询
           (async () => {
             try {
               await new Promise(resolve => context.on('close', resolve));
               console.log('[Browser] 浏览器已关闭');
             } catch {}
+            if (accountId) {
+              browserOpenAccounts.delete(accountId);
+              console.log(`[风控] 账号 ${accountId} 浏览器已关闭 → 恢复消息轮询`);
+            }
           })();
           break;
         } catch (err) {
@@ -726,7 +738,7 @@ async function pollMessages() {
   pollInProgress = true;
   try {
     // 过滤掉 token 失效账号（标记后 24h 自动冷却重试）
-    const validAccounts = managedAccounts.filter(acc => !tokenInvalidAccounts.has(acc.id));
+    const validAccounts = managedAccounts.filter(acc => !tokenInvalidAccounts.has(acc.id) && !browserOpenAccounts.has(acc.id));
     if (validAccounts.length === 0) return;
     // 并发 10（防风控又保证速度，Discord rate limit 50/channel，10账号×20channel=200<阈值）
     await pool(validAccounts, 10, pollOneAccount);
