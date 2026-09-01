@@ -104,8 +104,12 @@ async function executeTask(task) {
           };
           await reportTask(task.id, 'SUCCESS', payload);
           console.log(`[任务] ✅ 完成 — 已保存 ${result.username}`);
-          // 保存确认后再关浏览器
-          console.log('[Browser] 浏览器将在 3 秒后自动关闭...');
+          // 防风控: 采集成功后强制间隔 3 分钟，避免短时间内批量采集
+          if (cfg.agentMode !== 'debug') {
+            const delay = 180000 + Math.floor(Math.random() * 60000); // 3-4 分钟随机
+            console.log(`[风控] 采集间隔等待 ${Math.round(delay/60000)} 分钟再处理下一个任务...`);
+            await new Promise(r => setTimeout(r, delay));
+          }
         } catch (err) {
           if (err.code === 'CANCELLED') {
             await reportTask(task.id, 'CANCELLED');
@@ -228,6 +232,10 @@ async function executeTask(task) {
           break;
         }
         await reportTask(task.id, 'RUNNING');
+        // 防风控: 执行前随机延迟 2~8 秒
+        const fDelay = 2000 + Math.random() * 6000;
+        console.log(`[任务] FULL_SYNC_FRIENDS 延迟 ${Math.round(fDelay/1000)}s 后开始 (accountId=${accountId})`);
+        await new Promise(r => setTimeout(r, fDelay));
         try {
           console.log(`[任务] 拉取好友列表 (accountId=${accountId})...`);
           const friends = await fetchFriends(token);
@@ -315,6 +323,9 @@ async function main() {
   await loadManagedAccounts();
   setInterval(loadManagedAccounts, ACCOUNT_REFRESH_MS);
   setInterval(pollMessages, MSG_POLL_MS);
+  setInterval(tokenHeartbeat, TOKEN_HEARTBEAT_MS);
+  // 启动后 2 分钟先跑一次 token 心跳（快速发现失效）
+  setTimeout(tokenHeartbeat, 120000);
 
   console.log('[就绪] 等待任务...');
 
@@ -333,6 +344,10 @@ main().catch(err => {
 
 // agent 负责的 AGENT 采集账号列表
 let managedAccounts = [];
+// Token 失效账号集合：检测到一次 401 后从轮询中移除，避免重复请求
+const tokenInvalidAccounts = new Set();
+// 24小时后自动重新尝试 token（可能用户已重新登录）
+const TOKEN_INVALID_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24h
 // Token 失效上报节流: Map<accountId, lastReportTimestamp>，5分钟内不重复上报
 const tokenInvalidReportedAt = new Map();
 function reportTokenInvalid(accountId, accountName) {
@@ -340,18 +355,61 @@ function reportTokenInvalid(accountId, accountName) {
   const last = tokenInvalidReportedAt.get(accountId) || 0;
   if (now - last < 5 * 60 * 1000) return;  // 5分钟节流
   tokenInvalidReportedAt.set(accountId, now);
+  // 🚨 标记账号失效，从轮询中移除！避免持续请求失效 token
+  tokenInvalidAccounts.add(accountId);
   http.post('/agent-servers/accounts/token-status', {
     token: cfg.token, accountId, valid: false, reason: '401 Unauthorized (消息轮询/API调用返回401)',
   }).then(() => {
-    console.warn(`[Token上报] ${accountName}(${accountId}) Token失效已同步到服务器`);
+    console.warn(`[Token上报] ${accountName}(${accountId}) Token失效已同步 → 暂停该账号轮询`);
   }).catch(e => {
     console.warn(`[Token上报] ${accountName} 上报失败: ${e.message}`);
   });
 }
 // 每个账号已见消息 ID 集合: Map<accountId, Set<discordMessageId>>
 const seenMessageIds = new Map();
+// ============================================
+// Token 心跳: 每 30 分钟检测所有托管账号 token 是否有效
+// GET https://discord.com/api/v10/users/@me → 401=失效, 上报服务器
+// ============================================
+const TOKEN_HEARTBEAT_MS = 30 * 60 * 1000;
+async function tokenHeartbeat() {
+  try {
+    const accounts = await loadManagedAccounts();
+    if (!accounts || accounts.length === 0) return;
+    console.log(`[Token心跳] 检测 ${accounts.length} 个账号的 token 有效性...`);
+    let invalidCount = 0, validCount = 0;
+    const invalidList = [];
+    for (const acc of accounts) {
+      try {
+        const resp = await fetch('https://discord.com/api/v10/users/@me', {
+          headers: { Authorization: acc.token },
+          method: 'GET',
+        });
+        if (resp.status === 401 || resp.status === 403) {
+          invalidCount++;
+          invalidList.push({ accountId: acc.id, username: acc.username, status: resp.status });
+          console.warn(`[Token心跳] ❌ ${acc.username} (id=${acc.id}) token 已失效 (HTTP ${resp.status})`);
+        } else if (resp.ok) {
+          validCount++;
+        }
+        await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
+      } catch (e) { /* 静默网络错误 */ }
+    }
+    console.log(`[Token心跳] ✅ 有效=${validCount} 失效=${invalidCount}`);
+    if (invalidList.length > 0) {
+      try {
+        await http.post('/agent-servers/accounts/token-status', {
+          token: cfg.token,
+          results: invalidList.map(i => ({ accountId: i.accountId, tokenValid: false, lastCheckAt: new Date().toISOString() })),
+        });
+        console.log(`[Token心跳] 📡 已上报 ${invalidList.length} 个失效账号`);
+      } catch {}
+    }
+  } catch {}
+}
+
 const ACCOUNT_REFRESH_MS = 30000;
-const MSG_POLL_MS = 5000;   // 消息轮询 5s，分层采样 + 并发 25 支撑 ~450 账号
+const MSG_POLL_MS = 5000;   // 消息轮询 5s，分层采样 + 并发 5 防风控
 
 // 已经执行过首次历史补拉的账号 ID 集合
 const backfilledAccounts = new Set();
@@ -360,8 +418,17 @@ async function loadManagedAccounts() {
   try {
     const accounts = await http.post('/agent-servers/accounts', { token: cfg.token });
     managedAccounts = accounts || [];
+    // 冷却过期后恢复 token 失效账号（24h 后再试一次）
+    const now = Date.now();
+    for (const acc of managedAccounts) {
+      const lastReport = tokenInvalidReportedAt.get(acc.id) || 0;
+      if (tokenInvalidAccounts.has(acc.id) && (now - lastReport > TOKEN_INVALID_COOLDOWN_MS)) {
+        tokenInvalidAccounts.delete(acc.id);
+        console.log(`[冷却恢复] ${acc.name}(${acc.id}) Token失效已超24h，重新尝试`);
+      }
+    }
     if (managedAccounts.length > 0) {
-      console.log(`[消息轮询] 负责 ${managedAccounts.length} 个 AGENT 采集账号`);
+      console.log(`[消息轮询] 负责 ${managedAccounts.length} 个 AGENT 采集账号${tokenInvalidAccounts.size ? ` (${tokenInvalidAccounts.size}个失效已跳过)` : ''}`);
       // 对新账号执行首次历史补拉
       for (const acc of managedAccounts) {
         if (!backfilledAccounts.has(acc.id)) {
@@ -491,8 +558,10 @@ async function pollOneAccount(acc, channelLimit) {
     // ===== 账号内 messages API 并发 — 关键优化 =====
     // 之前串行: 20 channel × 50ms = 1000ms
     // 现在并行: max 100ms（取决于最慢的那 1-2 个请求）
-    const fetchTasks = channels.map(async (ch) => {
+    // 账号内 channel 请求加随机间隔 (20-80ms)，避免瞬间并发打 Discord
+    const fetchTasks = channels.map(async (ch, idx) => {
       try {
+        await new Promise(r => setTimeout(r, 20 + Math.random() * 60 + idx * 10));
         const key = `${acc.id}:${ch.id}`;
         const lastId = channelLastMsgId.get(key);
         const params = { limit: 50 };
@@ -613,8 +682,11 @@ async function pollMessages() {
   if (pollInProgress) return;  // 防重入：上一轮还没跑完就跳过本轮
   pollInProgress = true;
   try {
-    // 并发 25 — 三层并发（账号间 25 + 账号内 Promise.all + 分层采样 20/50/200 channel）
-    await pool(managedAccounts, 25, pollOneAccount);
+    // 过滤掉 token 失效账号（标记后 24h 自动冷却重试）
+    const validAccounts = managedAccounts.filter(acc => !tokenInvalidAccounts.has(acc.id));
+    if (validAccounts.length === 0) return;
+    // 并发降到 5（之前 25 太高，多账号同时打 Discord 容易风控）
+    await pool(validAccounts, 5, pollOneAccount);
   } finally {
     pollInProgress = false;
   }

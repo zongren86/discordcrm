@@ -145,33 +145,71 @@ const SYSTEM_CHROME = findSystemChrome();
 
 
 function getLaunchArgs() {
-  // 注意：绝对不允许 --no-sandbox —— 这会导致 Chrome 弹出警告
-  // Playwright 会在 chromiumSandbox !== true 时自动加 --no-sandbox，
-  // 所以 launchOpts 必须设 chromiumSandbox: true（下面两处已设）
-  return [
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--disable-infobars',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-background-networking',
-    '--disable-sync',
-    '--disable-breakpad',
-    '--no-title-update',
-    '--no-window-animation',
-  ].filter(a => !a.includes('--no-sandbox'));  // 双重保险：过滤掉任何误加的 --no-sandbox
-}
+    // ⚠️ 绝对不能用 --no-sandbox、--disable-blink-features=AutomationControlled 等反风控的参数
+    // 真正的反检测靠下面这些 + initScript + 使用系统 Chrome
+    return [
+      '--disable-dev-shm-usage',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-infobars',
+      '--no-pings',                      // 不发导航通知
+      '--disable-features=IsolateOrigins,site-per-process',  // 减少进程特征
+    ];
+  }
 
 function getInitScript() {
   return `
+    // 1. 核心: 消除 webdriver 标记（Discord 重点检测项）
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-    window.chrome = { runtime: {} };
+
+    // 2. 伪造 Chrome 真实指纹
+    Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en-US', 'en'] });
+    Object.defineProperty(navigator, 'plugins', { get: () => [
+      { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+      { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+      { name: 'Native Client', filename: 'internal-nacl-plugin' }
+    ] });
+    Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+    Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+    Object.defineProperty(navigator, 'deviceMemory', { get: () => 8 });
+
+    // 3. chrome 对象完整伪造（Discord 探测 chrome.runtime.sendMessage）
+    window.chrome = {
+      runtime: { id: undefined, connect: function(){}, sendMessage: function(){}, onMessage: { addListener: function(){} } },
+      loadTimes: function(){ return { firstPaintTime: 0, firstPaintAfterLoadTime: 0 }; },
+      csi: function(){ return { onloadT: Date.now(), startE: Date.now(), pageT: Date.now() }; }
+    };
+
+    // 4. permissions 拦截
     const origQ = window.navigator.permissions.query;
-    window.navigator.permissions.query = (p) => (
-      p.name === 'notifications' ? Promise.resolve({ state: Notification.permission }) : origQ(p)
-    );
+    window.navigator.permissions.query = (p) => {
+      if (p.name === 'notifications') return Promise.resolve({ state: 'granted' });
+      if (p.name === 'mediaDevices') return Promise.resolve({ state: 'granted' });
+      return origQ(p);
+    };
+
+    // 5. WebGL vendor/renderer 伪造
+    try {
+      const origGetParam = WebGLRenderingContext.prototype.getParameter;
+      WebGLRenderingContext.prototype.getParameter = function(param) {
+        if (param === 0x1F00) return 'Google Inc.';
+        if (param === 0x1F01) return 'ANGLE (Intel, Intel(R) UHD Graphics 630, OpenGL 4.5)';
+        return origGetParam.apply(this, arguments);
+      };
+    } catch {}
+
+    // 6. 屏蔽 CDP 调试痕迹
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array; } catch {}
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise; } catch {}
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol; } catch {}
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Object; } catch {}
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Function; } catch {}
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Proxy; } catch {}
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Map; } catch {}
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Set; } catch {}
+    try { delete window.cdc_adoQpoasnfa76pfcZLmcfl_Error; } catch {}
+
+    // 7. 移除 Chrome Automation 标题标记
     try { document.title = document.title.replace(/[—-]\\s*Chrome.*Automation.*$/i, ''); } catch {}
   `;
 }
@@ -241,24 +279,29 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}) {
     viewport: null,  // 唤起浏览器禁用 Playwright viewport，让 Chrome 窗口自然展开可拖拽
   };
   if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
-  const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
+  // 注入真实 Windows Chrome UA + 真实视口
+    launchOpts.userAgent = launchOpts.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    launchOpts.locale = 'zh-CN';
+    launchOpts.timezoneId = 'Asia/Shanghai';
+    let context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 
   const page = context.pages()[0] || await context.newPage();
   await page.addInitScript(getInitScript());
   try {
-    await page.goto('https://discord.com/', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+    await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
   } catch {}
   console.log('[Browser] ✅ 浏览器已打开');
   return { context, page };
 }
 
 async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentName } = {}) {
-  const userDataDir = path.join(
-    os.tmpdir(),
-    `crm-agent-${agentName || 'default'}-${Date.now()}`
-  );
+  // 每个账号独立 profile 目录 —— 防风控 + 后续唤起热启动
+  // 路径: ./data/browser-profiles/<agentName>-task<taskId>
+  const profileName = `${agentName || 'agent'}-task${taskId || Date.now()}`;
+  const userDataDir = path.resolve(`./data/browser-profiles/${profileName}`);
   try { fs.mkdirSync(userDataDir, { recursive: true }); } catch {}
-  console.log(`[Browser] 启动 Chromium... (profile=${userDataDir})`);
+  const isHot = fs.existsSync(path.join(userDataDir, 'Preferences'));
+  console.log(`[Browser] 启动 Chrome (profile=${userDataDir})${isHot ? ' ⚡热启动' : ' 🧊冷启动 — 新账号独立 profile'}`);
 
   let context;
   try {
@@ -271,6 +314,10 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
     };
     if (SYSTEM_CHROME) launchOpts.executablePath = SYSTEM_CHROME;
     else launchOpts.channel = 'chrome';
+        // 注入真实 Windows Chrome UA + 真实视口
+    launchOpts.userAgent = launchOpts.userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+    launchOpts.locale = 'zh-CN';
+    launchOpts.timezoneId = 'Asia/Shanghai';
     context = await chromium.launchPersistentContext(userDataDir, launchOpts);
 
   } catch (e) {
@@ -297,9 +344,9 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 
   console.log('[Browser] 打开 Discord 登录页...');
   try {
-    await page.goto('https://discord.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto('https://discord.com/login', { waitUntil: 'domcontentloaded', timeout: 10000 });
   } catch (e) {
-    console.log('[Browser] goto 超时，继续等待...');
+    console.warn('[Browser] Discord 登录页加载较慢，继续在后台等待...');
   }
 
   console.log('[Browser] 等待 Discord 页面就绪...');
@@ -470,10 +517,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 
     if (result.token && result.userId) {
       result.browserProfilePath = userDataDir;
-      console.log('[Browser] 🎉 采集成功！');
-      console.log('[Browser] 3 秒后自动关闭浏览器...');
-      await new Promise(r => setTimeout(r, 3000));
-      await safeClose(context);
+      console.log('[Browser] 🎉 采集成功！浏览器保持打开，请手动关闭窗口后再进行下一步（如修改头像）');
       return result;
     }
   }

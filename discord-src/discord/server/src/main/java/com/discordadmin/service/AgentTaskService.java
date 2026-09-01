@@ -58,6 +58,16 @@ public class AgentTaskService {
         return saved;
     }
 
+    /** 带延迟创建任务 —— 防风控 */
+    public AgentTask createTaskWithDelay(Long agentServerId, String type, String paramsJson, int delayMinutes) {
+        AgentTask task = createTask(agentServerId, type, paramsJson);
+        task.setScheduledAt(Instant.now().plusSeconds(delayMinutes * 60L));
+        task.setUpdatedAt(Instant.now());
+        agentTaskRepository.save(task);
+        log.info("⏳ 延迟下发 taskId={} type={} 延迟={}分钟 执行时间={}", task.getId(), type, delayMinutes, task.getScheduledAt());
+        return task;
+    }
+
     /**
      * 同步等待任务完成（给 MessageService 用）
      * @return result JSON 字符串，失败抛异常
@@ -127,8 +137,9 @@ public class AgentTaskService {
         }
 
         // 优先取 PENDING 的（RUNNING 僵死已清理）
+        // 只取 scheduledAt <= now 或 scheduledAt IS NULL 的任务（防风控延迟）
         Optional<AgentTask> task = agentTaskRepository
-                .findFirstByAgentServerAndStatusOrderByCreatedAtAsc(server, "PENDING");
+                .findFirstReady(server, "PENDING", Instant.now());
 
         task.ifPresent(t -> {
             t.setStatus("RUNNING");
@@ -181,9 +192,11 @@ public class AgentTaskService {
                     Map<String, Object> friendsParams = new HashMap<>();
                     friendsParams.put("accountId", account.getId());
                     friendsParams.put("token", account.getToken());
-                    AgentTask ft = createTask(server.getId(), "FULL_SYNC_FRIENDS",
-                        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(friendsParams));
-                    log.info("📡 采集完成 → 已自动下发 FULL_SYNC_FRIENDS 任务 id={} (accountId={})",
+                    // 随机延迟 5~15 分钟，避免刚登录就高频操作触发风控
+                    int delay = 5 + (int)(Math.random() * 11);
+                    AgentTask ft = createTaskWithDelay(server.getId(), "FULL_SYNC_FRIENDS",
+                        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(friendsParams), delay);
+                    log.info("📡 采集完成 → 已延迟 5 分钟下发 FULL_SYNC_FRIENDS taskId={} (accountId={})",
                         ft.getId(), account.getId());
                 } catch (Exception fe) {
                     log.warn("采集完成但下发好友同步失败（不影响主流程）: {}", fe.getMessage());

@@ -57,6 +57,10 @@ public class AgentTask {
     @JoinColumn(name = "discord_account_id")
     private DiscordAccount discordAccount;
 
+    /** 预定执行时间（防风控延迟下发）。null=立即执行 */
+    @Column(name = "scheduled_at")
+    private Instant scheduledAt;
+
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 

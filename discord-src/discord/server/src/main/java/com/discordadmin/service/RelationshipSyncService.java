@@ -291,9 +291,12 @@ public class RelationshipSyncService {
             Map<String, Object> params = new HashMap<>();
             params.put("accountId", acc.getId());
             params.put("token", acc.getToken());
-            com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
+            // 随机延迟 3~12 分钟，避免批量同时触发风控
+            int delay = 3 + (int)(Math.random() * 10);
+            com.discordadmin.entity.AgentTask task = agentTaskService.createTaskWithDelay(
                 acc.getAgentServerId(), "FULL_SYNC_FRIENDS",
-                new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(params)
+                new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(params),
+                delay
             );
             log.info("[AGENT同步] 已下发 FULL_SYNC_FRIENDS 任务 taskId={} accountId={} agent={}",
                 task.getId(), acc.getId(), acc.getAgentServerId());
