@@ -15,7 +15,7 @@
 
 const { http, cfg } = require('./http');
 const { discordHttp, fetchFriends, fetchDmChannels, sendMessageWithFiles } = require('./discord');
-const { captureDiscordAccount, launchBrowserOnly } = require('./browser');
+const { captureDiscordAccount, launchBrowserOnly, extractAccountFromContext } = require('./browser');
 const fs = require('fs');
 const path = require('path');
 
@@ -129,8 +129,9 @@ async function executeTask(task) {
         const params = typeof task.params === 'string'
           ? (() => { try { return JSON.parse(task.params); } catch { return {}; } })()
           : (task.params || {});
+        const accountId = params.accountId;
         const profilePath = params.browserProfilePath || params.profilePath ||
-          (params.accountId ? (await getAccountProfilePath(params.accountId)) : null);
+          (accountId ? (await getAccountProfilePath(accountId)) : null);
 
         if (!profilePath) {
           await reportTask(task.id, 'FAILED', { error: '缺少浏览器 profile 路径' });
@@ -140,9 +141,51 @@ async function executeTask(task) {
         try {
           const { context } = await launchBrowserOnly(profilePath, cfg.browser || {});
           console.log('[任务] ✅ 浏览器已打开');
-          // 立即报告 SUCCESS + 释放 busy，让 pollTask 能继续 poll 新任务（如 SEND_MESSAGE）
-          // 浏览器关闭监听放后台异步跑，不阻塞主循环
-          reportTask(task.id, 'SUCCESS').catch(() => {});
+
+          // ⚡ 关键: 唤起后自动扫描当前 token，上报后端更新
+          await new Promise(r => setTimeout(r, 3000));
+          const extracted = await extractAccountFromContext(context);
+
+          if (extracted && extracted.tokenValid) {
+            // token 有效 → 上报完整 payload，后端 upsert 更新 DB
+            const payload = {
+              discordId: extracted.discordId,
+              username: extracted.username,
+              discordName: extracted.discordName,
+              email: extracted.email,
+              token: extracted.token,
+              avatarUrl: extracted.avatarUrl,
+              browserProfilePath: profilePath,
+            };
+            await reportTask(task.id, 'SUCCESS', payload);
+            console.log(`[任务] ✅ Token已更新! ${extracted.username} (${extracted.discordId})`);
+
+            // 同步更新本地缓存: 恢复该账号轮询
+            if (accountId) {
+              const localAcc = managedAccounts.find(a => String(a.id) === String(accountId));
+              if (localAcc) {
+                localAcc.token = extracted.token;
+                tokenInvalidAccounts.delete(localAcc.id);
+                console.log(`[本地] 账号 ${localAcc.name} token已刷新 → 恢复轮询`);
+              }
+            }
+          } else if (extracted && !extracted.tokenValid) {
+            // token存在但API返回401，需要用户手动登录
+            await reportTask(task.id, 'SUCCESS', {
+              notice: 'token_expired',
+              hint: '浏览器已打开，请手动重新登录 Discord，然后再次点击"唤起"即可更新 token',
+            });
+            console.warn('[任务] Token已过期，请在打开的浏览器中重新登录');
+          } else {
+            // 完全没扫到 token → session 过期
+            await reportTask(task.id, 'SUCCESS', {
+              notice: 'session_expired',
+              hint: '浏览器已打开，请登录 Discord，然后再次点击"唤起"更新 token',
+            });
+            console.warn('[任务] 未扫描到 token，浏览器等待用户登录...');
+          }
+
+          // 浏览器保持打开，监听关闭事件
           (async () => {
             try {
               await new Promise(resolve => context.on('close', resolve));
@@ -153,8 +196,8 @@ async function executeTask(task) {
         } catch (err) {
           await reportTask(task.id, 'FAILED', { error: err.message });
           console.error('[任务] 唤起浏览器失败:', err.message);
+          break;
         }
-        break;
       }
 
       case 'SEND_MESSAGE': {

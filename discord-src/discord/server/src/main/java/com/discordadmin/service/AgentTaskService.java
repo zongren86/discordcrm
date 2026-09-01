@@ -180,14 +180,16 @@ public class AgentTaskService {
         task.setStatus(status);
         task.setUpdatedAt(Instant.now());
 
-        // SUCCESS 时对 CAPTURE_DISCORD_ACCOUNT 做后处理：保存 DiscordAccount
-        if ("SUCCESS".equals(status) && "CAPTURE_DISCORD_ACCOUNT".equals(task.getType()) && resultMap != null) {
+        // SUCCESS 时对 CAPTURE_DISCORD_ACCOUNT / LAUNCH_BROWSER 做后处理：更新 DiscordAccount
+        boolean needUpsert = ("CAPTURE_DISCORD_ACCOUNT".equals(task.getType()) || "LAUNCH_BROWSER".equals(task.getType()));
+        if ("SUCCESS".equals(status) && needUpsert && resultMap != null && resultMap.containsKey("token")) {
             try {
                 DiscordAccount account = upsertCapturedAccount(resultMap, server.getMerchantId(), server);
                 task.setDiscordAccount(account);
                 log.info("任务 id={} 成功，关联账号 id={}, username={}", taskId, account.getId(), account.getName());
 
-                // 采集成功后，立即触发一次好友同步
+                // 只有首次 CAPTURE 才触发好友同步，LAUNCH_BROWSER 只是更新 token
+                if ("CAPTURE_DISCORD_ACCOUNT".equals(task.getType())) {
                 try {
                     Map<String, Object> friendsParams = new HashMap<>();
                     friendsParams.put("accountId", account.getId());
@@ -201,6 +203,7 @@ public class AgentTaskService {
                 } catch (Exception fe) {
                     log.warn("采集完成但下发好友同步失败（不影响主流程）: {}", fe.getMessage());
                 }
+                } // end if CAPTURE_DISCORD_ACCOUNT
             } catch (Exception e) {
                 log.error("任务后处理（保存账号）失败: {}", e.getMessage());
                 task.setStatus("FAILED");

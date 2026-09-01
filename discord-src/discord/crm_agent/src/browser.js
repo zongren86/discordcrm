@@ -528,4 +528,120 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   throw new Error('采集超时或用户信息不完整，请确认已在 Discord 页面完成登录');
 }
 
-module.exports = { captureDiscordAccount, launchBrowserOnly };
+
+/**
+ * 从已打开的浏览器 context 中提取账号信息（token + 用户资料）
+ * 用于 LAUNCH_BROWSER 场景：唤起已有 profile 后，扫描当前登录状态
+ */
+async function extractAccountFromContext(context) {
+  const pages = context.pages();
+  const page = pages.find(p => (p.url() || '').includes('discord')) || pages[0];
+  if (!page) return null;
+
+  // 先尝试从 localStorage/sessionStorage/IndexedDB 扫 token
+  let token = null;
+  try {
+    token = await page.evaluate(async () => {
+      try {
+        const tokenPattern = /[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{20,}/;
+        if (typeof localStorage !== 'undefined') {
+          for (let i = 0; i < localStorage.length; i++) {
+            const v = localStorage.getItem(localStorage.key(i));
+            if (v && tokenPattern.test(v)) return v;
+          }
+        }
+        if (typeof sessionStorage !== 'undefined') {
+          for (let i = 0; i < sessionStorage.length; i++) {
+            const v = sessionStorage.getItem(sessionStorage.key(i));
+            if (v && tokenPattern.test(v)) return v;
+          }
+        }
+        if (typeof indexedDB !== 'undefined') {
+          try {
+            const dbs = await indexedDB.databases();
+            for (const db of dbs) {
+              if (!db.name) continue;
+              let t = null;
+              await new Promise((resolve) => {
+                const req = indexedDB.open(db.name);
+                req.onsuccess = async () => {
+                  try {
+                    const names = req.result.objectStoreNames;
+                    for (const n of names) {
+                      const all = req.result.transaction(n, 'readonly').objectStore(n).getAll();
+                      await new Promise(r2 => {
+                        all.onsuccess = () => {
+                          for (const item of all.result || []) {
+                            const s = typeof item === 'string' ? item : JSON.stringify(item);
+                            const m = s.match(tokenPattern);
+                            if (m) { t = m[0]; break; }
+                          }
+                          r2();
+                        };
+                        all.onerror = () => r2();
+                      });
+                      if (t) break;
+                    }
+                  } catch {}
+                  resolve();
+                };
+                req.onerror = () => resolve();
+              });
+              if (t) return t;
+            }
+          } catch {}
+        }
+      } catch { return null; }
+      return null;
+    });
+  } catch {}
+
+  if (!token) {
+    console.log('[Browser] 扫描 storage 未找到 token');
+    return null;
+  }
+
+  console.log(`[Browser] 扫描到 token (${token.length} chars)，验证中...`);
+  // 用 token 调 /users/@me 验证有效并拿用户信息
+  const userInfo = await page.evaluate(async (t) => {
+    try {
+      const resp = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: t } });
+      if (!resp.ok) return { ok: false };
+      const text = await resp.text();
+      const extract = (key) => {
+        const re = new RegExp('"' + key + '"\\s*:\\s*(\\d+|"[^"]*")');
+        const m = text.match(re);
+        if (!m) return null;
+        let v = m[1];
+        if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+        return v;
+      };
+      return {
+        ok: true,
+        id: extract('id'),
+        username: extract('username') || '',
+        global_name: extract('global_name') || '',
+        email: extract('email'),
+        avatar: extract('avatar'),
+      };
+    } catch { return { ok: false }; }
+  }, token);
+
+  if (!userInfo || !userInfo.ok) {
+    console.log(`[Browser] token 验证失败 (可能已过期): ${userInfo?.ok === false ? 'API返回非200' : '无用户信息'}`);
+    return { token, tokenValid: false };
+  }
+
+  console.log(`[Browser] ✅ token有效! 用户: ${userInfo.username} (${userInfo.id})`);
+  return {
+    token,
+    tokenValid: true,
+    discordId: userInfo.id,
+    username: userInfo.username,
+    discordName: userInfo.global_name || userInfo.username,
+    email: userInfo.email,
+    avatarUrl: userInfo.avatar ? `https://cdn.discordapp.com/avatars/${userInfo.id}/${userInfo.avatar}.png` : null,
+  };
+}
+
+module.exports = { captureDiscordAccount, launchBrowserOnly, extractAccountFromContext };
