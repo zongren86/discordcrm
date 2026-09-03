@@ -657,7 +657,13 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       result.fingerprintId = fp.fingerprintId;
       capacity.release('START_ACCOUNT');
       trace.browserWorkflow('capture_done', { userId: result.userId });
-      console.log(`[Browser] 🎉 采集成功！ user=${result.username} id=${result.userId} avatar=${result.avatarUrl || '(无)'}`);
+      console.log('[Browser] 🎉 采集成功！', result.username, result.userId);
+      // ⚠️ 关键：成功后立即关闭 context，让 Chrome 把 Cookie/session/localStorage 正确写盘
+      // 不关的话 profile 是半成品 → 后续 LAUNCH_BROWSER 打开时 Discord 会要求重新验证/登录
+      context.off('response', responseHandler);
+      context.off('request', requestHandler);
+      await safeClose(context);
+      console.log('[Browser] ✅ profile 已持久化到磁盘，后续唤起会从干净状态启动');
       return result;
     }
   }
@@ -684,14 +690,21 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agent
   // ⭐ 代理
   if (proxyUrl) networkGate.bindAccountProxy(agentName || path.basename(userDataDir), proxyUrl);
 
+  // 检测 profile 是否已存在（热启动），热启动时跳过 ensureProfileIntl 避免 Discord 检测到配置篡改
+  const isHot = fs.existsSync(path.join(userDataDir, 'Default', 'Preferences'));
+  if (isHot) {
+    console.log('[Browser] 热启动 profile，跳过 ensureProfileIntl（保留原始 profile 状态）');
+  } else {
+    console.log('[Browser] 冷启动 profile，写入初始语言偏好...');
+    ensureProfileIntl(userDataDir, fp);
+  }
+
   console.log('[Browser] 唤起持久化浏览器 profile...');
   const launchOpts = buildLaunchOpts(fp, {
     headless: false,
     proxyUrl,
   });
   
-  // ⭐ 第 4 层防线：强制 profile/Default/Preferences 语言
-  ensureProfileIntl(userDataDir, fp);
   let context = await chromium.launchPersistentContext(userDataDir, launchOpts);
   // ⭐ 第 2 层防线：强制 HTTP Accept-Language header（Discord/hCaptcha 优先读这个）
   await context.setExtraHTTPHeaders({ 'Accept-Language': fp.languages });

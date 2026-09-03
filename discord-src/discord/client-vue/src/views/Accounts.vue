@@ -633,7 +633,7 @@ async function startAgentCapture() {
 
     await new Promise(r => setTimeout(r, 1500))
     await pollAgentTask()
-    agentResultDialog._pollTimer = setInterval(pollAgentTask, 3000)
+    agentResultDialog._pollTimer = setInterval(pollAgentTask, 2000)
   } catch (e) {
     console.error('[AgentCapture] 创建失败，完整错误=', e)
     console.error('[AgentCapture] response=', e?.response)

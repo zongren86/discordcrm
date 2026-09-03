@@ -108,12 +108,11 @@ async function executeTask(task) {
           };
           await reportTask(task.id, 'SUCCESS', payload);
           console.log(`[任务] ✅ 完成 — 已保存 ${result.username}`);
-          // 防风控: 采集成功后强制间隔 3 分钟，避免短时间内批量采集
-          if (cfg.agentMode !== 'debug') {
-            const delay = 180000 + Math.floor(Math.random() * 60000); // 3-4 分钟随机
-            console.log(`[风控] 采集间隔等待 ${Math.round(delay/60000)} 分钟再处理下一个任务...`);
-            await new Promise(r => setTimeout(r, delay));
-          }
+          // 已移除 3-4 分钟强制间隔：
+          // 1. CAPTURE 成功后 safeClose 让 Chrome 正确写盘 profile，session 状态稳定
+          // 2. 用户需要快速连续新增账号，agent 立即 ready 领下一个任务
+          // 3. 反作弊靠 browser.js 层的 initScript/指纹/资源拦截，不靠人为延迟
+
         } catch (err) {
           if (err.code === 'CANCELLED') {
             await reportTask(task.id, 'CANCELLED');
