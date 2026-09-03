@@ -1597,8 +1597,29 @@ public class EmuInstanceService {
             .orElseThrow(() -> new RuntimeException("模拟器不存在"));
 
         instance.setAutoRunning(false);
+        instance.setNextAddAt(null);
         instance.setUpdatedAt(Instant.now());
         instanceRepository.save(instance);
+
+        // 停掉模拟器
+        try {
+            if (instance.getDeviceId() != null) {
+                AgentRegistration agent = webSocketService.getAgentByDeviceId(instance.getDeviceId());
+                if (agent != null && "ONLINE".equals(agent.getStatus())) {
+                    Map<String, Object> params = new HashMap<>();
+                    params.put("index", index - 1);
+                    webSocketService.sendCommandAndWait(agent.getDeviceId(), "STOP_EMULATOR", params)
+                        .get(60, TimeUnit.SECONDS);
+                    log.info("停止自动加好友：已停止模拟器 #{}", index);
+                } else if (localMode) {
+                    mumuClientService.stopEmulator(index);
+                }
+            }
+            instance.setStatus(EmuInstance.EmuStatus.STOPPED);
+            instanceRepository.save(instance);
+        } catch (Exception e) {
+            log.warn("停止模拟器 #{} 失败: {}", index, e.getMessage());
+        }
 
         return convertToMap(instance);
     }
@@ -1667,8 +1688,29 @@ public class EmuInstanceService {
         List<EmuInstance> instances = instanceRepository.findByMerchantIdAndUserId(merchantId, userId);
         for (EmuInstance inst : instances) {
             inst.setAutoRunning(false);
+            inst.setNextAddAt(null);
+            inst.setStatus(EmuInstance.EmuStatus.STOPPED);
             inst.setUpdatedAt(Instant.now());
             instanceRepository.save(inst);
+        }
+
+        // 停掉所有模拟器（异步）
+        try {
+            List<AgentRegistration> agents = webSocketService.getOnlineAgentsByUserId(userId);
+            for (AgentRegistration agent : agents) {
+                try {
+                    webSocketService.sendCommandAndWait(agent.getDeviceId(), "BATCH_STOP", new HashMap<>())
+                        .get(180, TimeUnit.SECONDS);
+                    log.info("停止自动加好友：已通过 Agent {} 停止所有模拟器", agent.getDeviceId());
+                } catch (Exception e) {
+                    log.warn("通过 Agent {} 停止模拟器失败: {}", agent.getDeviceId(), e.getMessage());
+                }
+            }
+            if (localMode) {
+                mumuClientService.stopAllEmulators();
+            }
+        } catch (Exception e) {
+            log.warn("停止所有模拟器失败: {}", e.getMessage());
         }
 
         return instances.stream()
