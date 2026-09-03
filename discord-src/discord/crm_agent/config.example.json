@@ -5,7 +5,7 @@
     "heartbeatIntervalMs": 5000,
     "pollIntervalMs": 5000,
     "production": false,
-    "version": "1.7.4",
+    "version": "1.7.5",
     "browser": {
         "headless": false,
         "type": "chromium",

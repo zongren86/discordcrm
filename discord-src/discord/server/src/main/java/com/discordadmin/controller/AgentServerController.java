@@ -393,7 +393,7 @@ public class AgentServerController {
                 "  \"heartbeatIntervalMs\": 5000,\n" +
                 "  \"pollIntervalMs\": 5000,\n" +
                 "  \"production\": false,\n" +
-                "  \"version\": \"1.7.4\",\n" +
+                "  \"version\": \"1.7.5\",\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
                 "    \"type\": \"chromium\",\n" +
@@ -439,42 +439,52 @@ public class AgentServerController {
 
     private String readAgentVersion() {
         try {
+            // 1️⃣ 开发环境：源码目录存在 → 读 package.json
             Path sourceDir = resolveAgentSourceDir();
             if (sourceDir != null) {
-                // 优先从 package.json 读（npm 标准），兜底 config.json
                 Path pkgFile = sourceDir.resolve("package.json");
                 if (Files.exists(pkgFile)) {
-                    String pkgJson = Files.readString(pkgFile);
-                    int pIdx = pkgJson.indexOf("\"version\"");
-                    if (pIdx >= 0) {
-                        int pColon = pkgJson.indexOf(':', pIdx + 1);
-                        int pQ1 = pkgJson.indexOf('"', pColon + 1);
-                        int pQ2 = pkgJson.indexOf('"', pQ1 + 1);
-                        if (pQ2 > pQ1) return pkgJson.substring(pQ1 + 1, pQ2);
-                    }
+                    String v = extractVersion(Files.readString(pkgFile));
+                    if (v != null) return v;
                 }
-                // 兜底 config.json
-                Path cfgFile = sourceDir.resolve("config.json");
-                if (Files.exists(cfgFile)) {
-                    String json = Files.readString(cfgFile);
-                    // 找 "version": "xxx" —— 简单字符串解析
-                    int idx = json.indexOf("\"version\"");
-                    if (idx >= 0) {
-                        int colon = json.indexOf(':', idx + 1);
-                        if (colon > 0) {
-                            int q1 = json.indexOf('"', colon + 1);
-                            if (q1 > 0) {
-                                int q2 = json.indexOf('"', q1 + 1);
-                                if (q2 > q1) {
-                                    return json.substring(q1 + 1, q2);
+            }
+            // 2️⃣ 生产环境：从 JAR 内嵌 zip 读 package.json（agent-package.zip 或 crm_agent-v*.zip）
+            String[] zipNames = {"agent-package.zip", "crm_agent-v.zip"};
+            for (String zipName : zipNames) {
+                try (var zis = getClass().getClassLoader().getResourceAsStream(zipName)) {
+                    if (zis == null) continue;
+                    try (var zf = new java.util.zip.ZipFile(java.nio.file.Files.createTempFile("agent-ver-", ".zip").toFile())) {
+                        var tmpPath = java.nio.file.Files.createTempFile("agent-ver-", ".zip");
+                        java.nio.file.Files.write(tmpPath, zis.readAllBytes());
+                        try (var realZf = new java.util.zip.ZipFile(tmpPath.toFile())) {
+                            var entry = realZf.getEntry("crm_agent/package.json");
+                            if (entry == null) entry = realZf.getEntry("package.json");
+                            if (entry != null) {
+                                try (var is = realZf.getInputStream(entry)) {
+                                    String v = extractVersion(new String(is.readAllBytes()));
+                                    if (v != null) return v;
                                 }
                             }
                         }
+                        java.nio.file.Files.deleteIfExists(tmpPath);
                     }
-                }
+                } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {}
-        return "1.7.4";
+        // 3️⃣ 最后兜底：返回硬编码版本（和 build.sh 同步）
+        return "$NEW_VER";
+    }
+
+    private String extractVersion(String json) {
+        int idx = json.indexOf("\"version\"");
+        if (idx < 0) return null;
+        int colon = json.indexOf(':', idx + 1);
+        if (colon < 0) return null;
+        int q1 = json.indexOf('"', colon + 1);
+        if (q1 < 0) return null;
+        int q2 = json.indexOf('"', q1 + 1);
+        if (q2 <= q1) return null;
+        return json.substring(q1 + 1, q2);
     }
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
     private byte[] buildZip(Path sourceDir) throws IOException {
