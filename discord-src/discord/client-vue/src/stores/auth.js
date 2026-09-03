@@ -12,7 +12,9 @@ export const useAuthStore = defineStore('auth', {
       agent: safeParse(localStorage.getItem('crm_auth'), null),
       permissions: safeParse(localStorage.getItem('crm_permissions'), []),
       menuPaths: safeParse(localStorage.getItem('crm_menu_paths'), []),
-      _ready: false
+      _ready: false,
+      connected: true,           // 后端连接状态
+      disconnectedSince: null     // 断开时间戳，null=已连接
     }
   },
   getters: {
@@ -112,10 +114,16 @@ export const useAuthStore = defineStore('auth', {
       this.permissions = []
       this.menuPaths = []
       this._ready = false
+      this.connected = true
+      this.disconnectedSince = null
       localStorage.removeItem('crm_token')
       localStorage.removeItem('crm_auth')
       localStorage.removeItem('crm_permissions')
       localStorage.removeItem('crm_menu_paths')
+    },
+    setConnected(ok) {
+      this.connected = !!ok
+      this.disconnectedSince = ok ? null : Date.now()
     }
   }
 })

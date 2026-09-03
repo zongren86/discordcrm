@@ -13,7 +13,7 @@
       </div>
     </div>
 
-    <el-tabs v-model="tab">
+    <el-tabs v-model="tab" :stretch="false">
       <el-tab-pane label="提醒规则" name="rules">
         <div class="page-body">
           <el-table v-loading="loading" :data="rules" stripe style="width:100%">

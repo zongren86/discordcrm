@@ -40,11 +40,11 @@ public class AgentTask {
     private String status = "PENDING";
 
     /** 任务参数（JSON，随 type 不同而不同） */
-    @Column(name = "params", columnDefinition = "TEXT")
+    @Column(name = "params", columnDefinition = "MEDIUMTEXT")
     private String params;
 
     /** 执行结果（JSON） */
-    @Column(name = "result", columnDefinition = "TEXT")
+    @Column(name = "result", columnDefinition = "MEDIUMTEXT")
     private String result;
 
     /** 任务发起人 userId */
@@ -56,6 +56,10 @@ public class AgentTask {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "discord_account_id")
     private DiscordAccount discordAccount;
+
+    /** 预定执行时间（防风控延迟下发）。null=立即执行 */
+    @Column(name = "scheduled_at")
+    private Instant scheduledAt;
 
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();

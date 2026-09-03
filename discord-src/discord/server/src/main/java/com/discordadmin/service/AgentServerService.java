@@ -2,6 +2,7 @@ package com.discordadmin.service;
 
 import com.discordadmin.entity.AgentServer;
 import com.discordadmin.repository.AgentServerRepository;
+import com.discordadmin.repository.AgentTaskRepository;
 import com.discordadmin.security.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +21,7 @@ import java.util.Optional;
 public class AgentServerService {
 
     private final AgentServerRepository agentServerRepository;
+    private final AgentTaskRepository agentTaskRepository;
 
     /** 生成 32 字节随机 token（Base64 编码） */
     private String generateToken() {
@@ -97,6 +99,16 @@ public class AgentServerService {
 
     @Transactional
     public void delete(Long id) {
+        Optional<AgentServer> server = agentServerRepository.findById(id);
+        if (server.isEmpty()) {
+            throw new IllegalArgumentException("节点不存在: id=" + id);
+        }
+        // 先清子表 agent_tasks（外键 FK）
+        long taskCount = agentTaskRepository.countByAgentServerId(id);
+        if (taskCount > 0) {
+            agentTaskRepository.deleteByAgentServerId(id);
+            log.info("删除节点前清理了 {} 条关联任务", taskCount);
+        }
         agentServerRepository.deleteById(id);
         log.info("删除代理节点 id={}", id);
     }

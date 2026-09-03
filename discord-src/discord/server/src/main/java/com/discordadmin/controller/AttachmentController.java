@@ -49,7 +49,7 @@ public class AttachmentController {
             file.transferTo(path);
             result.put("success", true);
             result.put("filename", originalFilename);
-            result.put("url", serverBaseUrl + "/api/attachments/download/" + newFilename);
+            result.put("url", "/api/attachments/download/" + newFilename);
             result.put("size", file.getSize());
             result.put("contentType", file.getContentType());
         } catch (IOException e) {

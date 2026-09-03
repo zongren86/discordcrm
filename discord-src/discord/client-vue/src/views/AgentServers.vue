@@ -45,6 +45,15 @@
           <template #default="{ row }">{{ row.browserType || '-' }}</template>
         </el-table-column>
 
+        <el-table-column label="账号数" width="110" align="center">
+          <template #default="{ row }">
+            <span v-if="row.accountCount > 0" :style="{ color: row.accountCount >= (row.maxAccounts || 500) ? '#f56c6c' : '#409eff' }">
+              {{ row.accountCount }} / {{ row.maxAccounts || 500 }}
+            </span>
+            <span v-else class="text-muted">0 / {{ row.maxAccounts || 500 }}</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="最后心跳" width="180">
           <template #default="{ row }">
             <span v-if="row.lastSeenAt">{{ formatTime(row.lastSeenAt) }}</span>
@@ -256,15 +265,40 @@ async function confirmDelete(row) {
   }
 }
 
+// 通用复制函数：优先 Clipboard API，HTTP 非安全上下文降级到 execCommand
+async function copyToClipboard(text) {
+  if (!text) return false
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch (e) { /* fallthrough */ }
+  // 降级：textarea + execCommand('copy')
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  try {
+    const ok = document.execCommand('copy')
+    document.body.removeChild(ta)
+    return ok
+  } catch (e) {
+    document.body.removeChild(ta)
+    return false
+  }
+}
 async function copyCreatedToken() {
   if (!createdResult.value?.token) return
-  await navigator.clipboard.writeText(createdResult.value.token)
-  ElMessage.success('已复制到剪贴板')
+  const ok = await copyToClipboard(createdResult.value.token)
+  ElMessage.success(ok ? '已复制到剪贴板' : '复制失败，请手动选择复制')
 }
 async function copyResetToken() {
   if (!resetTokenResult.value?.token) return
-  await navigator.clipboard.writeText(resetTokenResult.value.token)
-  ElMessage.success('已复制到剪贴板')
+  const ok = await copyToClipboard(resetTokenResult.value.token)
+  ElMessage.success(ok ? '已复制到剪贴板' : '复制失败，请手动选择复制')
 }
 
 function formatTime(isoStr) {

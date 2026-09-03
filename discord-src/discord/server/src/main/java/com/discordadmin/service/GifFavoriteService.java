@@ -105,6 +105,16 @@ public class GifFavoriteService {
         log.info("GIF 收藏已删除: id={}, accountId={}", id, accountId);
     }
 
+    @Transactional
+    public void removeFavoriteByUserId(Long id, Long userId) {
+        if (userId != null) {
+            gifFavoriteRepository.deleteByIdAndUserId(id, userId);
+        } else {
+            gifFavoriteRepository.deleteById(id);
+        }
+        log.info("GIF 收藏已删除: id={}, userId={}", id, userId);
+    }
+
     @Transactional(readOnly = true)
     public boolean isFavorited(Long accountId, String gifUrl) { return isFavorited(accountId, null, gifUrl); }
 

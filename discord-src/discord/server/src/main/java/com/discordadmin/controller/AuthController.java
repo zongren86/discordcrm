@@ -38,6 +38,12 @@ public class AuthController {
                                 Long merchantId, String merchantName,
                                 List<String> permissions) {}
 
+    @GetMapping("/ping")
+    public Map<String, Object> ping() {
+        // 同时验证 token 有效性：如果 JWT 有效则返回 ok=true，token 无效由 Security 过滤器返回 401
+        return java.util.Map.of("ok", true, "ts", System.currentTimeMillis());
+    }
+
     @PostMapping("/login")
     public LoginResponse login(@RequestBody LoginRequest request) {
         Agent agent = agentRepository.findByUsername(request.username())
@@ -266,12 +272,16 @@ public class AuthController {
         Map<String, Object> result = new HashMap<>();
         result.put("agentId", agent.agentId());
         result.put("username", agent.username());
-        result.put("accountType", agent.accountType());
-        result.put("merchantId", agent.merchantId());
 
+        // 从数据库实时取，避免 JWT 过时
         Agent agentEntity = agentRepository.findById(agent.agentId()).orElse(null);
+        if (agentEntity == null) {
+            throw new IllegalArgumentException("用户不存在");
+        }
+        result.put("accountType", agentEntity.getAccountType());
+        result.put("merchantId", agentEntity.getMerchantId());
+
         if (agentEntity != null) {
-            result.put("displayName", agentEntity.getDisplayName());
             List<String> permissions = getAgentPermissions(agentEntity);
             result.put("permissions", permissions);
             
@@ -347,7 +357,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "system", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "merchants", "users", "roles", "features", "audit"
+            "friend-manage", "ai-settings", "agent-servers", "merchants", "users", "roles", "features", "audit"
         );
     }
 
@@ -355,7 +365,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "audit"
+            "friend-manage", "ai-settings", "agent-servers", "audit", "merchants"
         );
     }
 
@@ -363,7 +373,7 @@ public class AuthController {
         return List.of(
             "dashboard", "chat", "customer", "service", "config", "log",
             "account-numbers", "accounts", "customers", "guilds", "guild-members",
-            "friend-manage", "ai-settings", "audit"
+            "friend-manage", "ai-settings", "agent-servers", "audit", "merchants"
         );
     }
 

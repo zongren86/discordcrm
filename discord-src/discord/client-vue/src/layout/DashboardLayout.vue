@@ -22,10 +22,11 @@
       </div>
 
       <el-menu
+        :key="menuKey"
         v-loading="menuLoading"
         class="sidebar-menu"
         :default-active="activeMenu"
-        v-model:openeds="openeds"
+        :default-openeds="defaultOpeneds"
         @select="handleSelect"
         :collapse="theme.sidebarCollapsed"
         :collapse-transition="false"
@@ -33,7 +34,7 @@
         <!-- 动态菜单渲染 -->
         <template v-for="item in menuTree" :key="item.path || item.code">
           <!-- 有子菜单的项 -->
-          <el-sub-menu v-if="item.children && item.children.length > 0" :index="item.path || item.code">
+          <el-sub-menu v-if="item.children && item.children.length > 0" :index="item.path || item.code" trigger="click">
             <template #title>
               <el-icon v-if="item.icon"><component :is="resolveIcon(item.icon)" /></el-icon>
               <span>{{ item.title }}</span>
@@ -51,7 +52,7 @@
                   />
                 </span>
               </el-menu-item>
-              <el-sub-menu v-else :index="child.path || child.code">
+              <el-sub-menu v-else :index="child.path || child.code" trigger="click">
                 <template #title>
                   <el-icon v-if="child.icon"><component :is="resolveIcon(child.icon)" /></el-icon>
                   <span>{{ child.title }}</span>
@@ -180,7 +181,15 @@ const theme = useThemeStore()
 // 菜单加载状态
 const menuLoading = ref(false)
 const menuTree = ref([])
-const openeds = ref([])
+// 默认展开所有子菜单
+const defaultOpeneds = computed(() => collectOpeneds(menuTree.value))
+// menuTree 异步加载完成后, 递增 key 强制 el-menu 重新 mount → :default-openeds 生效
+const menuKey = ref(0)
+watch(menuTree, (tree) => {
+  if (tree && tree.length > 0) {
+    nextTick(() => { menuKey.value++ })
+  }
+}, { deep: true })
 
 // 图标映射表
 const iconMap = {
@@ -231,8 +240,6 @@ async function loadMenuTree() {
     const data = await api.get('/auth/menu-tree')
     if (Array.isArray(data)) {
       menuTree.value = data
-      await nextTick()
-      openeds.value = collectOpeneds(data)
     } else {
       ElMessage.error('服务器繁忙，请稍后再试')
       menuTree.value = []
@@ -603,19 +610,45 @@ onMounted(async () => {
   gap: 6px;
 }
 
+/* sub-menu 标题: icon + 文字 + 箭头, 三者紧贴, 箭头靠最右 */
 .sidebar-menu :deep(.el-sub-menu__title) {
   height: 46px;
   border-radius: 8px;
   margin-bottom: 2px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   padding: 0 14px !important;
   color: var(--color-text);
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px;
 }
-
-.sidebar-menu :deep(.el-sub-menu__title .el-icon) {
+.sidebar-menu :deep(.el-sub-menu__title > .el-icon:not(.el-sub-menu__icon-arrow)) {
+  flex-shrink: 0;
   font-size: 20px;
+}
+.sidebar-menu :deep(.el-sub-menu__title > span) {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 箭头: 彻底干掉 Element Plus 默认的 margin-left/position/right */
+.sidebar-menu :deep(.el-sub-menu__icon-arrow) {
+  position: static !important;
+  margin: 0 !important;
+  margin-left: 0 !important;
+  right: auto !important;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--color-text-3, #8a919f);
+  transition: transform 0.2s ease;
+}
+.sidebar-menu :deep(.el-sub-menu.is-opened > .el-sub-menu__title .el-sub-menu__icon-arrow) {
+  transform: rotate(90deg);
+}
+/* 折叠侧边栏时隐藏箭头 */
+.sidebar.collapsed :deep(.el-sub-menu__icon-arrow) {
+  display: none;
 }
 
 .unread-badge {

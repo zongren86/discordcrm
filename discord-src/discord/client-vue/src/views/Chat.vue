@@ -851,6 +851,7 @@
 
             <el-input ref="chatInputRef" v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
               :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
+              :disabled="sending"
               resize="none" class="msg-input" />
             <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
               :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
@@ -2127,7 +2128,12 @@ function stickerItemsOf(msg) {
 
 /** 判断是否 Lottie 格式 Sticker */
 function isLottieSticker(sticker) {
-  return sticker && (sticker.formatType === 3 || sticker.format === 'lottie')
+  if (!sticker) return false
+  // 兼容数字 3 或字符串 "3"，以及不同字段名
+  const fmt = sticker.formatType ?? sticker.format_type ?? sticker.format
+  if (fmt === 3 || fmt === '3') return true
+  if (fmt === 'lottie') return true
+  return false
 }
 
 /** 判断收藏的 URL 是否是 Lottie JSON 形式（Sticker 收藏 Tab 判断渲染方式） */
@@ -2193,23 +2199,31 @@ function stickerLottieUrl(sticker) {
   if (!sticker) return ''
   // 已经是完整 URL
   if (sticker.assetUrl && sticker.assetUrl.startsWith('http')) return sticker.assetUrl
+  if (sticker.asset_url && sticker.asset_url.startsWith('http')) return sticker.asset_url
   
-  // Lottie 格式
+  const fmtNum = Number(sticker.formatType ?? sticker.format_type ?? 0)
+  
+  // Lottie 格式 (format_type = 3)
   if (isLottieSticker(sticker)) {
-    if (sticker.assetUrl) {
-      return `https://cdn.discordapp.com/stickers/${sticker.id}/${sticker.assetUrl}.json`
+    // Lottie sticker 的 CDN URL 格式: https://cdn.discordapp.com/stickers/{id}.json
+    // 或带 assetUrl: https://cdn.discordapp.com/stickers/{id}/{assetUrl}.json
+    const asset = sticker.assetUrl || sticker.asset_url
+    if (asset && !asset.includes('http')) {
+      return `https://cdn.discordapp.com/stickers/${sticker.id}/${asset}.json`
     }
-    return `https://cdn.discordapp.com/stickers/${sticker.id}?format=json`
+    // 标准 Lottie URL
+    return `https://cdn.discordapp.com/stickers/${sticker.id}.json`
   }
   
-  // 普通图片 Sticker：尝试多种可能的 CDN URL 格式
-  const appId = sticker.applicationId || sticker.appId
-  const ext = sticker.formatType === 4 ? 'webm' : 'png'  // 4 = animated
-  if (sticker.assetUrl) {
-    return `https://cdn.discordapp.com/stickers/${sticker.id}/${sticker.assetUrl}.${ext}`
+  // 普通图片 Sticker: format_type = 1(PNG), 2(APNG), 4(GIF/webp)
+  // 静态 sticker 的展示 URL: https://cdn.discordapp.com/stickers/{id}.png?size=320
+  // 动态 sticker: webp
+  const ext = fmtNum === 2 ? 'png' : (fmtNum === 4 ? 'webp' : 'png')
+  const asset = sticker.assetUrl || sticker.asset_url
+  if (asset && !asset.includes('http')) {
+    return `https://cdn.discordapp.com/stickers/${sticker.id}/${asset}.${ext}`
   }
-  // 兜底
-  return `https://cdn.discordapp.com/attachments/${appId || ''}/${sticker.id}.${ext}`
+  return `https://cdn.discordapp.com/stickers/${sticker.id}.${ext}`
 }
 
 /** Sticker 是否已收藏 */
@@ -2262,7 +2276,7 @@ async function handleStickerUnfavorite(sticker) {
   const fav = stickerFavorites.value.find(f => url.includes((f.gifUrl || '').split('/').pop()))
   if (fav) {
     try {
-      await removeGifFavorite(fav.id, currentAccountId.value)
+      await removeGifFavorite(fav.id)
       await loadGifFavorites()
       ElMessage.success('已取消收藏')
     } catch (e) {
@@ -2378,6 +2392,8 @@ function canTranslateInbound(msg) {
   if (isVoiceMsg(msg)) return false
   // GIF消息跳过翻译
   if (isGifMsg(msg)) return false
+  // Sticker/Lottie 消息本身没有文本，不需要翻译按钮
+  if (isStickerMsg(msg)) return false
   if (msg.translatedContent && msg.translatedContent !== msg.content) return false
   if (msg.userTranslated) return false
   return !containsChinese(msg.content || '')
@@ -2797,7 +2813,7 @@ async function handleUnfavoriteGif(msg) {
   if (!favorite) return
   
   try {
-    await removeGifFavorite(favorite.id, currentAccountId.value)
+    await removeGifFavorite(favorite.id)
     ElMessage.success('已取消收藏')
     await loadGifFavorites()
   } catch (e) {
@@ -2896,7 +2912,7 @@ async function handleUnfavoriteById(id) {
   if (!currentAccountId.value) return
   
   try {
-    await removeGifFavorite(id, currentAccountId.value)
+    await removeGifFavorite(id)
     ElMessage.success('已取消收藏')
     await loadGifFavorites()
   } catch (e) {
@@ -3319,6 +3335,7 @@ function handleGlobalKeydown(e) {
     console.log('[GLOBAL] Alt/Cmd+W matched!')
     e.preventDefault()
     e.stopPropagation()
+    e.stopImmediatePropagation()  // capture阶段彻底拦截，阻止Chrome关闭标签页
     if (inputText.value.trim()) {
       doTranslateInput()
     } else {
@@ -4489,7 +4506,7 @@ onMounted(async () => {
   await nextTick()
   bindTextareaKeydown()
 
-  window.addEventListener('keydown', handleGlobalKeydown);
+  window.addEventListener('keydown', handleGlobalKeydown, true); // capture阶段，优先于浏览器快捷键
   // 添加滚动监听
   document.addEventListener('scroll', handleScroll, true);
   try { await accounts.fetchAccounts() } catch (e) {}
@@ -4516,7 +4533,7 @@ onUnmounted(() => {
   const allTextareas = document.querySelectorAll('.msg-input textarea.el-textarea__inner')
   allTextareas.forEach(ta => ta.removeEventListener('keydown', onInputKeydown))
   // 移除全局键盘监听
-  window.removeEventListener('keydown', handleGlobalKeydown);
+  window.removeEventListener('keydown', handleGlobalKeydown, true);
   // 移除滚动监听
   document.removeEventListener('scroll', handleScroll, true);
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }

@@ -974,3 +974,21 @@ a:hover { color: var(--color-primary-hover); }
 [data-theme="dark"] .el-pagination .el-pagination__jump {
   color: var(--color-text-2) !important;
 }
+
+/* ========== 禁用 wheel 切换 ========== */
+
+/* el-tabs macOS 滚轮切换 tab */
+.el-tabs__nav-wrap.is-scrollable .el-tabs__nav-scroll {
+  pointer-events: none; /* 禁用 tabs 导航区的 wheel */
+}
+.el-tabs__nav-wrap.is-scrollable .el-tabs__nav-scroll .el-tabs__nav {
+  pointer-events: auto; /* 但允许点击 */
+}
+
+/* 侧边栏滚动时，sub-menu 只响应 click 不响应 hover（trigger="click" 已设）*/
+
+/* macOS Chrome 两指左右滑 = 前进/后退 — 禁用 body 上的横向 wheel */
+/* 但不禁用具体滚动容器里的横向滚动 */
+html, body {
+  overscroll-behavior-x: none;
+}

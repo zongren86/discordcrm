@@ -350,6 +350,15 @@ public class ConversationService {
         }
 
         String channelId;
+        if ("AGENT".equals(account.getSource())) {
+            // ✅ AGENT 账号：不在服务器用 token 碰 Discord API（风控！）
+            // AGENT 的 DM 频道应该由 agent 机器在好友同步时自动同步到数据库（RelationshipSyncService.syncDmChannels）。
+            // 到这一步说明数据库里还没有这个频道——提示用户先同步好友。
+            throw new IllegalStateException(
+                "代理采集账号无法在服务器端创建 DM 会话（防 Discord 风控）。" +
+                "请先触发一次好友同步，系统会自动从 agent 机器拉取 DM 频道信息。"
+            );
+        }
         if (account.getAccountType() == DiscordAccount.AccountType.USER) {
             try {
                 channelId = discordUserClient.openDmChannel(account.getToken(), request.friendDiscordUserId());
@@ -392,6 +401,11 @@ public class ConversationService {
                                                     String dateFrom, String dateTo) {
         Long merchantId = SecurityUtils.currentMerchantId();
         Long currentAgentId = SecurityUtils.currentAgentId();
+
+        // ✅ 自动补齐好友的 DM 会话 —— 从 discord_friends 创建 conversations 里缺失的记录
+        if (accountId != null) {
+            ensureFriendDmConversations(accountId);
+        }
 
         // Parse date filters
         java.time.Instant fromInstant = null;
@@ -936,4 +950,65 @@ public class ConversationService {
                         || (c.getDiscordAccount() != null && assignedAccountIds.contains(c.getDiscordAccount().getId())))
                 .toList();
     }
+
+    /**
+     * 自动从 discord_friends 创建缺失的 DM Conversation。
+     * 用 friendDiscordUserId 作为占位 channelId（"DM_" + userId），
+     * 等 agent 同步 DM 频道后会被真实 channelId 替换。
+     */
+    @Transactional
+    public void ensureFriendDmConversations(Long accountId) {
+        DiscordAccount acc = discordAccountRepository.findById(accountId).orElse(null);
+        if (acc == null) return;
+
+        List<Friend> friends = friendRepository.findByDiscordAccountAndStatusOrderByGlobalNameAsc(
+                acc, Friend.FriendStatus.ACCEPTED);
+        if (friends == null || friends.isEmpty()) return;
+
+        List<Conversation> existingConvs = conversationRepository.findByDiscordAccount(acc);
+        java.util.Set<String> existingFriendUserIds = new java.util.HashSet<>();
+        for (Conversation c : existingConvs) {
+            if (c.getDiscordUser() != null && c.getDiscordUser().getDiscordUserId() != null) {
+                existingFriendUserIds.add(c.getDiscordUser().getDiscordUserId());
+            }
+        }
+
+        int created = 0;
+        for (Friend friend : friends) {
+            String friendUserId = friend.getFriendDiscordUserId();
+            if (friendUserId == null || existingFriendUserIds.contains(friendUserId)) continue;
+
+            // upsert DiscordUser
+            DiscordUser user = discordUserRepository.findByDiscordUserId(friendUserId).orElse(null);
+            if (user == null) {
+                user = new DiscordUser();
+                user.setDiscordUserId(friendUserId);
+                user.setFirstSeenAt(java.time.Instant.now());
+            }
+            if (friend.getUsername() != null) user.setUsername(friend.getUsername());
+            if (friend.getGlobalName() != null) user.setGlobalName(friend.getGlobalName());
+            user = discordUserRepository.save(user);
+
+            // 创建 DM Conversation —— channelId 用占位符，agent 同步后会更新
+            Conversation conv = new Conversation();
+            conv.setChannelId("DM_" + friendUserId); // 占位符
+            conv.setType(Conversation.ConversationType.DM);
+            conv.setStatus(Conversation.ConversationStatus.OPEN);
+            conv.setDiscordAccount(acc);
+            conv.setDiscordUser(user);
+            conv.setMerchantId(acc.getMerchantId());
+            String displayName = friend.getGlobalName() != null ? friend.getGlobalName()
+                    : (friend.getUsername() != null ? friend.getUsername() : friendUserId);
+            conv.setChannelName(displayName);
+            conv.setCreatedAt(java.time.Instant.now());
+            conversationRepository.save(conv);
+            created++;
+            log.info("[ensureFriendDm] 自动创建 DM 会话: accountId={} friend={} display={}",
+                    accountId, friendUserId, displayName);
+        }
+        if (created > 0) {
+            log.info("[ensureFriendDm] 本次补齐 {} 个 DM 会话 accountId={}", created, accountId);
+        }
+    }
+
 }

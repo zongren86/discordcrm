@@ -435,12 +435,13 @@ async function saveCreate() {
       accountType: createDialog.form.accountType,
       roleIds: []
     }
-    if (isMerchantUser.value) {
-      payload.merchantId = auth.agent?.merchantId
-    } else if (createDialog.form.accountType === 1) {
-      payload.merchantId = createDialog.form.merchantId
-    }
-    await api.post('/users', payload)
+    // 永远显式传 merchantId：商户用户用其自身商户，平台管理员用表单选择值
+  const finalMerchantId = isMerchantUser.value
+    ? auth.agent?.merchantId ?? null
+    : createDialog.form.merchantId ?? null
+  payload.merchantId = finalMerchantId
+  console.log('[saveCreate] payload:', JSON.stringify(payload))
+  await api.post('/users', payload)
     ElMessage.success('已创建')
     createDialog.visible = false
     await fetchList()
@@ -496,12 +497,13 @@ async function saveEdit() {
       accountType: editDialog.form.accountType,
       enabled: editDialog.form.enabled
     }
-    if (isMerchantUser.value) {
-      payload.merchantId = auth.agent?.merchantId
-    } else if (editDialog.form.accountType === 1) {
-      payload.merchantId = editDialog.form.merchantId
-    }
-    await api.put(`/users/${editDialog.editId}`, payload)
+    // 永远显式传 merchantId：商户用户用其自身商户，平台管理员用表单选择值
+  const finalMerchantId = isMerchantUser.value
+    ? auth.agent?.merchantId ?? null
+    : editDialog.form.merchantId ?? null
+  payload.merchantId = finalMerchantId
+  console.log('[saveEdit] payload:', JSON.stringify(payload))
+  await api.put(`/users/${editDialog.editId}`, payload)
     ElMessage.success('已更新')
     editDialog.visible = false
     await fetchList()

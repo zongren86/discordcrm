@@ -39,6 +39,11 @@ public interface GifFavoriteRepository extends JpaRepository<GifFavorite, Long> 
     void deleteByIdAndDiscordAccountId(Long id, Long discordAccountId);
 
     /**
+     * 按 userId 删除收藏
+     */
+    void deleteByIdAndUserId(Long id, Long userId);
+
+    /**
      * 统计账号收藏数量
      */
     long countByDiscordAccountId(Long discordAccountId);

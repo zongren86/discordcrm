@@ -115,18 +115,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="浏览器" width="80" align="center" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              v-if="row.browserProfilePath && (row.discordAgentServerId || row.agentServerId)"
-              link type="primary"
-              @click="launchBrowser(row)"
-            >唤起</el-button>
-            <span v-else style="color:var(--color-text-3);font-size:12px;">—</span>
-          </template>
-        </el-table-column>
-
-        <el-table-column label="状态" width="120" align="center">
+                <el-table-column label="状态" width="120" align="center">
           <template #default="{ row }">
             <div class="status-cell">
               <div :class="['status-dot', statusClass(row.status)]"></div>
@@ -167,8 +156,8 @@
               <el-button v-if="row.accountType === 'USER'" size="small" type="primary" link @click="syncAccount(row)">
                 <el-icon><Refresh /></el-icon> 同步好友
               </el-button>
-              <el-button v-if="row.browserProfilePath && row.discordAgentServerId" size="small" type="success" link @click="launchBrowser(row)">
-                <el-icon><Monitor /></el-icon> 唤起浏览器
+              <el-button v-if="row.browserProfilePath && (row.discordAgentServerId || row.agentServerId)" size="small" type="success" link @click="launchBrowser(row)">
+                <el-icon><Monitor /></el-icon> 唤起
               </el-button>
               <el-button size="small" type="primary" link @click="openEdit(row)">
                 <el-icon><Edit /></el-icon> 编辑
@@ -342,6 +331,10 @@
         <template v-if="agentResultDialog.status === 'RUNNING'">
           <el-button @click="cancelAgentCapture" type="danger" :loading="agentResultDialog.cancelling">取消登录</el-button>
           <el-button @click="closeAgentResultDialog">关闭弹窗</el-button>
+        </template>
+        <template v-else-if="agentResultDialog.status === 'CANCELLED'">
+          <el-button @click="closeAgentResultDialog">关闭</el-button>
+          <el-button type="primary" @click="continueAgentAdd">继续添加</el-button>
         </template>
         <template v-else>
           <el-button @click="closeAgentResultDialog">关闭</el-button>
@@ -715,6 +708,21 @@ async function cancelAgentCapture() {
 function closeAgentResultDialog() {
   stopAgentPolling()
   agentResultDialog.visible = false
+}
+
+// CANCELLED 后点"继续添加" → 关闭监控弹窗 → 打开代理添加弹窗
+async function continueAgentAdd() {
+  closeAgentResultDialog()
+  agentDialog.visible = true
+  agentDialog.loadingServers = true
+  agentDialog.form.agentServerId = null
+  try {
+    agentDialog.servers = await listAgentServers() || []
+  } catch (e) {
+    agentDialog.servers = []
+  } finally {
+    agentDialog.loadingServers = false
+  }
 }
 
 const botDialog = reactive({

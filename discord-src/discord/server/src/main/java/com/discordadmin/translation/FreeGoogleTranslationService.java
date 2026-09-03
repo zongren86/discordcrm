@@ -41,6 +41,7 @@ public class FreeGoogleTranslationService implements TranslationService {
             return Optional.empty();
         }
 
+        log.info("[translate] 开始翻译 text='{}', targetLang={}", text, targetLanguage);
         // 1) Google 翻译（带重试）
         Optional<String> result = translateWithRetry(text, targetLanguage);
         if (result.isPresent()) {
@@ -84,7 +85,7 @@ public class FreeGoogleTranslationService implements TranslationService {
                 }
             } catch (Exception e) {
                 lastError = e;
-                log.debug("Google 翻译第{}次尝试异常: {}", attempt + 1, e.getMessage());
+                log.info("[Google] 第{}次尝试异常: {}", attempt + 1, e.getMessage());
             }
         }
         if (lastError != null) {
@@ -148,14 +149,34 @@ public class FreeGoogleTranslationService implements TranslationService {
         }
     }
 
+    /** 简单的源语言检测（按 Unicode 范围），MyMemory 不支持 auto，必须传具体语言 */
+    private String detectSourceLang(String text) {
+        if (text == null || text.isEmpty()) return "en";
+        // 中文 一-鿿
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c >= 0x4E00 && c <= 0x9FFF) return "zh-CN";
+            if (c >= 0x3040 && c <= 0x309F) return "ja"; // 日文假名
+            if (c >= 0x30A0 && c <= 0x30FF) return "ja"; // 日文片假名
+            if (c >= 0xAC00 && c <= 0xD7AF) return "ko"; // 韩文
+            if (c >= 0x0600 && c <= 0x06FF) return "ar"; // 阿拉伯
+            if (c >= 0x0400 && c <= 0x04FF) return "ru"; // 俄文
+            if (c >= 0x0E00 && c <= 0x0E7F) return "th"; // 泰文
+        }
+        return "en";
+    }
+
     private Optional<String> translateWithMyMemory(String text, String targetLanguage, String endpoint) {
+        log.info("[MyMemory] 开始翻译 text='{}', targetLang={}", text, targetLanguage);
         try {
-            String langPair;
-            if (targetLanguage.startsWith("zh")) {
-                langPair = "en|zh-CN";
-            } else {
-                langPair = "zh-CN|en";
+            String target = targetLanguage != null ? targetLanguage : "en";
+            String source = detectSourceLang(text);
+            // 如果源=目标（同语种），MyMemory 会返回原文，跳过
+            if (source.equalsIgnoreCase(target)) {
+                log.info("[MyMemory] 源语言 {} = 目标语言 {}，跳过", source, target);
+                return Optional.empty();
             }
+            String langPair = source + "|" + target;
             String url = String.format(endpoint,
                     URLEncoder.encode(text, StandardCharsets.UTF_8),
                     URLEncoder.encode(langPair, StandardCharsets.UTF_8));
@@ -167,18 +188,51 @@ public class FreeGoogleTranslationService implements TranslationService {
                     .build();
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
+                log.warn("[MyMemory] 返回非200: {} body={}", response.statusCode(), response.body().substring(0, Math.min(200, response.body().length())));
                 return Optional.empty();
             }
             JsonNode root = objectMapper.readTree(response.body());
+            // MyMemory 会在 HTTP 200 时通过 responseStatus 返回错误码（如 403 auto 无效）
+            String responseStatus = root.path("responseStatus").asText("200");
+            if (!"200".equals(responseStatus)) {
+                String errMsg = root.path("responseDetails").asText("MyMemory 翻译失败");
+                log.warn("[MyMemory] responseStatus={} error={}", responseStatus, errMsg);
+                return Optional.empty();
+            }
             JsonNode responseData = root.path("responseData");
             if (responseData.isMissingNode()) {
+                log.warn("[MyMemory] responseData 缺失 body={}", response.body().substring(0, Math.min(200, response.body().length())));
                 return Optional.empty();
             }
             String translated = responseData.path("translatedText").asText(null);
             if (translated == null || translated.isBlank()) {
                 return Optional.empty();
             }
-            log.info("MyMemory 翻译成功 [textLen={}]", text.length());
+            // 关键校验: translatedText 不能等于原文 (MyMemory MateCat 记忆库垃圾)
+            // 如果相同, 从 matches 数组里找一个不同的译文
+            if (translated.trim().equalsIgnoreCase(text.trim())) {
+                log.warn("[MyMemory] translatedText 等于原文 '{}', 从 matches 里找更好的译文", text);
+                JsonNode matches = root.path("matches");
+                if (matches.isArray()) {
+                    for (JsonNode match : matches) {
+                        String candidate = match.path("translation").asText(null);
+                        if (candidate != null && !candidate.isBlank()
+                                && !candidate.trim().equalsIgnoreCase(text.trim())
+                                && candidate.length() < text.length() * 3) {  // 防乱码
+                            int quality = match.path("quality").asInt(0);
+                            log.info("[MyMemory] 从 match 取更好译文: '{}' (quality={})", candidate, quality);
+                            translated = candidate;
+                            break;
+                        }
+                    }
+                }
+                // 如果 matches 里也没好的, 干脆返回 empty, 让上层知道翻译失败
+                if (translated.trim().equalsIgnoreCase(text.trim())) {
+                    log.warn("[MyMemory] matches 里也没有不同于原文的译文, 判定为失败");
+                    return Optional.empty();
+                }
+            }
+            log.info("MyMemory 翻译成功: '{}' -> '{}' [textLen={}]", text, translated, text.length());
             return Optional.of(translated);
         } catch (Exception e) {
             log.debug("MyMemory 翻译失败: {}", e.getMessage());

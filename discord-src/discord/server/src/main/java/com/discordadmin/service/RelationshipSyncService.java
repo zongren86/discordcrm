@@ -13,6 +13,8 @@ import org.springframework.transaction.annotation.Propagation;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -39,17 +41,20 @@ public class RelationshipSyncService {
     private final DiscordUserClient userClient;
     private final ConversationRepository conversationRepository;
     private final DiscordUserRepository discordUserRepository;
+    private final com.discordadmin.service.AgentTaskService agentTaskService;
 
     public RelationshipSyncService(DiscordAccountRepository accountRepository,
                                     FriendRepository friendRepository,
                                     DiscordUserClient userClient,
                                     ConversationRepository conversationRepository,
-                                    DiscordUserRepository discordUserRepository) {
+                                    DiscordUserRepository discordUserRepository,
+                                    com.discordadmin.service.AgentTaskService agentTaskService) {
         this.accountRepository = accountRepository;
         this.friendRepository = friendRepository;
         this.userClient = userClient;
         this.conversationRepository = conversationRepository;
         this.discordUserRepository = discordUserRepository;
+        this.agentTaskService = agentTaskService;
     }
 
     /** 每 10 分钟自动同步一次所有 USER 类型的 ACTIVE 账号 */
@@ -57,7 +62,6 @@ public class RelationshipSyncService {
     public void autoSyncAll() {
         for (DiscordAccount acc : accountRepository.findByStatus(DiscordAccount.AccountStatus.ACTIVE)) {
             if (acc.getAccountType() == DiscordAccount.AccountType.USER
-                    && !"AGENT".equals(acc.getSource())
                     && Boolean.TRUE.equals(acc.getTokenValid())) {
                 try {
                     syncOne(acc.getId());
@@ -94,7 +98,12 @@ public class RelationshipSyncService {
             throw new IllegalStateException("仅 USER 类型账号可同步好友，BOT 账号无好友概念");
         }
         if ("AGENT".equals(acc.getSource())) {
-            throw new IllegalStateException("AGENT 采集账号由 agent 机器管理，服务端不碰");
+            // AGENT 账号：不在服务器用 token 碰 Discord API（风控），
+            // 改成创建 agent 任务，让 agent 机器去拉好友再上报
+            if (acc.getAgentServerId() == null) {
+                throw new IllegalStateException("AGENT 账号无关联代理节点，无法下发好友同步任务");
+            }
+            return syncViaAgent(acc);
         }
 
         List<JsonNode> remoteFriends;
@@ -271,6 +280,31 @@ public class RelationshipSyncService {
             count++;
         }
         return count;
+    }
+
+    /**
+     * AGENT 账号的好友同步：不碰服务器 token（风控），
+     * 创建 FULL_SYNC_FRIENDS 任务下发给 agent 机器，agent 完成后上报。
+     */
+    private int syncViaAgent(DiscordAccount acc) {
+        try {
+            Map<String, Object> params = new HashMap<>();
+            params.put("accountId", acc.getId());
+            params.put("token", acc.getToken());
+            // 随机延迟 3~12 分钟，避免批量同时触发风控
+            int delay = 3 + (int)(Math.random() * 10);
+            com.discordadmin.entity.AgentTask task = agentTaskService.createTaskWithDelay(
+                acc.getAgentServerId(), "FULL_SYNC_FRIENDS",
+                new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(params),
+                delay
+            );
+            log.info("[AGENT同步] 已下发 FULL_SYNC_FRIENDS 任务 taskId={} accountId={} agent={}",
+                task.getId(), acc.getId(), acc.getAgentServerId());
+            return -1; // -1 表示"已下发任务但结果待定"
+        } catch (Exception e) {
+            log.error("[AGENT同步] 下发好友同步任务失败 accountId={}: {}", acc.getId(), e.getMessage());
+            throw new RuntimeException("下发好友同步任务失败: " + e.getMessage(), e);
+        }
     }
 
     private static String truncate(String s, int n) {

@@ -1,6 +1,7 @@
 package com.discordadmin.entity;
 
 import jakarta.persistence.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -57,6 +58,7 @@ public class Agent {
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
 
+    @JsonIgnore
     @ManyToMany
     @JoinTable(
         name = "user_discord_accounts",

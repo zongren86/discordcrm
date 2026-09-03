@@ -5,9 +5,18 @@ import com.discordadmin.service.AgentServerService;
 import com.discordadmin.service.AgentTaskService;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.discordadmin.repository.AgentServerRepository;
+import com.discordadmin.service.ConversationService;
+import com.discordadmin.discord.InboundMessage;
 import com.discordadmin.service.MessageService;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.entity.AgentTask;
+import com.discordadmin.entity.Friend;
+import com.discordadmin.entity.DiscordUser;
+import com.discordadmin.entity.Conversation;
+import com.discordadmin.repository.FriendRepository;
+import com.discordadmin.repository.DiscordUserRepository;
+import com.discordadmin.repository.ConversationRepository;
+import java.time.Instant;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,6 +24,7 @@ import org.springframework.http.ResponseEntity;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import java.io.*;
 import java.nio.file.*;
@@ -35,15 +45,36 @@ import java.time.Duration;
 @Slf4j
 public class AgentServerController {
 
+    /** 安全地从 JSON Map 取字符串，兼容 String / Long / Integer / Double / null */
+    private static String sstr(Object v) {
+        if (v == null) return null;
+        if (v instanceof String s) return s;
+        return v.toString();
+    }
+
+    /** 安全地从 JSON Map 取字符串，带默认值 */
+    private static String sstr(Object v, String def) {
+        if (v == null) return def;
+        if (v instanceof String s) return s.isEmpty() ? def : s;
+        return v.toString();
+    }
+
     private final AgentServerService agentServerService;
     private final AgentTaskService agentTaskService;
     private final DiscordAccountRepository discordAccountRepository;
     private final AgentServerRepository agentServerRepository;
     private final MessageService messageService;
+    @Autowired
+    private ConversationService conversationService;
+    @Autowired
+    private DiscordUserRepository discordUserRepository;
+    @Autowired
+    private ConversationRepository conversationRepository;
 
     @Value("${app.agent-source-dir:}")
     private String agentSourceDir;
     private final ObjectMapper objectMapper;
+    private final FriendRepository friendRepository;
 
     /** 节点列表（隐藏 token） */
     @GetMapping
@@ -70,6 +101,8 @@ public class AgentServerController {
             m.put("nodeVersion", s.getNodeVersion());
             m.put("browserType", s.getBrowserType());
             m.put("notes", s.getNotes());
+            m.put("accountCount", discordAccountRepository.countByAgentServerId(s.getId()));
+            m.put("maxAccounts", s.getMaxAccounts() == null ? 500 : s.getMaxAccounts());
             m.put("lastSeenAt", s.getLastSeenAt());
             m.put("createdAt", s.getCreatedAt());
             return m;
@@ -246,13 +279,31 @@ public class AgentServerController {
     @GetMapping("/package")
     public ResponseEntity<Resource> downloadAgentPackage() {
         try {
+            byte[] zipBytes;
+            // 优先: 源码目录存在 (开发模式), 动态打包
             Path sourceDir = resolveAgentSourceDir();
-            if (sourceDir == null || !Files.isDirectory(sourceDir)) {
-                return ResponseEntity.status(500).body(null);
+            if (sourceDir != null && Files.isDirectory(sourceDir)) {
+                zipBytes = buildZip(sourceDir);
+            } else {
+                // 兜底: jar 内嵌 zip (生产模式)
+                String zipName = "crm_agent-v" + readAgentVersion() + ".zip";
+                try (var is = getClass().getClassLoader().getResourceAsStream(zipName)) {
+                    if (is == null) {
+                        // 再试旧名字
+                        try (var is2 = getClass().getClassLoader().getResourceAsStream("agent-package.zip")) {
+                            if (is2 == null) {
+                                log.error("未找到内嵌 agent zip, classpath 资源列表:");
+                                return ResponseEntity.status(500).body(null);
+                            }
+                            zipBytes = is2.readAllBytes();
+                        }
+                    } else {
+                        zipBytes = is.readAllBytes();
+                    }
+                }
             }
-            byte[] zipBytes = buildZip(sourceDir);
-            ByteArrayResource resource = new ByteArrayResource(zipBytes);
             String filename = "crm_agent-v" + readAgentVersion() + ".zip";
+            ByteArrayResource resource = new ByteArrayResource(zipBytes);
             return ResponseEntity.ok()
                     .header("Content-Disposition", "attachment; filename=\"" + filename + "\"")
                     .contentType(org.springframework.http.MediaType.parseMediaType("application/zip"))
@@ -384,7 +435,19 @@ public class AgentServerController {
         try {
             Path sourceDir = resolveAgentSourceDir();
             if (sourceDir != null) {
-                // 从 config.json 的 version 字段读（单一配置源）
+                // 优先从 package.json 读（npm 标准），兜底 config.json
+                Path pkgFile = sourceDir.resolve("package.json");
+                if (Files.exists(pkgFile)) {
+                    String pkgJson = Files.readString(pkgFile);
+                    int pIdx = pkgJson.indexOf("\"version\"");
+                    if (pIdx >= 0) {
+                        int pColon = pkgJson.indexOf(':', pIdx + 1);
+                        int pQ1 = pkgJson.indexOf('"', pColon + 1);
+                        int pQ2 = pkgJson.indexOf('"', pQ1 + 1);
+                        if (pQ2 > pQ1) return pkgJson.substring(pQ1 + 1, pQ2);
+                    }
+                }
+                // 兜底 config.json
                 Path cfgFile = sourceDir.resolve("config.json");
                 if (Files.exists(cfgFile)) {
                     String json = Files.readString(cfgFile);
@@ -405,7 +468,7 @@ public class AgentServerController {
                 }
             }
         } catch (Exception ignored) {}
-        return "1.1.0";
+        return "1.16.0";
     }
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
     private byte[] buildZip(Path sourceDir) throws IOException {
@@ -600,16 +663,270 @@ public class AgentServerController {
         for (Map<String, Object> m : messages) {
             try {
                 Long accountId = Long.valueOf(m.get("accountId").toString());
-                String channelId = (String) m.get("channelId");
-                String discordMsgId = (String) m.get("discordMessageId");
-                String content = (String) m.getOrDefault("content", "");
+                String channelId = sstr(m.get("channelId"));
+                String discordMsgId = sstr(m.get("discordMessageId"));
+                String content = sstr(m.get("content"), "");
+                // ==== 统一入口解码 HTML 实体（emoji 等）====
+                content = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(content);
                 boolean isFromMe = Boolean.TRUE.equals(m.get("isFromMe"));
-                messageService.saveAgentPulledMessage(accountId, channelId, discordMsgId, content, isFromMe);
+
+                // 解析完整字段
+                String authorId = sstr(m.get("authorId"), "");
+                String authorName = sstr(m.get("authorName"), "");
+                String authorGlobalName = sstr(m.get("authorGlobalName"), authorName);
+                String authorAvatar = sstr(m.get("authorAvatar"));
+                String channelType = sstr(m.get("channelType"), "dm");
+                String messageType = sstr(m.get("messageType"), "text");
+                String gifUrl = sstr(m.get("gifUrl"));
+
+                // 构建 attachmentsJson
+                String attachmentsJson = null;
+                Object attsObj = m.get("attachments");
+                if (attsObj != null) {
+                    try { attachmentsJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(attsObj); }
+                    catch (Exception ignored) {}
+                }
+                String stickerItemsJson = null;
+                Object stickersObj = m.get("stickers");
+                if (stickersObj != null) {
+                    try { stickerItemsJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(stickersObj); }
+                    catch (Exception ignored) {}
+                }
+
+                if (isFromMe) {
+                    // 自己发的消息 → OUTBOUND，走 MessageService 的 OUTBOUND 保存
+                    messageService.saveAgentOutboundMessage(accountId, channelId, discordMsgId,
+                            authorId, authorName, content, messageType, gifUrl, attachmentsJson, stickerItemsJson);
+                } else {
+                    // 别人发的消息 → INBOUND，走完整的 handleInbound 链路
+                    InboundMessage inbound = new InboundMessage(
+                            accountId, discordMsgId, authorId, authorName, authorGlobalName, authorAvatar,
+                            true, null, null, // isDirectMessage=true（agent目前只拉DM）
+                            channelId, "DM/" + channelId.substring(0, Math.min(8, channelId.length())),
+                            content, attachmentsJson, messageType,
+                            null, null, null, null, // 无语音
+                            stickerItemsJson, gifUrl
+                    );
+                    conversationService.handleInbound(inbound);
+                }
                 saved++;
             } catch (Exception e) {
-                log.warn("Agent 上报消息入库失败: {}", e.getMessage());
+                log.warn("Agent 上报消息入库失败 discordMsgId={}: {}", m.get("discordMessageId"), e.getMessage());
             }
         }
         return ResponseEntity.ok(Map.of("received", saved));
+    }
+
+    @PostMapping("/friends/report")
+    public ResponseEntity<Map<String, Object>> reportFriends(@RequestBody Map<String, Object> body) {
+        String token = (String) body.get("token");
+        AgentServer server = agentServerRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("无效的 agent token"));
+
+        Long accountId = Long.valueOf(body.get("accountId").toString());
+        DiscordAccount acc = discordAccountRepository.findById(accountId)
+                .orElseThrow(() -> new IllegalArgumentException("账号不存在: " + accountId));
+
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> friends = (java.util.List<Map<String, Object>>) body.get("friends");
+        if (friends == null || friends.isEmpty()) {
+            // 没好友也要更新 synced_at（标记为已同步过）
+            log.info("[好友同步] accountId={} 无好友数据", accountId);
+            return ResponseEntity.ok(Map.of("saved", 0, "note", "no friends"));
+        }
+
+        int saved = 0, removed = 0;
+        java.util.Set<String> incomingIds = new java.util.HashSet<>();
+
+        for (Map<String, Object> f : friends) {
+            try {
+                String friendId = sstr(f.get("friendDiscordUserId"));
+                if (friendId == null || friendId.isEmpty()) continue;
+                incomingIds.add(friendId);
+
+                // relationshipType: 1=好友 2=入站待请求 3=出站待请求 4=阻止
+                Object rtObj = f.get("relationshipType");
+                int rt = (rtObj instanceof Number) ? ((Number) rtObj).intValue() : 1;
+
+                Friend.FriendStatus status;
+                switch (rt) {
+                    case 2: status = Friend.FriendStatus.PENDING_IN; break;
+                    case 1:
+                    case 3:
+                    case 4:
+                    default: status = Friend.FriendStatus.ACCEPTED; break;
+                }
+
+                java.util.Optional<Friend> exist = friendRepository
+                        .findByDiscordAccountAndFriendDiscordUserId(acc, friendId);
+                Friend friend = exist.orElseGet(Friend::new);
+                friend.setDiscordAccount(acc);
+                friend.setMerchantId(acc.getMerchantId());
+                friend.setFriendDiscordUserId(friendId);
+
+                // 字段兜底逻辑：
+                // 1) agent 上报的 username/globalName/avatar 非空才覆盖（防止旧 agent 代码传 undefined 把已有值抹空）
+                // 2) 数据库里如果也没有，就去同 friendId 的其他账号好友记录里抄一份
+                String u = sstr(f.get("username"));
+                String g = sstr(f.get("globalName"));
+                String a = sstr(f.get("avatar"));
+
+                // 当前记录已有值且 agent 没上报新值 → 保留原值
+                if ((u == null || u.isEmpty()) && friend.getUsername() != null && !friend.getUsername().isEmpty()) {
+                    u = friend.getUsername();
+                }
+                if ((g == null || g.isEmpty()) && friend.getGlobalName() != null && !friend.getGlobalName().isEmpty()) {
+                    g = friend.getGlobalName();
+                }
+                if ((a == null || a.isEmpty()) && friend.getAvatar() != null && !friend.getAvatar().isEmpty()) {
+                    a = friend.getAvatar();
+                }
+
+                // 额外兜底：从同 friendId 的其他账号完整记录抄
+                if (u == null || u.isEmpty() || g == null || g.isEmpty() || a == null || a.isEmpty()) {
+                    for (Friend src : friendRepository.findByFriendDiscordUserId(friendId)) {
+                        if (src.getUsername() != null && !src.getUsername().isEmpty()) {
+                            if (u == null || u.isEmpty()) u = src.getUsername();
+                            if (g == null || g.isEmpty()) g = src.getGlobalName();
+                            if (a == null || a.isEmpty()) a = src.getAvatar();
+                            break;
+                        }
+                    }
+                }
+
+                friend.setUsername(u != null ? u : "");
+                friend.setGlobalName(g != null ? g : (u != null ? u : ""));
+                friend.setAvatar(a);
+                friend.setStatus(status);
+                friend.setSyncedAt(Instant.now());
+                if (friend.getId() == null) friend.setCreatedAt(Instant.now());
+                friendRepository.save(friend);
+                saved++;
+            } catch (Exception e) {
+                log.warn("[好友同步] 处理好友失败 friendId={}: {}", f.get("friendDiscordUserId"), e.getMessage());
+            }
+        }
+
+        // 标记不再是好友的记录为 PENDING_IN 之外的状态？暂不删除
+        // （Discord API 拉的是完整关系列表，agent 不应该有太多误报）
+        log.info("[好友同步] accountId={} 上报 {} 条, 保存 {} 条, 跳过 {} 条",
+            accountId, friends.size(), saved, friends.size() - saved);
+
+        return ResponseEntity.ok(Map.of("saved", saved, "total", friends.size()));
+    }
+
+    /**
+     * Agent 上报 DM 频道列表 —— 为每个 1:1 DM 创建/更新 Conversation
+     * 这样 Chat.vue 会话列表才能显示好友
+     */
+    @PostMapping("/dm-channels/report")
+    public ResponseEntity<Map<String, Object>> reportDmChannels(@RequestBody Map<String, Object> body) {
+        String agentToken = (String) body.get("token");
+        AgentServer server = agentServerRepository.findByToken(agentToken)
+                .orElseThrow(() -> new IllegalArgumentException("无效的 agent token"));
+
+        Long accountId = Long.valueOf(body.get("accountId").toString());
+        DiscordAccount acc = discordAccountRepository.findById(accountId).orElse(null);
+        if (acc == null) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "账号不存在: " + accountId));
+        }
+
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> dms = (java.util.List<Map<String, Object>>) body.get("dms");
+        if (dms == null) dms = java.util.Collections.emptyList();
+
+        int saved = 0;
+        for (Map<String, Object> dm : dms) {
+            int channelType = dm.get("channelType") != null ? ((Number) dm.get("channelType")).intValue() : -1;
+            if (channelType != 1) continue; // 只处理 1:1 DM
+
+            String channelId = sstr(dm.get("channelId"), null);
+            if (channelId == null) continue;
+
+            @SuppressWarnings("unchecked")
+            java.util.List<Map<String, Object>> recipients = (java.util.List<Map<String, Object>>) dm.get("recipients");
+            if (recipients == null || recipients.isEmpty()) continue;
+
+            Map<String, Object> recipient = recipients.get(0);
+            String userId = sstr(recipient.get("id"), null);
+            if (userId == null) continue;
+
+            // upsert DiscordUser
+            DiscordUser user = discordUserRepository.findByDiscordUserId(userId).orElse(null);
+            if (user == null) {
+                user = new DiscordUser();
+                user.setDiscordUserId(userId);
+                user.setFirstSeenAt(java.time.Instant.now());
+            }
+            user.setUsername(sstr(recipient.get("username"), null));
+            user.setGlobalName(sstr(recipient.get("globalName"), null));
+            String avatar = sstr(recipient.get("avatar"), null);
+            if (avatar != null) {
+                user.setAvatarUrl("https://cdn.discordapp.com/avatars/" + userId + "/" + avatar + ".png");
+            }
+            user = discordUserRepository.save(user);
+
+            // upsert Conversation
+            Conversation conv = conversationRepository
+                    .findByChannelIdAndDiscordAccount_Id(channelId, acc.getId())
+                    .orElse(null);
+            if (conv == null) {
+                conv = new Conversation();
+                conv.setChannelId(channelId);
+                conv.setType(Conversation.ConversationType.DM);
+                conv.setStatus(Conversation.ConversationStatus.OPEN);
+                conv.setCreatedAt(java.time.Instant.now());
+            }
+            conv.setDiscordUser(user);
+            conv.setDiscordAccount(acc);
+            conv.setMerchantId(acc.getMerchantId());
+            String displayName = user.getGlobalName() != null ? user.getGlobalName() : user.getUsername();
+            conv.setChannelName(displayName);
+            conversationRepository.saveAndFlush(conv);
+            saved++;
+        }
+
+        log.info("[DM频道上报] agent={} accountId={} 上报={}, 保存={}", server.getName(), accountId, dms.size(), saved);
+        return ResponseEntity.ok(Map.of("success", true, "saved", saved, "total", dms.size()));
+    }
+
+    /**
+     * Agent 上报账号 token 状态（失效/恢复）
+     * agent 在消息轮询、发消息、拉好友等场景检测到 401 时调用
+     */
+    @PostMapping("/accounts/token-status")
+    public ResponseEntity<Map<String, Object>> reportTokenStatus(@RequestBody Map<String, Object> body) {
+        String agentToken = (String) body.get("token");
+        AgentServer server = agentServerRepository.findByToken(agentToken)
+                .orElseThrow(() -> new IllegalArgumentException("无效的 agent token"));
+
+        Long accountId = Long.valueOf(body.get("accountId").toString());
+        boolean valid = !Boolean.FALSE.equals(body.get("valid"));  // 默认 true
+        String reason = sstr(body.get("reason"), valid ? "ok" : "401 Unauthorized");
+
+        DiscordAccount acc = discordAccountRepository.findById(accountId).orElse(null);
+        if (acc == null) {
+            return ResponseEntity.ok(Map.of("success", false, "message", "账号不存在: " + accountId));
+        }
+
+        boolean changed = !Boolean.valueOf(valid).equals(acc.getTokenValid());
+        acc.setTokenValid(valid);
+        acc.setTokenCheckedAt(Instant.now());
+        if (!valid) {
+            acc.setLastError(reason);
+        } else {
+            acc.setLastError(null);
+        }
+        discordAccountRepository.save(acc);
+
+        if (changed) {
+            log.warn("[Token状态] agent={} accountId={} name={} valid={} reason={}",
+                server.getName(), accountId, acc.getName(), valid, reason);
+        } else {
+            log.debug("[Token状态] agent={} accountId={} valid={} (未变化)",
+                server.getName(), accountId, valid);
+        }
+
+        return ResponseEntity.ok(Map.of("success", true, "accountId", accountId, "tokenValid", valid));
     }
 }

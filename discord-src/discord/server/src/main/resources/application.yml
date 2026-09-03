@@ -88,7 +88,7 @@ spring.main.allow-bean-definition-overriding: false
 app:
   upload:
     path: ${APP_UPLOAD_PATH:${user.home}/.discord-admin/uploads}
-  base-url: ${APP_BASE_URL:http://localhost:5173}
+  base-url: ${APP_BASE_URL:http://localhost:8090}
   mumu-agent-path: ${APP_MUMU_AGENT_PATH:}
   # crm_agent 源码目录（用于动态打包下载）；空时尝试自动推断
   agent-source-dir: ${APP_AGENT_SOURCE_DIR:}

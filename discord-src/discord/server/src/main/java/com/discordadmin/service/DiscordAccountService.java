@@ -952,6 +952,9 @@ public class DiscordAccountService {
                 .orElseThrow(() -> new IllegalArgumentException("账号不存在"));
         SecurityUtils.checkMerchantAccess(account.getMerchantId());
 
+        if ("AGENT".equals(account.getSource())) {
+            throw new IllegalStateException("代理采集账号无法在服务器端刷新头像（防 Discord 风控）。请先在 agent 机器上确认浏览器登录状态，或重新采集账号");
+        }
         if (account.getAccountType() != DiscordAccount.AccountType.USER) {
             throw new IllegalStateException("仅 USER 类型账号支持刷新头像");
         }
@@ -1002,6 +1005,9 @@ public class DiscordAccountService {
         SecurityUtils.checkMerchantAccess(account.getMerchantId());
 
         if (account.getAccountType() != DiscordAccount.AccountType.USER) {
+        if ("AGENT".equals(account.getSource())) {
+            throw new IllegalStateException("代理采集账号无法在服务器端刷新 Token（防 Discord 风控）。请在 agent 机器上重新采集账号");
+        }
             throw new IllegalArgumentException("仅 USER 类型账号支持刷新 Token");
         }
 

@@ -16,9 +16,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.annotation.Propagation;
+import jakarta.persistence.EntityManager;
 
 import java.time.Instant;
 import java.util.Map;
+import java.util.HashMap;
 import java.util.Optional;
 
 @Service
@@ -30,6 +32,7 @@ public class AgentTaskService {
     private final AgentServerRepository agentServerRepository;
     private final DiscordAccountRepository discordAccountRepository;
     private final ObjectMapper objectMapper;
+    private final EntityManager entityManager;
 
     /**
      * 创建一个待执行任务（由前端调用）
@@ -55,6 +58,16 @@ public class AgentTaskService {
         return saved;
     }
 
+    /** 带延迟创建任务 —— 防风控 */
+    public AgentTask createTaskWithDelay(Long agentServerId, String type, String paramsJson, int delayMinutes) {
+        AgentTask task = createTask(agentServerId, type, paramsJson);
+        task.setScheduledAt(Instant.now().plusSeconds(delayMinutes * 60L));
+        task.setUpdatedAt(Instant.now());
+        agentTaskRepository.save(task);
+        log.info("⏳ 延迟下发 taskId={} type={} 延迟={}分钟 执行时间={}", task.getId(), type, delayMinutes, task.getScheduledAt());
+        return task;
+    }
+
     /**
      * 同步等待任务完成（给 MessageService 用）
      * @return result JSON 字符串，失败抛异常
@@ -62,6 +75,10 @@ public class AgentTaskService {
     public String waitForTaskResult(Long taskId, long timeoutMs) throws InterruptedException {
         long start = System.currentTimeMillis();
         while (System.currentTimeMillis() - start < timeoutMs) {
+            // 关键：clear Hibernate 一级缓存，强制每次都查真实 DB
+            // 因为 sendReply 有 @Transactional，createTask + waitFor 在同事务里，
+            // findById 会返回缓存的 PENDING，即使 agent 已经在另一个事务 report SUCCESS 了
+            entityManager.clear();
             AgentTask t = agentTaskRepository.findById(taskId).orElse(null);
             if (t == null) throw new IllegalStateException("任务不存在 id=" + taskId);
             String status = t.getStatus();
@@ -82,6 +99,7 @@ public class AgentTaskService {
             Thread.sleep(500);
         }
         // 超时了，把 task 标记为 CANCELLED（避免 agent 后续 poll 到又执行）
+        entityManager.clear();
         AgentTask t = agentTaskRepository.findById(taskId).orElse(null);
         if (t != null && !"SUCCESS".equals(t.getStatus()) && !"FAILED".equals(t.getStatus())) {
             t.setStatus("CANCELLED");
@@ -119,8 +137,9 @@ public class AgentTaskService {
         }
 
         // 优先取 PENDING 的（RUNNING 僵死已清理）
+        // 只取 scheduledAt <= now 或 scheduledAt IS NULL 的任务（防风控延迟）
         Optional<AgentTask> task = agentTaskRepository
-                .findFirstByAgentServerAndStatusOrderByCreatedAtAsc(server, "PENDING");
+                .findFirstReady(server, "PENDING", Instant.now());
 
         task.ifPresent(t -> {
             t.setStatus("RUNNING");
@@ -161,12 +180,30 @@ public class AgentTaskService {
         task.setStatus(status);
         task.setUpdatedAt(Instant.now());
 
-        // SUCCESS 时对 CAPTURE_DISCORD_ACCOUNT 做后处理：保存 DiscordAccount
-        if ("SUCCESS".equals(status) && "CAPTURE_DISCORD_ACCOUNT".equals(task.getType()) && resultMap != null) {
+        // SUCCESS 时对 CAPTURE_DISCORD_ACCOUNT / LAUNCH_BROWSER 做后处理：更新 DiscordAccount
+        boolean needUpsert = ("CAPTURE_DISCORD_ACCOUNT".equals(task.getType()) || "LAUNCH_BROWSER".equals(task.getType()));
+        if ("SUCCESS".equals(status) && needUpsert && resultMap != null && resultMap.containsKey("token")) {
             try {
                 DiscordAccount account = upsertCapturedAccount(resultMap, server.getMerchantId(), server);
                 task.setDiscordAccount(account);
                 log.info("任务 id={} 成功，关联账号 id={}, username={}", taskId, account.getId(), account.getName());
+
+                // 只有首次 CAPTURE 才触发好友同步，LAUNCH_BROWSER 只是更新 token
+                if ("CAPTURE_DISCORD_ACCOUNT".equals(task.getType())) {
+                try {
+                    Map<String, Object> friendsParams = new HashMap<>();
+                    friendsParams.put("accountId", account.getId());
+                    friendsParams.put("token", account.getToken());
+                    // 随机延迟 5~15 分钟，避免刚登录就高频操作触发风控
+                    int delay = 5 + (int)(Math.random() * 11);
+                    AgentTask ft = createTaskWithDelay(server.getId(), "FULL_SYNC_FRIENDS",
+                        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(friendsParams), delay);
+                    log.info("📡 采集完成 → 已延迟 5 分钟下发 FULL_SYNC_FRIENDS taskId={} (accountId={})",
+                        ft.getId(), account.getId());
+                } catch (Exception fe) {
+                    log.warn("采集完成但下发好友同步失败（不影响主流程）: {}", fe.getMessage());
+                }
+                } // end if CAPTURE_DISCORD_ACCOUNT
             } catch (Exception e) {
                 log.error("任务后处理（保存账号）失败: {}", e.getMessage());
                 task.setStatus("FAILED");
@@ -216,6 +253,15 @@ public class AgentTaskService {
             account.setBrowserProfilePath(browserProfilePath);
         }
         if (server != null) {
+            // 校验该代理节点账号上限
+            int max = server.getMaxAccounts() != null ? server.getMaxAccounts() : 500;
+            long current = discordAccountRepository.countByAgentServerId(server.getId());
+            if (current >= max) {
+                throw new RuntimeException(
+                    "代理节点 [" + server.getName() + "] 已达账号上限 (" + current + "/" + max + ")，" +
+                    "请先解绑部分账号或在代理管理中调高上限"
+                );
+            }
             account.setAgentServerId(server.getId());
         }
         account.setSource("AGENT");

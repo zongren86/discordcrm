@@ -156,14 +156,21 @@ public class UserService {
         } else if (req.clearRoles() != null && req.clearRoles()) {
             agent.getRoleIds().clear();
         }
-        if (SecurityUtils.isPlatformAdmin() && req.merchantId() != null) {
+        // merchantId 处理：不再依赖 isPlatformAdmin（避免 JWT 过期导致判断错误）
+        // 1. 前端明确传了非 null → 使用它
+        // 2. accountType 改成 0（管理员）→ 自动清 null
+        // 3. 前端显式请求清除 → 清 null
+        if (req.merchantId() != null) {
             agent.setMerchantId(req.merchantId());
+        } else if (req.accountType() != null && req.accountType() == 0) {
+            agent.setMerchantId(null);
+        } else if (req.clearMerchantId() != null && req.clearMerchantId()) {
+            agent.setMerchantId(null);
         }
-        if (SecurityUtils.isPlatformAdmin() && req.accountType() != null) {
-            // 如果设为管理员且未指定商户，则为平台管理员
-            if (req.accountType() == 0 && req.merchantId() == null) {
-                agent.setMerchantId(null);
-            }
+        // 普通账号必须有 merchantId
+        Integer finalAccountType = agent.getAccountType();
+        if (finalAccountType != null && finalAccountType == 1 && agent.getMerchantId() == null) {
+            throw new IllegalArgumentException("普通账号必须选择商户");
         }
         return agentRepository.save(agent);
     }
@@ -291,5 +298,5 @@ public class UserService {
     public record UserRequest(String username, String password, String displayName,
                                String email, String notes,
                                Integer accountType, Long merchantId, Boolean enabled,
-                               List<Long> roleIds, Boolean clearRoles) {}
+                               List<Long> roleIds, Boolean clearRoles, Boolean clearMerchantId) {}
 }

@@ -39,3 +39,17 @@ deploy-package/
 server-admin/logs/
 *.tar.gz
 *.log.gz
+
+# === v1.7.2 追加 ===
+# 敏感
+crm_agent/config.json
+server/run-local.sh
+
+# 大目录
+server/uploads/
+server/src/main/resources/static/
+server/src/main/resources/agent-package.zip
+server/src/main/resources/crm_agent-v*.zip
+
+# agent .bak
+crm_agent/src/*.bak
