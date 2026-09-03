@@ -87,7 +87,7 @@ function getLaunchArgs() {
     '--window-size=1280,800',
     '--start-maximized',
     
-    // 稳定
+    // 稳定 + ⚡ 加速参数
     '--disable-breakpad',
     '--disable-component-update',
     '--disable-domain-reliability',
@@ -100,6 +100,17 @@ function getLaunchArgs() {
     '--disable-setuid-sandbox',
     '--disable-speech-api',
     '--no-sandbox',
+
+    // ⚡ Windows/云服务器没有 GPU，直接禁用省掉 1-2s GPU 初始化
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--disable-dev-shm-usage',
+    '--no-zygote',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-extensions',
+    '--disable-sync',
+    '--metrics-recording-only',
 
     // ⭐ hCaptcha/Discord 在意的参数
     '--disable-background-timer-throttling',
@@ -328,6 +339,16 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
     trace.browserWorkflow('context_created', { pages: context.pages().length });
     // ⭐ 第 2 层防线：强制 HTTP Accept-Language header（Discord/hCaptcha 优先读这个）
     await context.setExtraHTTPHeaders({ 'Accept-Language': fp.languages });
+
+    // ⚡⚡⚡ 资源拦截：Discord 登录页只需要 HTML + JS + CSS，拦截图片/字体/media/trackers
+    // 这让页面加载从 3-8s 降到 1-2s，而且不影响 token 捕获
+    try {
+      await context.route(/\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf|mp4|webm|wav|mp3)(\?|$)/, route => route.abort());
+      // Google Fonts / Adobe Fonts — 拦截这些远端字体
+      await context.route(/fonts\.(googleapis|gstatic|adobe)\.com/, route => route.abort());
+      // 追踪脚本/遥测 — Segment/Hotjar/Fullstory 这些不影响登录
+      await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog)\.com/, route => route.abort());
+    } catch { /* route 可能已经被注册，忽略 */ }
 
   } catch (e) {
     capacity.release('START_ACCOUNT');
@@ -581,6 +602,13 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agent
   let context = await chromium.launchPersistentContext(userDataDir, launchOpts);
   // ⭐ 第 2 层防线：强制 HTTP Accept-Language header（Discord/hCaptcha 优先读这个）
   await context.setExtraHTTPHeaders({ 'Accept-Language': fp.languages });
+
+  // ⚡ 资源拦截：同 captureDiscordAccount
+  try {
+    await context.route(/\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf|mp4|webm|wav|mp3)(\?|$)/, route => route.abort());
+    await context.route(/fonts\.(googleapis|gstatic|adobe)\.com/, route => route.abort());
+    await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog)\.com/, route => route.abort());
+  } catch {}
 
 
   const page = context.pages()[0] || await context.newPage();
