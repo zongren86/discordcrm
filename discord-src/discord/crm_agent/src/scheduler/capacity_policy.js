@@ -14,7 +14,7 @@
 const _slots = {
   START_ACCOUNT: { max: 2, used: 0 },
   GATEWAY_RECONNECT: { max: 16, used: 0 },
-  LAUNCH_BROWSER: { max: 4, used: 0 },
+  LAUNCH_BROWSER: { max: Infinity, used: 0 },
 };
 
 const _waiters = new Map(); // slotType -> [{ resolve, timeout }]
