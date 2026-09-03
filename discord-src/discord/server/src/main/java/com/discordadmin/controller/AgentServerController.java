@@ -480,18 +480,28 @@ public class AgentServerController {
                     try {
                         Path rel = sourceDir.relativize(p);
                         String relStr = rel.toString().replace('\\', '/');
-                        // 排除目录
+                        // 排除目录（和手动 zip 打包保持一致）
                         String[] skipDirs = {"node_modules", "data", ".git", ".idea", ".vscode", "__pycache__"};
                         for (String skip : skipDirs) {
                             if (relStr.equals(skip) || relStr.startsWith(skip + "/")) return;
                         }
-                        // 排除文件
-                        String[] skipFiles = {".DS_Store", "package-lock.json"};
+                        // 排除文件（和手动 zip 打包保持一致）
+                        String[] skipFiles = {
+                            ".DS_Store",           // macOS 垃圾
+                            "config.json",         // ⚠️ 敏感（含 token），用户自己填
+                            "README.md",           // 有 README_INSTALL.txt
+                            "package-lock.json",   // 让用户 npm install 时重新生成
+                            "agent.log",           // 运行时文件
+                            "server.js",           // 旧启动脚本（如有）
+                            "discord.js.bak",      // 备份文件
+                        };
                         for (String skip : skipFiles) {
                             if (relStr.equals(skip)) return;
                         }
-                        // 排除隐藏文件
+                        // 排除隐藏文件（.开头）
                         if (relStr.startsWith(".")) return;
+                        // 排除 .bak 备份文件（任意层级的 *.bak, *.bak2, *.v1.bak 等）
+                        if (relStr.endsWith(".bak") || relStr.contains(".bak.") || relStr.contains(".bak2")) return;
                         // 空目录跳过
                         if (Files.isDirectory(p)) return;
 
