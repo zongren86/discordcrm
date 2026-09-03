@@ -180,6 +180,17 @@ public class AgentTaskService {
         task.setStatus(status);
         task.setUpdatedAt(Instant.now());
 
+        // ✅ 从 resultMap 提取 error 存到 error_message 列（FAILED/CANCELLED 时尤其重要）
+        if (resultMap != null && resultMap.containsKey("error")) {
+            String errMsg = String.valueOf(resultMap.get("error"));
+            if (errMsg.length() > 1000) errMsg = errMsg.substring(0, 1000);
+            task.setErrorMessage(errMsg);
+        } else if ("FAILED".equals(status)) {
+            task.setErrorMessage("agent 未上报具体错误信息");
+        } else if ("CANCELLED".equals(status)) {
+            task.setErrorMessage("任务已取消（用户操作或超时）");
+        }
+
         // SUCCESS 时对 CAPTURE_DISCORD_ACCOUNT / LAUNCH_BROWSER 做后处理：更新 DiscordAccount
         boolean needUpsert = ("CAPTURE_DISCORD_ACCOUNT".equals(task.getType()) || "LAUNCH_BROWSER".equals(task.getType()));
         if ("SUCCESS".equals(status) && needUpsert && resultMap != null && resultMap.containsKey("token")) {
