@@ -62,12 +62,10 @@ const SYSTEM_CHROME = findSystemChrome();
 // ============ Chrome 启动参数 ============
 
 function getLaunchArgs() {
+  // ⭐ 对齐同行策略：不用激进反风控参数（--disable-blink-features / --no-sandbox / --disable-enable-automation）
+  // 真正的反检测靠：系统 Chrome + initScript 伪造 + chromiumSandbox:false（Playwright 选项）
   return [
-    // ⭐⭐⭐ 反作弊核心：顶掉 Playwright 自动注入的 --enable-automation
-    '--disable-blink-features=AutomationControlled',
-    '--disable-enable-automation',
-
-    // 基础清理
+    // 基础清理（同行同款）
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-infobars',
@@ -75,22 +73,14 @@ function getLaunchArgs() {
     '--metrics-recording-only',
     '--no-pings',
     '--disable-extensions',
+    '--disable-background-networking',
 
-    // ⚡ 加速：无 GPU / 共享内存 / 后台服务
+    // 服务器加速（同行没加但安全，服务器确实没 GPU/共享内存问题）
     '--disable-gpu',
-    '--disable-software-rasterizer',
     '--disable-dev-shm-usage',
-    '--no-sandbox',
     '--disable-breakpad',
     '--disable-component-update',
     '--disable-domain-reliability',
-    '--disable-background-networking',
-
-    // ⭐ 防后台节流：Discord Gateway WebSocket 需要稳定
-    // 这三个参数让 Chrome 即使被遮挡/后台也保持正常运行
-    '--disable-background-timer-throttling',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-renderer-backgrounding',
 
     // 窗口
     '--window-size=1280,800',
