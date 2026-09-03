@@ -336,6 +336,10 @@
           <el-button @click="closeAgentResultDialog">关闭</el-button>
           <el-button type="primary" @click="continueAgentAdd">继续添加</el-button>
         </template>
+        <template v-else-if="agentResultDialog.status === 'FAILED'">
+          <el-button @click="closeAgentResultDialog">关闭</el-button>
+          <el-button type="primary" @click="continueAgentAdd">继续添加</el-button>
+        </template>
         <template v-else>
           <el-button @click="closeAgentResultDialog">关闭</el-button>
           <el-button v-if="agentResultDialog.status === 'SUCCESS'" type="primary" @click="closeAgentResultDialog">完成</el-button>
