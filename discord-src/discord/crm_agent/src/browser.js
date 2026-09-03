@@ -63,64 +63,38 @@ const SYSTEM_CHROME = findSystemChrome();
 
 function getLaunchArgs() {
   return [
-    // ⭐⭐⭐ 最高优先级：覆盖 Playwright 自动注入的 --enable-automation
-    // Playwright 会硬塞 --enable-automation 到 Chromium 参数里
-    // 我们必须用 --disable-blink-features=AutomationControlled 把它顶掉
+    // ⭐⭐⭐ 反作弊核心：顶掉 Playwright 自动注入的 --enable-automation
     '--disable-blink-features=AutomationControlled',
+    '--disable-enable-automation',
 
     // 基础清理
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-infobars',
-    '--disable-background-networking',
     '--disable-sync',
     '--metrics-recording-only',
     '--no-pings',
-    
-    // ⭐ 关键：清除 Playwright 默认的自动化标记
-    // Playwright 会自动加 --enable-automation + --disable-blink-features=AutomationControlled
-    // 这些被 Discord 检测到直接封！
-    // 我们通过 executablePath/channel 启动真实 Chrome，
-    // Playwright 的这些参数需要显式覆盖
-    
-    // 窗口大小相关
-    '--window-size=1280,800',
-    '--start-maximized',
-    
-    // 稳定 + ⚡ 加速参数
-    '--disable-breakpad',
-    '--disable-component-update',
-    '--disable-domain-reliability',
-    '--disable-features=AudioServiceOutOfProcess',
-    '--disable-ipc-flooding-protection',
-    '--disable-notifications',
-    '--disable-offer-store-unmasked-wallet-cards',
-    '--disable-offer-upload-credit-cards',
-    '--disable-print-preview',
-    '--disable-setuid-sandbox',
-    '--disable-speech-api',
-    '--no-sandbox',
+    '--disable-extensions',
 
-    // ⚡ Windows/云服务器没有 GPU，直接禁用省掉 1-2s GPU 初始化
+    // ⚡ 加速：无 GPU / 共享内存 / 后台服务
     '--disable-gpu',
     '--disable-software-rasterizer',
     '--disable-dev-shm-usage',
-    '--no-zygote',
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--disable-extensions',
-    '--disable-sync',
-    '--metrics-recording-only',
+    '--no-sandbox',
+    '--disable-breakpad',
+    '--disable-component-update',
+    '--disable-domain-reliability',
+    '--disable-background-networking',
 
-    // ⭐ hCaptcha/Discord 在意的参数
+    // ⭐ 防后台节流：Discord Gateway WebSocket 需要稳定
+    // 这三个参数让 Chrome 即使被遮挡/后台也保持正常运行
     '--disable-background-timer-throttling',
     '--disable-backgrounding-occluded-windows',
     '--disable-renderer-backgrounding',
 
-    // ⭐⭐⭐ 关键：顶掉 Playwright 硬塞的 --enable-automation
-    // Playwright 会在所有 args 后面追加 --enable-automation
-    // 必须用 --disable-enable-automation 把它顶掉
-    '--disable-enable-automation',
+    // 窗口
+    '--window-size=1280,800',
+    '--start-maximized',
   ];
 }
 

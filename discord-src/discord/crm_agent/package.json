@@ -1,6 +1,6 @@
 {
   "name": "crm_agent",
-  "version": "1.7.11",
+  "version": "1.7.12",
   "description": "Discord CRM \u4ee3\u7406\u670d\u52a1\u5668\u8282\u70b9 \u2014 \u8d1f\u8d23\u6d4f\u89c8\u5668\u81ea\u52a8\u5316\u548c Discord \u7528\u6237\u91c7\u96c6",
   "main": "src/index.js",
   "type": "commonjs",

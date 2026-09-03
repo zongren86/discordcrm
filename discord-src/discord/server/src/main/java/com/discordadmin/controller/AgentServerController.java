@@ -393,7 +393,7 @@ public class AgentServerController {
                 "  \"heartbeatIntervalMs\": 5000,\n" +
                 "  \"pollIntervalMs\": 5000,\n" +
                 "  \"production\": false,\n" +
-                "  \"version\": \"1.7.11\",\n" +
+                "  \"version\": \"1.7.12\",\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
                 "    \"type\": \"chromium\",\n" +
@@ -472,7 +472,7 @@ public class AgentServerController {
             }
         } catch (Exception ignored) {}
         // 3️⃣ 最后兜底：返回硬编码版本（和 build.sh 同步）
-        return "1.7.11";
+        return "1.7.12";
     }
 
     private String extractVersion(String json) {
