@@ -62,7 +62,7 @@ const SYSTEM_CHROME = findSystemChrome();
 // ============ Chrome 启动参数 ============
 
 function getLaunchArgs() {
-  // ⭐ 对齐同行策略：不用激进反风控参数（--disable-blink-features / --no-sandbox / --disable-enable-automation）
+  // 🆕 v1.8.7: 对齐同行策略 + 反 Playwright --enable-automation（Discord 核心风控信号）
   // 真正的反检测靠：系统 Chrome + initScript 伪造 + chromiumSandbox:false（Playwright 选项）
   return [
     // 基础清理（同行同款）
@@ -72,7 +72,9 @@ function getLaunchArgs() {
     '--disable-sync',
     '--metrics-recording-only',
     '--no-pings',
-    '--disable-extensions',
+    "--disable-enable-automation",
+    "--disable-blink-features=AutomationControlled",
+    // 🔴 v1.8.7: 移除（正常用户有插件，无插件=风控信号）
     '--disable-background-networking',
 
     // 服务器加速（同行没加但安全，服务器确实没 GPU/共享内存问题）
@@ -208,6 +210,8 @@ function buildLaunchOpts(fp, extra = {}) {
     headless: extra.headless ?? false,
     chromiumSandbox: false,
     args: getLaunchArgs(),
+    // 🆕 v1.8.7: 禁 Playwright 默认注入的 --enable-automation 和 CDP 开关
+    ignoreDefaultArgs: ["--enable-automation", "--enableAutomationTools"],
     ignoreHTTPSErrors: true,
   };
   
@@ -677,60 +681,55 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 }
 
 /**
- * launchBrowserOnly —— 只唤起浏览器，不采集（v2: 独立 profile + 指纹）
+ * launchBrowserOnly —— 纯手工唤起浏览器（v1.8.7 反作弊优化版）
+ *
+ * 🆕 v1.8.7 设计原则：反作弊第一。
+ *    这个函数是给用户手工操作用的（加好友/发消息等），Chrome 必须表现得
+ *    像用户自己双击 Chrome 图标打开的一样 —— 零自动化痕迹。
+ *
+ *    删除的（风控信号）：
+ *    ❌ context.route 资源拦截 —— 特别是 capture.discordapp.com 遥测
+ *    ❌ page.addInitScript(getInitScript) —— patch fetch/XHR 可被 Discord 检测
+ *    ❌ context.setExtraHTTPHeaders —— 命令行 --accept-language 已覆盖
+ *    ❌ page.goto —— 用户自己打开 Discord
+ *
+ *    保留的（同行机制正确的全部保留）：
+ *    ✅ 系统 Chrome（SYSTEM_CHROME 优先）
+ *    ✅ 代理绑定（Clash 同出口）
+ *    ✅ 指纹生成（UA/locale/timezone 地理自洽）
+ *    ✅ buildLaunchOpts（含 --disable-enable-automation）
+ *    ✅ launchPersistentContext（持久化 profile）
+ *    ✅ ignoreDefaultArgs（禁 Playwright 加的 --enable-automation）
  */
 async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agentName, proxyUrl } = {}) {
   if (!browserProfilePath) throw new Error('缺少 browserProfilePath');
   const userDataDir = path.resolve(browserProfilePath);
   if (!fs.existsSync(userDataDir)) throw new Error('浏览器 profile 不存在: ' + userDataDir);
 
-  // ⭐ 指纹（地理感知：通过代理探测出口 IP）
+  // ⭐ 指纹（地理感知：通过代理探测出口 IP）—— 保留同行机制
   const fp = await fingerprint.getOrCreateFingerprint(agentName || path.basename(userDataDir), { proxyUrl });
-  
-  // ⭐ 代理
+
+  // ⭐ 代理绑定（Clash 同出口）—— 保留同行机制
   if (proxyUrl) networkGate.bindAccountProxy(agentName || path.basename(userDataDir), proxyUrl);
 
-  // 检测 profile 是否已存在（热启动），热启动时跳过 ensureProfileIntl 避免 Discord 检测到配置篡改
+  // 🆕 v1.8.7: ensureProfileIntl 已移到 CAPTURE 冷启动时执行。
+  // LAUNCH_BROWSER 不写 profile 文件 —— Discord 检测 profile 文件时间戳/格式异常。
   const isHot = fs.existsSync(path.join(userDataDir, 'Default', 'Preferences'));
-  if (isHot) {
-    console.log('[Browser] 热启动 profile，跳过 ensureProfileIntl（保留原始 profile 状态）');
-  } else {
-    console.log('[Browser] 冷启动 profile，写入初始语言偏好...');
+  if (!isHot) {
+    console.log('[Browser] ⚠️ launchBrowserOnly 冷启动 profile！补充写入 ensureProfileIntl...');
     ensureProfileIntl(userDataDir, fp);
   }
 
-  console.log('[Browser] 唤起持久化浏览器 profile...');
-  const launchOpts = buildLaunchOpts(fp, {
-    headless: false,
-    proxyUrl,
-  });
-  
-  let context = await chromium.launchPersistentContext(userDataDir, launchOpts);
-  // ⭐ 第 2 层防线：强制 HTTP Accept-Language header（Discord/hCaptcha 优先读这个）
-  await context.setExtraHTTPHeaders({ 'Accept-Language': fp.languages });
+  console.log('[Browser] 🧊 唤起纯手工 Chrome（零自动化痕迹） profile=' + (isHot ? '热启动' : '冷启动'));
+  const launchOpts = buildLaunchOpts(fp, { headless: false, proxyUrl });
 
-  // ⚡ 资源拦截：同 captureDiscordAccount
-  try {
-    // ⚠️ 不拦图片！Discord 头像/表情/hCaptcha 验证都需要 png/jpg/svg
-   // 只拦追踪脚本、广告、Discord 自己的遥测
-    await context.route(/fonts\.(googleapis|gstatic|adobe|cloudflare)\.com/, route => route.abort());
-    await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog|google-analytics|analytics)\.com/, route => route.abort());
-    await context.route(/(googletagmanager|facebook|fbcdn|tiktok)\.com/, route => route.abort());
-    await context.route(/(clarity|userpilot|pendo|heap\.io|logrocket)\.(com|io)/, route => route.abort());
-    await context.route(/capture\.discordapp\.com/, route => route.abort());
-    await context.route(/doubleclick\.net|googlesyndication\.com/, route => route.abort());
-  } catch {}
-
-
+  // 🆕 v1.8.7: 纯手工 —— 不挂 route / 不注入 initScript / 不 setExtraHTTPHeaders
+  // buildLaunchOpts 已自动应用系统 Chrome + --disable-enable-automation + ignoreDefaultArgs
+  const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
   const page = context.pages()[0] || await context.newPage();
-  // ⭐ 注入动态反检测脚本
-  await page.addInitScript(getInitScript(fp));
-  
-  try {
-    await page.goto('https://discord.com/app', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
-  } catch {}
-  
-  console.log('[Browser] ✅ 浏览器已打开 (fingerprint=' + fp.fingerprintId + ')');
+
+  console.log('[Browser] ✅ Chrome 已打开 🆓 fingerprint=' + fp.fingerprintId +
+              ' executable=' + (launchOpts.executablePath ? 'SYSTEM_CHROME' : 'Playwright_Chromium'));
   return { context, page };
 }
 
