@@ -487,8 +487,15 @@ USE discordadmin;
 | **DB 服务器**（MySQL 8.0，discordadmin 库） | **101.47.41.155** | 2C/4G/50G | Ubuntu 22.04 | 独立部署，HikariCP 30 连接池 |
 | Discord CRM Agent（Mac/Windows） | — | — | macOS/Windows | **主动连后端** poll 任务，不走系统端口 |
 
-> ⚠️ **旧架构已废弃**：原 server（0.1.3）在 101.47.41.149、端口 8090，已停止使用。
-> 旧 mumu-agent（WebSocket 模式）也停了，换成新 **crm_agent**（HTTP poll 模式）。
+> 📌 **服务器归属说明（重要，别搞混）**：
+> | IP | 归属 | 用途 |
+> |----|------|------|
+> | **101.47.41.149** | ✅ **本子项目（Discord CRM）** | **应用服务器**：server v1.7.2 + Nginx + systemd |
+> | **101.47.41.151** | ❌ **其他子项目** | 旧 server-admin 0.1.3 + mumu-agent 项目，**不在本仓库维护范围** |
+> | **101.47.41.155** | 📊 共用 | **DB 服务器**（MySQL 8.0），本项目和其他子项目**共用同一个 discordadmin 库** |
+>
+> ⚠️ **本项目旧架构已废弃**：曾短暂在 149 上跑过 server-admin 0.1.3（端口 9090），已停止使用。
+> 旧 mumu-agent（WebSocket 模式）也停了，换成新 **crm_agent**（HTTP poll 模式，端口 8090）。
 
 ### 9.2 生产架构图（v1.7.2）
 
