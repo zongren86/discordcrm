@@ -390,12 +390,18 @@ public class AgentServerController {
                 "  \"serverUrl\": \"http://127.0.0.1:8090/api\",\n" +
                 "  \"agentName\": \"crm-agent-01\",\n" +
                 "  \"token\": \"在此粘贴前端生成的token\",\n" +
-                "  \"heartbeatIntervalMs\": 30000,\n" +
+                "  \"heartbeatIntervalMs\": 5000,\n" +
                 "  \"pollIntervalMs\": 5000,\n" +
+                "  \"production\": false,\n" +
+                "  \"version\": \"1.7.4\",\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
                 "    \"type\": \"chromium\",\n" +
-                "    \"userDataDir\": \"./data/browser-profile\"\n" +
+                "    \"userDataDir\": \"./data/browser-profile\",\n" +
+                "    \"viewport\": {\n" +
+                "      \"width\": 1280,\n" +
+                "      \"height\": 800\n" +
+                "    }\n" +
                 "  }\n" +
                 "}");
         result.put("notes", List.of(
@@ -468,7 +474,7 @@ public class AgentServerController {
                 }
             }
         } catch (Exception ignored) {}
-        return "1.7.3";
+        return "1.7.4";
     }
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
     private byte[] buildZip(Path sourceDir) throws IOException {

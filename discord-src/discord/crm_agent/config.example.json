@@ -4,6 +4,8 @@
     "token": "",
     "heartbeatIntervalMs": 5000,
     "pollIntervalMs": 5000,
+    "production": false,
+    "version": "1.7.4",
     "browser": {
         "headless": false,
         "type": "chromium",
@@ -12,8 +14,5 @@
             "width": 1280,
             "height": 800
         }
-    },
-    "version": "1.7.4",
-    "discordProxy": "",
-    "production": false
+    }
 }
