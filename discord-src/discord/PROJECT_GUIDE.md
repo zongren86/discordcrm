@@ -18,8 +18,8 @@
 
 | 子项目 | 技术栈 | 端口 | 运行位置 | 状态 |
 |--------|--------|------|----------|------|
-| **server-admin** ✅ | Spring Boot 3.3.4 + JPA + Security + WebSocket | 9090 | 应用服务器 | **当前主力** |
-| **client-admin** ✅ | Vue 3 + Vite 5 + Element Plus + Pinia | 5175 | 应用服务器（Nginx 反代） | **当前主力** |
+| **server** ✅ | Spring Boot 3.3.4 + JPA + Security + WebSocket | 9090 | 应用服务器 | **当前主力** |
+| **client-vue** ✅ | Vue 3 + Vite 5 + Element Plus + Pinia | 5175 | 应用服务器（Nginx 反代） | **当前主力** |
 | **mumu-agent** ✅ | Node.js + WebSocket + MuMu CLI | — | Windows 云电脑（173/其它） | **设备端 Agent** |
 | server | Spring Boot（旧） | 8090 | 应用服务器 | 共存，非本轮开发范围 |
 | client-vue | Vue 2（旧） | 5173 | 本地开发 | 共存，非本轮开发范围 |
@@ -32,14 +32,14 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│                    应用服务器  101.47.41.151 (4C/8G)                │
+│                    应用服务器  101.47.41.149 (4C/8G)                │
 │  ┌──────────┐   ┌──────────────────┐   ┌──────────────────────┐   │
-│  │  Nginx   │──▶│  server-admin     │──▶│  MySQL Client (Hikari)│   │
-│  │  :80/:443│   │  :9090 SpringBoot│   │  连接池 max=15       │   │
+│  │  Nginx   │──▶│  server     │──▶│  MySQL Client (Hikari)│   │
+│  │  :80/:443│   │  :8090 SpringBoot│   │  连接池 max=15       │   │
 │  └──────────┘   └────────┬─────────┘   └──────────┬───────────┘   │
 │        ↑                  │ WebSocket                │               │
 │        │                  │ /ws/agent                │               │
-│  client-admin            │                           │               │
+│  client-vue            │                           │               │
 │  (静态前端)               │                           │               │
 │  或本地开发 5175          │                           │               │
 └──────────────────────────┼───────────────────────────┼───────────────┘
@@ -64,7 +64,7 @@
 ### 2.2 数据流（加好友场景）
 
 ```
-client-admin               server-admin                mumu-agent              MuMu模拟器
+client-vue               server                mumu-agent              MuMu模拟器
     │                         │                           │                      │
     │─ 创建模拟器 ───────────▶│                           │                      │
     │                         │─ 查找 deviceId 匹配的 Agent │                      │
@@ -87,7 +87,7 @@ client-admin               server-admin                mumu-agent              M
 ```java
 // 任何模拟器操作必须走这个链路：
 // 1. 读 EmuInstance.deviceId
-// 2. CloudWebSocketService 中找 deviceId 对应的在线 Agent
+// 2. AgentServerService 中找 deviceId 对应的在线 Agent
 // 3. 把命令发到那个 Agent 的 WebSocket 会话
 // 绝对不能按 merchantId 或 "第一个在线 Agent" 选
 ```
@@ -96,7 +96,7 @@ client-admin               server-admin                mumu-agent              M
 
 ## 3. 技术栈
 
-### 后端 server-admin
+### 后端 server
 
 | 类别 | 技术 | 版本 |
 |------|------|------|
@@ -111,7 +111,7 @@ client-admin               server-admin                mumu-agent              M
 | Discord API | JDA (Java Discord API) | 5.x |
 | 构建 | Maven | — |
 
-### 前端 client-admin
+### 前端 client-vue
 
 | 类别 | 技术 | 版本 |
 |------|------|------|
@@ -142,7 +142,7 @@ client-admin               server-admin                mumu-agent              M
 discord/                                 ← 仓库根目录
 ├── .git/                                ← Git 仓库 (branch: main-temp-2)
 │
-├── server-admin/              ✅ 后端
+├── server/              ✅ 后端
 │   ├── pom.xml                          ← 当前 version: 0.1.3
 │   ├── src/main/
 │   │   ├── java/com/discordadmin/
@@ -155,11 +155,11 @@ discord/                                 ← 仓库根目录
 │   │   │   │   ├── FriendController          好友管理
 │   │   │   │   └── ExclusionController       排除配置（新增）
 │   │   │   ├── service/                 ← 业务层（核心逻辑都在这里）
-│   │   │   │   ├── CloudWebSocketService     ⭐ Agent WebSocket 管理 + 心跳
-│   │   │   │   ├── EmuInstanceService        ⭐ 模拟器实例操作（start/stop/create）
-│   │   │   │   ├── EmuAutoAddDispatcher      ⭐ 自动加好友调度
-│   │   │   │   ├── EmuServerBindingService   服务器绑定（含跨商户隔离逻辑）
-│   │   │   │   ├── EmuAccountBindingService  账号绑定（含跨商户隔离逻辑）
+│   │   │   │   ├── AgentServerService     ⭐ Agent WebSocket 管理 + 心跳
+│   │   │   │   ├── DiscordAccountService        ⭐ 模拟器实例操作（start/stop/create）
+│   │   │   │   ├── AgentTaskService      ⭐ 自动加好友调度
+│   │   │   │   ├── AgentServerService   服务器绑定（含跨商户隔离逻辑）
+│   │   │   │   ├── DiscordAccountService  账号绑定（含跨商户隔离逻辑）
 │   │   │   │   ├── ExclusionService          排除配置管理
 │   │   │   │   ├── DiscordMemberService      Discord 成员抓取
 │   │   │   │   └── ...
@@ -185,7 +185,7 @@ discord/                                 ← 仓库根目录
 │   ├── scripts/discord-admin.service     ← systemd 服务模板
 │   └── target/                           ← 编译产物 *.jar
 │
-├── client-admin/              ✅ 前端
+├── client-vue/              ✅ 前端
 │   ├── package.json                     ← 当前 version: 1.0.1
 │   ├── vite.config.js                   ← dev proxy /assets → /api
 │   ├── src/
@@ -269,7 +269,7 @@ discord/                                 ← 仓库根目录
 
 ## 6. 功能清单
 
-### 6.1 后端 API（server-admin 9090）
+### 6.1 后端 API（server 9090）
 
 #### 认证 `/api/auth`
 | 接口 | 说明 |
@@ -283,7 +283,7 @@ discord/                                 ← 仓库根目录
 |------|------|
 | GET `/instances` | 模拟器实例列表（按 merchantId/userId 过滤） |
 | POST `/instances` | 批量创建实例（**需指定 deviceId**） |
-| POST `/instances/{id}/start` | 启动（走 CloudWebSocket → deviceId 匹配的 Agent） |
+| POST `/instances/{id}/start` | 启动（走 Agent Server HTTP Poll → deviceId 匹配的 Agent） |
 | POST `/instances/{id}/stop` | 停止 |
 | POST `/instances/{id}/restart` | 重启 |
 | DELETE `/instances/{id}` | 删除（同步调用 mumu-agent 删除物理实例） |
@@ -302,7 +302,7 @@ discord/                                 ← 仓库根目录
 
 #### Discord 成员抓取 `/api/discord-members`
 
-### 6.2 前端页面（client-admin 5175）
+### 6.2 前端页面（client-vue 5175）
 
 | 页面 | 路由 | 说明 |
 |------|------|------|
@@ -364,8 +364,8 @@ JWT payload:
 **核心原则**：所有查询必须带 `merchantId = currentMerchantId`，除非是 PLATFORM_ADMIN。
 
 最近修复的两个典型错误：
-- EmuServerBindingService.getAvailableServers：原来用 findAll() → 跨商户泄漏 → 改为 findByMerchantId()
-- EmuAccountBindingService.getAvailableAccounts：controller fallback merchantId=1L → 查不到账号 → 改为 SecurityUtils.currentMerchantId()
+- AgentServerService.getAvailableServers：原来用 findAll() → 跨商户泄漏 → 改为 findByMerchantId()
+- DiscordAccountService.getAvailableAccounts：controller fallback merchantId=1L → 查不到账号 → 改为 SecurityUtils.currentMerchantId()
 
 ### 7.3 设备隔离（deviceId）⭐ 最关键
 
@@ -375,7 +375,7 @@ JWT payload:
 agent = findFirstOnlineAgent(merchantId);
 
 // 正确做法：
-// 从 EmuInstance 读 deviceId → 在 CloudWebSocketService 的 session Map 里精确匹配
+// 从 EmuInstance 读 deviceId → 在 AgentServerService 的 session Map 里精确匹配
 String deviceId = instance.getDeviceId();
 AgentSession session = cloudWsService.findSessionByDeviceId(deviceId);
 session.send(command);
@@ -443,18 +443,18 @@ logback-spring.xml 配置了三个过滤器：
 
 ```bash
 # 1. 后端（dev profile 连本地 DB）
-cd server-admin
+cd server
 mvn spring-boot:run -Dspring-boot.run.profiles=dev
-# 监听 :9090
+# 监听 :8090
 
-# 2. 前端（dev 模式自动代理 /api → :9090）
-cd client-admin
+# 2. 前端（dev 模式自动代理 /api → :8090）
+cd client-vue
 npm install     # 首次
 npm run dev
 # 监听 :5175
 
 # 3. mumu-agent（Windows 电脑上跑）
-# config.json 里 serverUrl 改成 ws://[你的mac本地IP]:9090/ws/agent
+# config.json 里 serverUrl 改成 ws://[你的mac本地IP]:8090/ws/agent
 # 然后 node agent.js
 ```
 
@@ -468,7 +468,7 @@ USE discordadmin;
 
 ### 8.4 开发验证规范（用户要求）
 
-1. 改完代码必须**重启前后端**（9090 / 5175）
+1. 改完代码必须**重启前后端**（8090 / 5175）
 2. 用 **curl** 验证后端 API（不用浏览器）
 3. 只在**最终验证**时用浏览器
 4. 每次改完**批量改几处再统一编译**，不要一行一编译
@@ -479,67 +479,118 @@ USE discordadmin;
 
 ## 9. 生产部署
 
-### 9.1 服务器清单
+### 9.1 服务器清单（v1.7.2 更新）
 
 | 用途 | IP | 配置 | OS | 备注 |
 |------|-----|------|----|------|
-| 应用服务器（server-admin + Nginx） | 101.47.41.151 | 4C/8G/50G | Ubuntu 22.04 | SSH user=root |
-| DB 服务器（MySQL 8.0） | 101.47.41.155 | 2C/4G/50G | Ubuntu 22.04 | SSH user=root |
-| Windows 云电脑（mumu-agent + MuMu） | — | — | Windows | mumu-agent 主动连后端 |
+| **应用服务器**（server v1.7.2 + Nginx + systemd） | **101.47.41.149** | 4C/8G/50G | Ubuntu 22.04 | SSH root/laeC7ooC7eif#aih |
+| **DB 服务器**（MySQL 8.0，discordadmin 库） | **101.47.41.155** | 2C/4G/50G | Ubuntu 22.04 | 独立部署，HikariCP 30 连接池 |
+| Discord CRM Agent（Mac/Windows） | — | — | macOS/Windows | **主动连后端** poll 任务，不走系统端口 |
 
-### 9.2 systemd 服务配置
+> ⚠️ **旧架构已废弃**：原 server（0.1.3）在 101.47.41.149、端口 8090，已停止使用。
+> 旧 mumu-agent（WebSocket 模式）也停了，换成新 **crm_agent**（HTTP poll 模式）。
 
-位置：`/etc/systemd/system/discord-admin.service`
+### 9.2 生产架构图（v1.7.2）
+
+```
+                    ┌─────────────────────────────────────┐
+                    │   101.47.41.149 (应用 4C/8G)        │
+                    │                                     │
+  ┌──────────┐      │  ┌──────────────────────────┐      │
+  │ 外网     │:80   │  │  nginx (active, since 8/26)│      │
+  │ 用户浏览器│─────▶│  │   proxy_pass 8090 (api)   │      │
+  │          │      │  │   proxy_pass 5273 (emu)   │      │
+  └──────────┘      │  └──────────────────────────┘      │
+                    │           │                         │
+                    │           ▼                         │
+                    │  ┌──────────────────────────┐      │
+                    │  │ systemd: discord-admin   │      │
+                    │  │  enabled (开机自启)       │      │
+                    │  │                          │      │
+                    │  │ java -jar                 │      │
+                    │  │ discord-admin-server-1.7.2│      │
+                    │  │ --spring.profiles.active  │      │
+                    │  │   =prod                   │      │
+                    │  │ --server.port=8090       │      │
+                    │  │ Xms512m Xmx2048m          │      │
+                    │  └──────┬───────────────────┘      │
+                    │         │ HikariCP 30连接             │
+                    └─────────┼────────────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────────────────┐
+                    │ DB: 101.47.41.155:3306      │
+                    │ MySQL 8.0                   │
+                    │ discordadmin (utf8mb4)      │
+                    │ root / Dsdb2026!            │
+                    │ max_connections ≈ 200       │
+                    └─────────────────────────────┘
+
+  Agent 节点（macOS/Windows）:
+  ┌──────────────┐       HTTP poll (每 5s)
+  │ crm_agent    │ ──────────────────────▶ 后端 8090
+  │ v1.7.2       │ ◀────────────────────── AgentTask
+  │ Playwright   │                         (CAPTURE/LAUNCH/SYNC)
+  └──────────────┘
+       │
+       ├── 系统 Chrome（非 Playwright 内置）
+       ├── 代理自动探测 7890（本机）
+       └── proxy=http://127.0.0.1:7890
+```
+
+### 9.3 systemd 完整配置（生产真实文件）
+
+位置：`/etc/systemd/system/discord-admin.service` — **systemctl enable 已生效**
 
 ```ini
 [Unit]
-Description=Discord Admin Server
+Description=Discord Admin Backend (server) v1.7.2
 After=network.target
 
 [Service]
+Type=simple
 User=root
-WorkingDirectory=/opt/discord-admin/backend
+WorkingDirectory=/opt/discord-admin/current
+
+# ⚠️ 所有 DB/JWT 配置必须通过环境变量传入（application-prod.yml 默认值为空）
 Environment="SPRING_PROFILES_ACTIVE=prod"
 Environment="DB_HOST=101.47.41.155"
-Environment="DB_USER=root"
+Environment="DB_PORT=3306"
+Environment="DB_NAME=discordadmin"
+Environment="DB_USERNAME=root"
 Environment="DB_PASSWORD=Dsdb2026!"
-Environment="JWT_SECRET=<你的密钥>"
-ExecStart=/usr/bin/java \
-  -Xms1g -Xmx2g \
+Environment="JWT_SECRET=discord-admin-prod-secret-2026-strong-key-at-least-256-bits"
+Environment="APP_BASE_URL=http://101.47.41.149:8090"
+
+Environment="JAVA_OPTS=-Xms512m -Xmx2048m \
+  -XX:+HeapDumpOnOutOfMemoryError \
+  -XX:HeapDumpPath=/var/log/discord-admin/ \
   -XX:+UseG1GC -XX:MaxGCPauseMillis=200 \
-  -Dfile.encoding=UTF-8 \
-  -jar discord-admin-server-admin-0.1.3.jar
+  -Dfile.encoding=UTF-8"
+
+ExecStart=/usr/bin/java $JAVA_OPTS \
+  -jar /opt/discord-admin/current/discord-admin-server-1.7.2.jar
+
 Restart=on-failure
-RestartSec=10
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
+TimeoutStartSec=180
+LimitNOFILE=65536
+
+StandardOutput=append:/var/log/discord-admin/app.log
+StandardError=append:/var/log/discord-admin/error.log
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### 9.3 一键部署脚本
-
+**常用命令**：
 ```bash
-#!/bin/bash
-# deploy.sh — 部署 server-admin 到 101.47.41.151
-
-APP_HOST="root@101.47.41.151"
-JAR="server-admin/target/discord-admin-server-admin-0.1.3.jar"
-
-# 1. 打包
-cd server-admin && mvn clean package -DskipTests
-
-# 2. 上传 jar
-scp "$JAR" "$APP_HOST:/opt/discord-admin/backend/"
-
-# 3. 远程重启
-ssh "$APP_HOST" "
-  sed -i 's/discord-admin-server-admin-0.1.2.jar/discord-admin-server-admin-0.1.3.jar/' /etc/systemd/system/discord-admin.service
-  systemctl daemon-reload
-  systemctl restart discord-admin
-  sleep 15
-  systemctl is-active discord-admin
-  ss -tlnp | grep 9090
-"
+systemctl daemon-reload              # 改 service 后必须 reload
+systemctl restart discord-admin      # 重启（会自动拉新环境变量）
+systemctl status discord-admin       # 查看状态
+journalctl -u discord-admin -f       # 实时日志
 ```
 
 ### 9.4 Nginx 反代配置
@@ -547,24 +598,24 @@ ssh "$APP_HOST" "
 ```nginx
 server {
     listen 80;
-    server_name 101.47.41.151;
+    server_name 101.47.41.149;
 
-    # 前端静态
-    root /var/www/discord-admin;
+    # 前端静态（Vite 打包产物）
+    root /var/www/discord-admin/current;
     index index.html;
     location / { try_files $uri $uri/ /index.html; }
 
     # 后端 API
     location /api/ {
-        proxy_pass http://127.0.0.1:9090/api/;
+        proxy_pass http://127.0.0.1:8090/api/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 
-    # Agent WebSocket 端点
+    # Agent WebSocket（CAPTURE 进度推送）
     location /ws/ {
-        proxy_pass http://127.0.0.1:9090/ws/;
+        proxy_pass http://127.0.0.1:8090/ws/;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -574,37 +625,157 @@ server {
 }
 ```
 
-### 9.5 mumu-agent 生产 config.json
+### 9.5 一键部署 SOP
+
+```bash
+# ===== 本地 Mac 执行 =====
+BASE="discord-src/discord"
+REMOTE="root@101.47.41.149"
+REMOTE_DIR="/opt/discord-admin/current"
+
+# 1. 前端打包
+cd $BASE/client-vue
+rm -rf node_modules/.vite dist
+npm run build
+
+# 2. 后端打包（内嵌前端 dist）
+cd $BASE/server
+mvn clean package -DskipTests
+JAR=$(ls -t target/*.jar | head -1)
+echo "JAR: $JAR"
+
+# ===== 上传 =====
+# 3. JAR 上传
+sshpass -p 'laeC7ooC7eif#aih' scp -o StrictHostKeyChecking=no \
+  "$JAR" $REMOTE:$REMOTE_DIR/
+
+# 4. 前端静态上传
+sshpass -p 'laeC7ooC7eif#aih' rsync -az --delete \
+  "$BASE/client-vue/dist/" \
+  $REMOTE:/var/www/discord-admin/current/
+
+# ===== 远程重启 =====
+# 5. 修改 systemd ExecStart 指向新 JAR（版本号变了的话）
+sshpass -p 'laeC7ooC7eif#aih' ssh -o StrictHostKeyChecking=no $REMOTE << REMOTE_EOF
+systemctl daemon-reload
+systemctl restart discord-admin
+
+# 等待启动（最多 30s）
+for i in $(seq 1 30); do
+  sleep 2
+  CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8090/api/auth/login \
+    -X POST -H "Content-Type: application/json" \
+    -d '{"username":"admin","password":"admin123"}')
+  if [ "$CODE" = "200" ] || [ "$CODE" = "401" ]; then
+    echo "✅ 启动成功 HTTP $CODE (${i}x2秒)"
+    break
+  fi
+  [ $i -eq 30 ] && { echo "❌ 超时"; tail -20 /var/log/discord-admin/discord-admin.log; }
+done
+REMOTE_EOF
+
+# 6. 外网验证
+curl -s -o /dev/null -w "前端: HTTP %{http_code}\n" http://101.47.41.149/
+curl -s -o /dev/null -w "API : HTTP %{http_code}\n" http://101.47.41.149/api/auth/login \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+```
+
+### 9.6 生产环境变量速查（**全部在 systemd service 里**）
+
+| 变量 | 值 | 说明 |
+|------|-----|------|
+| `DB_HOST` | `101.47.41.155` | ⚠️ **独立 DB 服务器，不是 149 本机** |
+| `DB_PORT` | `3306` | 默认 |
+| `DB_NAME` | `discordadmin` | — |
+| `DB_USERNAME` | `root` | — |
+| `DB_PASSWORD` | `Dsdb2026!` | ⚠️ 不是本地的 `Len2066!` |
+| `JWT_SECRET` | `discord-admin-prod-secret-2026-strong-key-at-least-256-bits` | 必须 ≥ 32 chars，否则 JwtUtil 启动崩溃 |
+| `APP_BASE_URL` | `http://101.47.41.149:8090` | 邮件回调、WebSocket 地址拼接 |
+
+### 9.7 生产日志路径
+
+| 文件 | 路径 | 内容 |
+|------|------|------|
+| app.log | `/var/log/discord-admin/app.log` | systemd stdout，主日志 |
+| error.log | `/var/log/discord-admin/error.log` | systemd stderr，异常堆栈 |
+| discord-admin.log | `/var/log/discord-admin/discord-admin.log` | 旧 logback-spring.xml 输出（可能已废弃） |
+
+### 9.8 2026-09-03 生产部署踩坑记录（必读）
+
+本次从 0.1.0 升级到 **v1.7.2**，踩了 4 个致命坑：
+
+| # | 坑 | 现象 | 根因 | 修复 |
+|---|-----|------|------|------|
+| **1** | **JWT 启动崩溃** | `WeakKeyException: 0 bits not secure enough` | `application-prod.yml` 的 `jwt.secret: ${JWT_SECRET:}` **默认值是空字符串**，不是有意义的 fallback！之前老版本可能在 application.yml 里有默认值，但 prod 没设 | 在 systemd Environment 里加 `JWT_SECRET=xxxx(≥32 chars)` |
+| **2** | **DB 连不上（Connection refused）** | HikariCP 一直 `Communications link failure` | 以为 MySQL 在 149 本机，但 **DB 独立部署在 155**！注释写的 `149 应用 + 155 DB` 是对的，我忽略了 | 设 `DB_HOST=101.47.41.155`，`nc -zv 101.47.41.155 3306` 验证连通 |
+| **3** | **DB 密码错（Access denied）** | `Access denied for user 'root'@'101.47.41.149'` | 用了本地密码 `Len2066!`，但生产实际密码是 `Dsdb2026!` | 从 `/opt/discord-admin/releases/1.0.0/config/application.yml` 里找回旧明文密码 |
+| **4** | **启动后外网 502 Bad Gateway** | nginx 连不上 8090 | 上面 3 个坑叠加导致后端没起来，nginx proxy_pass 8090 自然超时 | 修好 1+2+3，后端 8 秒内就绪 → 502 消失 |
+
+**教训**：
+- application-prod.yml 里 `${VAR:}` 空默认值是**陷阱**——Spring Boot 不是 fallback 到 application.yml，就是空值
+- 独立 DB 架构：`DB_HOST` 不是 localhost，必须显式设
+- 换版本前**先 grep 旧 JAR 里的明文密码**，不要假设和本地一样
+- 部署 SOP 第一步：`nc -zv $DB_HOST 3306` 验证 DB 通，再启动 Java
+
+### 9.9 crm_agent v1.7.2 生产 config.json（每台 Agent 节点独立）
 
 ```json
 {
-  "version": "v2.13.7",
-  "serverUrl": "ws://101.47.41.151/ws/agent",
-  "heartbeatInterval": 30000,
-  "mumuCliPath": "C:\\Program Files\\Netease\\MuMu\\shell\\mumutool.exe",
-  "adbPath": "C:\\Program Files\\Netease\\MuMu\\shell\\adb.exe"
+  "serverUrl": "http://101.47.41.149:8090/api",
+  "agentName": "<唯一节点名，如 crm-agent-win-1>",
+  "token": "<前端代理管理 → 重置 token 拿>",
+  "heartbeatIntervalMs": 5000,
+  "pollIntervalMs": 5000,
+  "browser": {
+    "headless": false,
+    "userDataDir": "./data/browser-profile"
+  },
+  "version": "1.7.2"
 }
 ```
 
-### 9.6 常用运维命令
-
+**上线步骤**：
 ```bash
-# 服务状态
-systemctl status discord-admin
-journalctl -u discord-admin -f --since "10 min ago"
+# Mac/Windows agent 机器
+cd crm_agent
+npm install
+# 改 config.json 的 token 和 agentName
+nohup node src/index.js > agent.log 2>&1 &
 
-# 日志
-tail -f /var/log/discord-admin/app.log
-tail -f /var/log/discord-admin/access.log    # AccessLogFilter
-
-# 端口
-ss -tlnp | grep 9090
-
-# DB 连接数（生产 DB 服务器上跑）
-mysql -uroot -p'Dsdb2026!' -e "SHOW PROCESSLIST;"
+# 验证：前端 → 代理管理页面 → 看到节点 ONLINE
 ```
 
----
+### 9.10 常用运维命令速查
+
+```bash
+# ===== 149 应用服务器 =====
+systemctl status discord-admin              # 服务状态
+systemctl restart discord-admin             # 重启（加载新 env）
+journalctl -u discord-admin -f              # 实时日志
+journalctl -u discord-admin --since "1h ago"
+tail -f /var/log/discord-admin/app.log      # 旧 logback 日志
+ss -tlnp | grep 8090                        # 端口监听
+ps aux | grep discord-admin-server          # Java 进程
+
+# ===== 155 DB 服务器 =====
+mysql -uroot -p'Dsdb2026!' discordadmin \
+  -e "SHOW PROCESSLIST;"                    # 查看连接
+mysql -uroot -p'Dsdb2026!' discordadmin \
+  -e "SHOW TABLES;"
+mysql -uroot -p'Dsdb2026!' discordadmin \
+  -e "SELECT COUNT(*) FROM agent_servers;"
+
+# ===== Agent 节点（Mac/Windows）=====
+tail -f crm_agent/agent.log
+pgrep -fa "crm_agent"                       # 进程检查
+pgrep -fa "browser-profiles"                # Chrome 子进程检查
+
+# ===== 外网验证 =====
+curl -s http://101.47.41.149/api/auth/login \
+  -X POST -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin123"}'
+```
 
 ## 10. 开发规范与历史踩坑
 
@@ -619,7 +790,7 @@ mysql -uroot -p'Dsdb2026!' -e "SHOW PROCESSLIST;"
 | 5 | 前端定时器高频轮询打爆后端 | 多个 setInterval 叠加 | 统一 10-30s + 后端加防抖缓存 |
 | 6 | AccessLogFilter 日志重复打印 | 同时 @Component + addFilterBefore | 只保留 @Component 自动注册 |
 | 7 | HikariCP 连接耗尽 | 默认 10，心跳阻塞 | prod=15, dev=20，DB 2C/4G 撑不住太多 |
-| 8 | mumu-agent 串机 | 按 merchantId 选 Agent 而非 deviceId | **CloudWebSocket 里 session Map 用 deviceId 做 key** |
+| 8 | mumu-agent 串机 | 按 merchantId 选 Agent 而非 deviceId | **Agent Server HTTP Poll 里 session Map 用 deviceId 做 key** |
 
 ### 10.2 代码修改原则
 
@@ -659,11 +830,11 @@ git add -A && git commit -m "描述"    # 改完立即提交，保持工作区�
 - [ ] 读本文档
 - [ ] 确认 JDK 17 / Node 18+ / MySQL 8.0 环境
 - [ ] 本地创建数据库 discordadmin
-- [ ] `cd server-admin && mvn spring-boot:run -Dspring-boot.run.profiles=dev`
-- [ ] `cd client-admin && npm install && npm run dev`
+- [ ] `cd server && mvn spring-boot:run -Dspring-boot.run.profiles=dev`
+- [ ] `cd client-vue && npm install && npm run dev`
 - [ ] 用 admin / admin123 登录 http://localhost:5175
-- [ ] curl -X POST http://localhost:9090/api/auth/login -H "Content-Type: application/json" -d '{"username":"merchantadmin","password":"admin123"}'
-- [ ] 查 server-admin/src/main/resources/application-prod.yml 里的环境变量，在 101.47.41.151 检查 /etc/systemd/system/discord-admin.service
+- [ ] curl -X POST http://localhost:8090/api/auth/login -H "Content-Type: application/json" -d '{"username":"merchantadmin","password":"admin123"}'
+- [ ] 查 server/src/main/resources/application-prod.yml 里的环境变量，在 101.47.41.149 检查 /etc/systemd/system/discord-admin.service
 - [ ] 改完代码 → mvn package → scp 到 151 → systemctl restart → 验证
 
 ---
@@ -672,15 +843,15 @@ git add -A && git commit -m "描述"    # 改完立即提交，保持工作区�
 
 | 你想做… | 去这里看 |
 |--------|---------|
-| 改登录/JWT | server-admin/.../security/JwtUtil.java、JwtAuthFilter.java |
-| 改权限/RBAC | server-admin/.../controller/AuthController.java、RoleRepository.java |
-| 改模拟器操作 | server-admin/.../service/EmuInstanceService.java |
-| 改自动加好友 | server-admin/.../service/EmuAutoAddDispatcher.java |
-| 改 Agent 通信 | server-admin/.../service/CloudWebSocketService.java、mumu-agent/agent.js |
-| 改跨商户查询 | server-admin/.../service/EmuServerBindingService.java、EmuAccountBindingService.java |
-| 改心跳/超时 | server-admin/.../service/CloudWebSocketService.java（HEARTBEAT_TIMEOUT_SECONDS） |
-| 改排除配置 | server-admin/.../service/ExclusionService.java、controller/ExclusionController.java |
-| 改日志 | server-admin/src/main/resources/logback-spring.xml |
-| 改前端页面 | client-admin/src/views/EmulatorView.vue（好友管理） |
+| 改登录/JWT | server/.../security/JwtUtil.java、JwtAuthFilter.java |
+| 改权限/RBAC | server/.../controller/AuthController.java、RoleRepository.java |
+| 改模拟器操作 | server/.../service/DiscordAccountService.java |
+| 改自动加好友 | server/.../service/AgentTaskService.java |
+| 改 Agent 通信 | server/.../service/AgentServerService.java、mumu-agent/agent.js |
+| 改跨商户查询 | server/.../service/AgentServerService.java、DiscordAccountService.java |
+| 改心跳/超时 | server/.../service/AgentServerService.java（HEARTBEAT_TIMEOUT_SECONDS） |
+| 改排除配置 | server/.../service/ExclusionService.java、controller/ExclusionController.java |
+| 改日志 | server/src/main/resources/logback-spring.xml |
+| 改前端页面 | client-vue/src/views/EmulatorView.vue（好友管理） |
 | 改前端轮询 | 在 EmulatorView.vue 搜 setInterval |
-| 查实体字段 | server-admin/.../entity/*.java（全部 @Column 都有含义） |
+| 查实体字段 | server/.../entity/*.java（全部 @Column 都有含义） |
