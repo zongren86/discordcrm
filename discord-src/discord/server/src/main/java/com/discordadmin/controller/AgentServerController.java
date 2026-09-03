@@ -472,7 +472,7 @@ public class AgentServerController {
             }
         } catch (Exception ignored) {}
         // 3️⃣ 最后兜底：返回硬编码版本（和 build.sh 同步）
-        return "$NEW_VER";
+        return "1.7.5";
     }
 
     private String extractVersion(String json) {

@@ -82,10 +82,18 @@ with open(path, "w") as f: json.dump(d, f, indent=4, ensure_ascii=False)
 PYEOF2
 
 # 2e. AgentServerController.java 硬编码
-sed -i '' 's/return "[0-9]*\.[0-9]*\.[0-9]*";/return "$NEW_VER";/' server/src/main/java/com/discordadmin/controller/AgentServerController.java
+python3 << PYEOF2
+import re
+JAVA = "server/src/main/java/com/discordadmin/controller/AgentServerController.java"
+with open(JAVA) as f: c = f.read()
+c = re.sub(r'return "[0-9]+\.[0-9]+\.[0-9]+";', f'return "$NEW_VER";', c)
+c = c.replace('return "$NEW_VER";', f'return "$NEW_VER";')
+c = re.sub(r'(\\\\\"version\\\\\": \\\\")([0-9]+\.[0-9]+\.[0-9]+)(\\\\\")', lambda m: m.group(1)+"$NEW_VER"+m.group(3), c)
+c = c.replace('\\\"version\\\": \\"$NEW_VER\\"', f'\\\"version\\\": \\"$NEW_VER\\"')
+with open(JAVA, "w") as f: f.write(c)
+PYEOF2
 
 # 2f. AgentServerController.java configTemplate 里的 version 字段
-sed -i '' 's/\\"version\\": \\"[0-9]*\.[0-9]*\.[0-9]*\\"/\\"version\\": \\"$NEW_VER\\"/g' server/src/main/java/com/discordadmin/controller/AgentServerController.java
 
 # 验证版本号一致性
 echo "  pom.xml:         $(grep -A1 discord-admin-server server/pom.xml | tail -1 | tr -d ' ' | sed 's/<version>//;s/<\/version>//')"
