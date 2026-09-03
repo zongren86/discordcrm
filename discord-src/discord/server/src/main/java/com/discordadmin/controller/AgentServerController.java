@@ -394,8 +394,13 @@ public class AgentServerController {
                 "  \"pollIntervalMs\": 5000,\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
-                "    \"type\": \"chromium\",\n" +
-                "    \"userDataDir\": \"./data/browser-profile\"\n" +
+                "    \"type\": \"auto\",\n" +
+                "    \"executablePath\": \"\",\n" +
+                "    \"userDataDir\": \"./data/browser-profile\",\n" +
+                "    \"viewport\": {\n" +
+                "      \"width\": 1280,\n" +
+                "      \"height\": 800\n" +
+                "    }\n" +
                 "  }\n" +
                 "}");
         result.put("notes", List.of(
@@ -486,7 +491,7 @@ public class AgentServerController {
                             if (relStr.equals(skip) || relStr.startsWith(skip + "/")) return;
                         }
                         // 排除文件
-                        String[] skipFiles = {".DS_Store", "package-lock.json"};
+                        String[] skipFiles = {".DS_Store", "package-lock.json", "config.json"};
                         for (String skip : skipFiles) {
                             if (relStr.equals(skip)) return;
                         }
