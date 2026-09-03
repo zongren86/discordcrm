@@ -344,7 +344,8 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
     // 这让页面加载从 3-8s 降到 1-2s，而且不影响 token 捕获
     try {
       // 1. 图片/字体/media — 登录页 UI 能显示就行
-      await context.route(/\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf|mp4|webm|wav|mp3|flac|ogg)(\?|$)/, route => route.abort());
+      // ⚠️ 不拦图片！Discord 头像/表情/hCaptcha 验证都需要 png/jpg/svg
+   // 只拦追踪脚本、广告、Discord 自己的遥测
       // 2. 远端字体 CDN
       await context.route(/fonts\.(googleapis|gstatic|adobe|cloudflare)\.com/, route => route.abort());
       // 3. 追踪/遥测脚本 — 完全不影响登录功能
@@ -611,7 +612,8 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agent
 
   // ⚡ 资源拦截：同 captureDiscordAccount
   try {
-    await context.route(/\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf|mp4|webm|wav|mp3|flac|ogg)(\?|$)/, route => route.abort());
+    // ⚠️ 不拦图片！Discord 头像/表情/hCaptcha 验证都需要 png/jpg/svg
+   // 只拦追踪脚本、广告、Discord 自己的遥测
     await context.route(/fonts\.(googleapis|gstatic|adobe|cloudflare)\.com/, route => route.abort());
     await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog|google-analytics|analytics)\.com/, route => route.abort());
     await context.route(/(googletagmanager|facebook|fbcdn|tiktok)\.com/, route => route.abort());
