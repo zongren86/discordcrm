@@ -18,7 +18,7 @@
 
 | 子项目 | 技术栈 | 端口 | 运行位置 | 状态 |
 |--------|--------|------|----------|------|
-| **server** ✅ | Spring Boot 3.3.4 + JPA + Security + WebSocket | 9090 | 应用服务器 | **当前主力** |
+| **server** ✅ | Spring Boot 3.3.4 + JPA + Security + WebSocket | 8090 | 应用服务器 | **当前主力** |
 | **client-vue** ✅ | Vue 3 + Vite 5 + Element Plus + Pinia | 5175 | 应用服务器（Nginx 反代） | **当前主力** |
 | **mumu-agent** ✅ | Node.js + WebSocket + MuMu CLI | — | Windows 云电脑（173/其它） | **设备端 Agent** |
 | server | Spring Boot（旧） | 8090 | 应用服务器 | 共存，非本轮开发范围 |
