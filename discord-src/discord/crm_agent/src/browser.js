@@ -340,14 +340,20 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
     // ⭐ 第 2 层防线：强制 HTTP Accept-Language header（Discord/hCaptcha 优先读这个）
     await context.setExtraHTTPHeaders({ 'Accept-Language': fp.languages });
 
-    // ⚡⚡⚡ 资源拦截：Discord 登录页只需要 HTML + JS + CSS，拦截图片/字体/media/trackers
+    // ⚡⚡⚡ 资源拦截：Discord 登录页只需要 HTML + JS + CSS，拦截非必要资源
     // 这让页面加载从 3-8s 降到 1-2s，而且不影响 token 捕获
     try {
-      await context.route(/\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf|mp4|webm|wav|mp3)(\?|$)/, route => route.abort());
-      // Google Fonts / Adobe Fonts — 拦截这些远端字体
-      await context.route(/fonts\.(googleapis|gstatic|adobe)\.com/, route => route.abort());
-      // 追踪脚本/遥测 — Segment/Hotjar/Fullstory 这些不影响登录
-      await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog)\.com/, route => route.abort());
+      // 1. 图片/字体/media — 登录页 UI 能显示就行
+      await context.route(/\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf|mp4|webm|wav|mp3|flac|ogg)(\?|$)/, route => route.abort());
+      // 2. 远端字体 CDN
+      await context.route(/fonts\.(googleapis|gstatic|adobe|cloudflare)\.com/, route => route.abort());
+      // 3. 追踪/遥测脚本 — 完全不影响登录功能
+      await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog|google-analytics|analytics)\.com/, route => route.abort());
+      await context.route(/(googletagmanager|facebook|fbcdn|tiktok)\.com/, route => route.abort());
+      await context.route(/(clarity|userpilot|pendo|heap\.io|logrocket)\.(com|io)/, route => route.abort());
+      await context.route(/capture\.discordapp\.com/, route => route.abort());  // Discord 自己的遥测!
+      // 4. 广告/CDN（非必要的）
+      await context.route(/doubleclick\.net|googlesyndication\.com/, route => route.abort());
     } catch { /* route 可能已经被注册，忽略 */ }
 
   } catch (e) {
@@ -605,9 +611,13 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agent
 
   // ⚡ 资源拦截：同 captureDiscordAccount
   try {
-    await context.route(/\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf|mp4|webm|wav|mp3)(\?|$)/, route => route.abort());
-    await context.route(/fonts\.(googleapis|gstatic|adobe)\.com/, route => route.abort());
-    await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog)\.com/, route => route.abort());
+    await context.route(/\.(png|jpg|jpeg|gif|svg|webp|ico|woff2?|ttf|otf|mp4|webm|wav|mp3|flac|ogg)(\?|$)/, route => route.abort());
+    await context.route(/fonts\.(googleapis|gstatic|adobe|cloudflare)\.com/, route => route.abort());
+    await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog|google-analytics|analytics)\.com/, route => route.abort());
+    await context.route(/(googletagmanager|facebook|fbcdn|tiktok)\.com/, route => route.abort());
+    await context.route(/(clarity|userpilot|pendo|heap\.io|logrocket)\.(com|io)/, route => route.abort());
+    await context.route(/capture\.discordapp\.com/, route => route.abort());
+    await context.route(/doubleclick\.net|googlesyndication\.com/, route => route.abort());
   } catch {}
 
 

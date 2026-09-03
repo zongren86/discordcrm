@@ -104,7 +104,7 @@ async function isProxyUsable(proxyUrl) {
   
   // 熔断后过了恢复时间 → 探测一次
   if (state.lastFail && Date.now() - state.lastFail >= CIRCUIT_BREAKER_RECOVER_MS) {
-    console.log('[NetworkGate] 探测恢复:', proxyUrl);
+    if (!cfg.production) console.log('[NetworkGate] 探测恢复:', proxyUrl);
     const result = await checkProxy(proxyUrl);
     recordProxyResult(proxyUrl, result.ok);
     return result.ok;
@@ -119,7 +119,7 @@ const _accountProxies = new Map(); // agentName -> proxyUrl
 function bindAccountProxy(agentName, proxyUrl) {
   if (!proxyUrl) return;
   _accountProxies.set(agentName, parseProxyUrl(proxyUrl));
-  console.log('[NetworkGate] ' + agentName + ' 绑定代理:', parseProxyUrl(proxyUrl));
+  if (!cfg.production) console.log('[NetworkGate] ' + agentName + ' 绑定代理:', parseProxyUrl(proxyUrl));
 }
 
 function getAccountProxy(agentName) {
@@ -154,7 +154,7 @@ async function getUsableProxyForAccount(agentName, fallbackDirect = true) {
 
 async function probeAllProxies() {
   const proxies = [...new Set([..._proxyStates.keys(), ..._accountProxies.values()].filter(Boolean))];
-  console.log('[NetworkGate] 探测 ' + proxies.length + ' 个代理...');
+  if (!cfg.production) console.log('[NetworkGate] 探测 ' + proxies.length + ' 个代理...');
   
   const results = [];
   for (const p of proxies) {
