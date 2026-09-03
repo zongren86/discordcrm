@@ -1,17 +1,17 @@
 {
-    "serverUrl": "http://127.0.0.1:8090/api",
-    "agentName": "crm-agent-01",
-    "token": "",
-    "heartbeatIntervalMs": 5000,
-    "pollIntervalMs": 5000,
-    "browser": {
-        "headless": false,
-        "type": "chromium",
-        "userDataDir": "./data/browser-profile",
-        "viewport": {
-            "width": 1280,
-            "height": 800
-        }
-    },
-    "version": "1.16.0"
+  "serverUrl": "http://127.0.0.1:8090/api",
+  "agentName": "crm-agent-01",
+  "token": "",
+  "heartbeatIntervalMs": 5000,
+  "pollIntervalMs": 5000,
+  "browser": {
+    "headless": false,
+    "type": "chromium",
+    "userDataDir": "./data/browser-profile",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    }
+  },
+  "version": "1.8.10"
 }
