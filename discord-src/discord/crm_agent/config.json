@@ -1,19 +1,16 @@
 {
-    "serverUrl": "http://127.0.0.1:8090/api",
-    "agentName": "crm-agent-01",
-    "token": "",
-    "heartbeatIntervalMs": 5000,
-    "pollIntervalMs": 5000,
-    "browser": {
-        "headless": false,
-        "type": "chromium",
-        "userDataDir": "./data/browser-profile",
-        "viewport": {
-            "width": 1280,
-            "height": 800
-        }
-    },
-    "version": "1.7.14",
-    "discordProxy": "",
-    "production": false
+  "serverUrl": "http://127.0.0.1:8090/api",
+  "agentName": "crm-agent",
+  "token": "\u5728\u6b64\u7c98\u8d34token",
+  "version": "1.8.4",
+  "production": false,
+  "browser": {
+    "headless": false,
+    "type": "chromium",
+    "userDataDir": "./data/browser-profile",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    }
+  }
 }

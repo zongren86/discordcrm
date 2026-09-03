@@ -36,6 +36,7 @@ async function heartbeat() {
       name: cfg.agentName,
       serverAddress: cfg.publicAddress || '',
       nodeVersion: process.version,
+      agentVersion: AGENT_VERSION,
       browserType: (cfg.browser && cfg.browser.type) || 'chromium',
     });
     if (!heartbeatOk) {

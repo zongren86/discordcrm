@@ -14,15 +14,21 @@
 - **自动加好友**：从 Discord 服务器成员池中筛选用户，在模拟器中自动执行加好友动作
 - **Discord CRM**：好友管理、会话管理、消息模板、自动回复等（旧项目 server/client-vue，端口 8090/5173）
 
-### 项目拆分明细
+### ⚠️ Agent 分工边界（**最重要，别跨线**）
 
-| 子项目 | 技术栈 | 端口 | 运行位置 | 状态 |
-|--------|--------|------|----------|------|
-| **server** ✅ | Spring Boot 3.3.4 + JPA + Security + WebSocket | 8090 | 应用服务器 | **当前主力** |
-| **client-vue** ✅ | Vue 3 + Vite 5 + Element Plus + Pinia | 5175 | 应用服务器（Nginx 反代） | **当前主力** |
-| **mumu-agent** ✅ | Node.js + WebSocket + MuMu CLI | — | Windows 云电脑（173/其它） | **设备端 Agent** |
-| server | Spring Boot（旧） | 8090 | 应用服务器 | 共存，非本轮开发范围 |
-| client-vue | Vue 2（旧） | 5173 | 本地开发 | 共存，非本轮开发范围 |
+| 子项目 | 技术栈 | 端口 | 运行位置 | **归属 Agent** |
+|--------|--------|------|----------|---------------|
+| **server** ✅ | Spring Boot 3.3.4 + JPA + Security | 8090 | 101.47.41.149 | **当前 Agent 负责** ✅ |
+| **client-vue** ✅ | Vue 3 + Vite 5 + Element Plus | 80 (Nginx) | 101.47.41.149 | **当前 Agent 负责** ✅ |
+| **crm_agent** ✅ | Node.js + Playwright + Discord API | — | 用户 Windows 云电脑 | **当前 Agent 负责** ✅ |
+| **mumu-agent** | Node.js + WebSocket + MuMu CLI | — | Windows 云电脑 173 | **另一个子项目 Agent 负责** ❌ 别碰 |
+| **server-admin** | （另一个项目） | — | 101.47.41.151 | **另一个子项目 Agent 负责** ❌ 别碰 |
+| **旧 client-vue (Vue2)** | Vue 2 + Vite | 5173 | 本地开发 | **废弃，别动** ❌ |
+
+**当前 Agent 只碰 3 个目录**：`server/`、`client-vue/`、`crm_agent/`
+**当前 Agent 绝不碰**：`mumu-agent/`、`server-admin/`、任何 151 服务器资源
+
+### 项目拆分明细
 
 ---
 
@@ -783,6 +789,151 @@ curl -s http://101.47.41.149/api/auth/login \
   -X POST -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin123"}'
 ```
+
+
+### 9.11 crm_agent 打包机制（**2026-09-03 重写，严禁回退**）
+
+#### 核心原则
+
+> **后端下载接口只认源码目录，JAR 内嵌兜底已删除。没有源码就报错。**
+
+#### 下载链路
+
+```
+GET /api/agent-servers/package
+    │
+    ├─ resolveAgentSourceDir() 找源码目录
+    │   ├─ agentSourceDir 配置项（显式）
+    │   └─ 自动推断：从 user.dir 向上找 crm_agent/package.json
+    │
+    ├─ 源码目录存在 → buildZip(sourceDir) 动态打包 ✅ 最新代码
+    │
+    └─ 源码目录不存在 → HTTP 500 报错 ⚠️ （之前读 JAR 内嵌 zip 是 bug，已删）
+```
+
+#### 服务器必须有的目录
+
+```
+/opt/discord-admin/current/
+├── discord-admin-server-1.8.4.jar          ← systemd ExecStart 用
+├── crm_agent/                               ← 源码目录！buildZip() 从这里读
+│   ├── package.json                         ← version 字段必须和 JAR 一致
+│   ├── config.json                          ← 干净模板（token="在此粘贴token"）
+│   ├── src/
+│   │   ├── browser.js                       ← 核心 CAPTURE 逻辑
+│   │   ├── index.js                         ← heartbeat 上报 agentVersion
+│   │   └── ...
+│   └── .DS_Store（会被 buildZip 自动排除）
+└── systemd service 文件
+```
+
+#### buildZip() 排除规则（Java AgentServerController.java 硬编码）
+
+**排除目录**：node_modules, data, .git, .idea, .vscode, __pycache__
+
+**排除文件**：README.md, agent.log, server.js, .DS_Store, *.bak, *.bak2（任意层级）, .开头的隐藏文件
+
+**会被打包**：config.json ✅, package-lock.json ✅, package.json ✅, src/** ✅, start.sh/bat ✅, README_INSTALL.txt（后端动态生成）
+
+#### 版本号管理规范（**4 处必须一致，任何代码改动后必须 +1**）
+
+| 位置 | 文件 | 示例 |
+|------|------|------|
+| 1 | crm_agent/package.json | `"version": "1.8.4"` |
+| 2 | crm_agent/config.json | `"version": "1.8.4"` |
+| 3 | server/pom.xml（项目 version，不是 Spring Boot parent） | `<version>1.8.4</version>` |
+| 4 | AgentServerController.java（两处：configTemplate 字符串 + return 常量） | `"1.8.4"` |
+
+#### 一键严谨打包流程
+
+```bash
+# Step 1: 清理所有缓存
+rm -rf server/target
+rm -rf server/src/main/resources/crm_agent-v*.zip
+rm -rf server/src/main/resources/agent-package.zip
+rm -f crm_agent/*.zip crm_agent/config.json.bak
+
+# Step 2: 确认 4 处版本号一致（手动改或用 sed）
+
+# Step 3: Maven clean + 打 JAR
+cd server && mvn clean package -DskipTests && cd ..
+
+# Step 4: 同步 crm_agent 源码到服务器（--delete 确保删掉旧文件）
+rsync -avz --delete \
+  --exclude node_modules --exclude data --exclude .git --exclude '*.log' --exclude '*.zip' \
+  crm_agent/ root@101.47.41.149:/opt/discord-admin/current/crm_agent/
+
+# Step 5: 传 JAR + 重启
+scp server/target/discord-admin-server-{VER}.jar root@101.47.41.149:/opt/discord-admin/current/
+ssh root@101.47.41.149 "
+  sed -i 's/discord-admin-server-[0-9.]*\.jar/discord-admin-server-{VER}.jar/' /etc/systemd/system/discord-admin.service
+  systemctl daemon-reload && systemctl restart discord-admin
+"
+
+# Step 6: 验证（必须做，不能靠猜）
+curl -s http://101.47.41.149/api/agent-servers/package -o /tmp/test.zip
+unzip -l /tmp/test.zip | grep config.json                          # 应有
+unzip -l /tmp/test.zip | grep browser.js                          # 大小 >= 35000 是新版
+unzip -p /tmp/test.zip crm_agent/config.json | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])"
+unzip -p /tmp/test.zip crm_agent/src/browser.js | grep -c "__capturedDiscordToken"  # >= 3
+```
+
+#### 下载接口常见错误
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| HTTP 500 + "CRM_AGENT_SOURCE_NOT_FOUND" | 服务器没有 `/opt/discord-admin/current/crm_agent/` | rsync 同步源码 |
+| zip 里 browser.js 很小（~30000 bytes） | 源码是旧版 | git pull 或重新同步 |
+| zip 里没有 config.json | buildZip() 排除列表里有 config.json | 改 Java skipFiles |
+
+### 9.12 crm_agent v1.8.0~v1.8.4 反作弊 + CAPTURE 核心改动
+
+#### 4 层 Token 抓取（按优先级）
+
+| # | 层级 | 位置 | 说明 |
+|---|------|------|------|
+| 1 | **JS fetch/XHR Hook** | page 内 initScript | 在 Discord JS 运行时直接拦截 Authorization header，设置 window.__capturedDiscordToken |
+| 2 | **Playwright request** | Node 层 | 拦截发往 discord.com/api 的请求头 |
+| 3 | **Playwright response** | Node 层 | 拦截 Discord 返回的响应头 |
+| 4 | **CDP WebSocket** | 浏览器底层 | CDP Network 监听 Gateway op=2 IDENTIFY / op=4 RESUME 帧里的 token |
+
+**关键代码**：`crm_agent/src/browser.js` 第 330-395 行
+
+#### CAPTURE 成功条件（严格）
+
+```
+必须同时满足：
+  result.token 非空（长度 > 50，不以 "Bot " 开头）
+  result.userId 非空
+  result.username 非空
+```
+
+#### heartbeat 必须上报 agentVersion
+
+```javascript
+// crm_agent/src/index.js heartbeat()
+await http.post('/agent-servers/heartbeat', {
+  token: cfg.token,
+  name: cfg.agentName,
+  nodeVersion: process.version,
+  agentVersion: AGENT_VERSION,   // ⚠️ 缺了后端看到 NOT_SET
+  browserType: (cfg.browser && cfg.browser.type) || 'chromium',
+});
+```
+
+#### 反作弊核心措施
+
+| 措施 | 说明 |
+|------|------|
+| SYSTEM_CHROME | 用系统 Chrome，不用 Playwright Chromium |
+| chromiumSandbox: false | 减少自动化痕迹 |
+| initScript 反检测 | 伪装 navigator.webdriver, window.chrome, chrome.debugger |
+| account_fingerprint.js | 每账号独立指纹：UA/WebGL/时区/语言/硬件 |
+| 地理-语言 1:1 映射 | Japan→ja-JP, SG→zh-CN |
+| 代理穿透 | Chrome --proxy-server + axios 同出口 |
+| 资源拦截 | 只拦追踪/广告，不碰 hCaptcha/Discord API |
+| CAPTURE 后延迟 3-4 分钟 | 防风控 |
+| capacity_policy | 并发槽位控制 |
 
 ## 10. 开发规范与历史踩坑
 

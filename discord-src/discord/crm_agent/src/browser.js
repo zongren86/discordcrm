@@ -332,8 +332,9 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   // ⭐ 注入动态反检测脚本（从指纹生成）
   await page.addInitScript(getInitScript(fp));
 
-  // 网络拦截抓 token（双路：Authorization header + storage 扫描）
+  // 网络拦截抓 token（双向：request 的 Authorization header + response 的）
   let capturedToken = null;
+  let tokenReady = false;  // 🆕 标志位：token 一抓到就触发，跳过 2 秒等待
   const responseHandler = (response) => {
     try {
       const headers = response.headers();
@@ -341,13 +342,89 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
         if (!capturedToken || capturedToken !== auth) {
           capturedToken = auth;
-          console.log(`[Browser] 🎯 网络拦截捕获 token (${auth.length} chars)`);
-          trace.event('token_captured', { source: 'network', len: auth.length });
+          tokenReady = true;
+          console.log(`[Browser] 🎯 response 拦截捕获 token (${auth.length} chars)`);
+          trace.event('token_captured', { source: 'response', len: auth.length });
         }
       }
     } catch {}
   };
   context.on('response', responseHandler);
+  // request 方向也抓（更可靠，Discord 每次 API 调用都带 Authorization）
+  const requestHandler = (request) => {
+    try {
+      const url = request.url();
+      if (!url.includes('discord.com/api')) return;
+      const headers = request.headers();
+      const auth = headers['authorization'] || headers['Authorization'];
+      if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
+        if (!capturedToken || capturedToken !== auth) {
+          capturedToken = auth;
+          tokenReady = true;
+          console.log(`[Browser] 🎯 request 拦截捕获 token (${auth.length} chars) url=${url.slice(0,60)}`);
+          trace.event('token_captured', { source: 'request', len: auth.length });
+        }
+      }
+    } catch {}
+  };
+  context.on('request', requestHandler);
+
+  // 🆕 JS 层终极保险：hook fetch/XHR 抓 Authorization header
+  // 这一层在 Discord 的 JS 运行时直接拦截，最可靠
+  const jsHook = `
+(() => {
+    const origFetch = window.fetch;
+    window.fetch = async function(input, init) {
+        try {
+            const url = typeof input === 'string' ? input : input?.url || '';
+            if (url.includes('discord.com/api') && init?.headers) {
+                const h = init.headers;
+                let auth = typeof h.get === 'function' ? h.get('authorization') || h.get('Authorization')
+                        : (h['authorization'] || h['Authorization']);
+                if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
+                    window.__capturedDiscordToken = auth;
+                    console.log('[TokenHook] fetch captured token');
+                }
+            }
+        } catch {}
+        return origFetch.apply(this, arguments);
+    };
+    const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function(name, val) {
+        try {
+            if ((name.toLowerCase() === 'authorization') && val && !val.startsWith('Bot ') && val.length > 50) {
+                window.__capturedDiscordToken = val;
+                console.log('[TokenHook] XHR captured token');
+            }
+        } catch {}
+        return origSetHeader.apply(this, arguments);
+    };
+})();`;
+  await context.addInitScript(jsHook);
+  console.log('[Browser] JS fetch/XHR token hook injected');
+
+  // 🆕 CDP: 监听 WebSocket Gateway 帧（Discord 2025+ token 在这里）
+  try {
+    const cdp = await context.newCDPSession(await context.pages()[0] || await context.newPage());
+    cdp.on('Network.webSocketFrameSent', (frame) => {
+      try {
+        const payload = JSON.parse(frame.payload);
+        // op=2 IDENTIFY / op=4 RESUME / op=12 HEARTBEAT 都带 token
+        if (payload.op === 2 || payload.op === 4) {
+          const t = payload.d?.token;
+          if (t && t.length > 50 && (!capturedToken || capturedToken !== t)) {
+            capturedToken = t;
+            tokenReady = true;
+            console.log(`[Browser] 🎯 CDP WebSocket 捕获 token (${t.length} chars) op=${payload.op}`);
+            trace.event('token_captured', { source: 'websocket', len: t.length, op: payload.op });
+          }
+        }
+      } catch {}
+    });
+    await cdp.send('Network.enable');
+  } catch (e) {
+    console.warn('[Browser] CDP 初始化失败（不影响 HTTP 拦截）:', e.message?.slice(0, 80));
+  }
 
   console.log('[Browser] 打开 Discord 登录页...');
   let gotoOk = false;
@@ -397,41 +474,52 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
               if (v && tokenPattern.test(v)) return v;
             }
           }
-          if (typeof indexedDB !== 'undefined') {
+          // 优先扫 Discord 已知 indexedDB（2024+ 用这些存 token）
+          const DISCORD_DBS = ['discord_store', 'discord_cache', 'KeyDBCache', 'discordMeta'];
+          const scanDB = (dbName) => new Promise((resolve) => {
+            let found = null;
             try {
-              const dbs = await indexedDB.databases();
-              for (const db of dbs) {
-                if (!db.name) continue;
-                let t = null;
-                await new Promise((resolve) => {
-                  const req = indexedDB.open(db.name);
-                  req.onsuccess = async () => {
+              const req = indexedDB.open(dbName);
+              req.onsuccess = async () => {
+                try {
+                  const tx = req.result.transaction(req.result.objectStoreNames, 'readonly');
+                  for (const n of req.result.objectStoreNames) {
                     try {
-                      const names = req.result.objectStoreNames;
-                      for (const n of names) {
-                        const all = req.result.transaction(n, 'readonly').objectStore(n).getAll();
-                        await new Promise(r2 => {
-                          all.onsuccess = () => {
-                            for (const item of all.result || []) {
-                              const s = typeof item === 'string' ? item : JSON.stringify(item);
-                              const m = s.match(tokenPattern);
-                              if (m) { t = m[0]; break; }
-                            }
-                            r2();
-                          };
-                          all.onerror = () => r2();
-                        });
-                        if (t) break;
-                      }
+                      const store = tx.objectStore(n);
+                      const all = store.getAll();
+                      await new Promise(r2 => {
+                        all.onsuccess = () => {
+                          for (const item of all.result || []) {
+                            const s = typeof item === 'string' ? item : JSON.stringify(item);
+                            const m = s.match(tokenPattern);
+                            if (m && !found) { found = m[0]; }
+                          }
+                          r2();
+                        };
+                        all.onerror = () => r2();
+                      });
+                      if (found) break;
                     } catch {}
-                    resolve();
-                  };
-                  req.onerror = () => resolve();
-                });
-                if (t) return t;
-              }
-            } catch {}
+                  }
+                } catch {}
+                resolve(found);
+              };
+              req.onerror = () => resolve(null);
+              req.onupgradeneeded = () => resolve(null);
+            } catch { resolve(null); }
+          });
+          for (const dbName of DISCORD_DBS) {
+            const t = await scanDB(dbName);
+            if (t) return t;
           }
+          try {
+            const dbs = await indexedDB.databases();
+            for (const db of dbs) {
+              if (!db.name || DISCORD_DBS.includes(db.name)) continue;
+              const t = await scanDB(db.name);
+              if (t) return t;
+            }
+          } catch {}
           return null;
         } catch { return null; }
       });
@@ -443,33 +531,43 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       const r = await page.evaluate(async (t) => {
         try {
           const resp = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: t } });
-          if (!resp.ok) return { ok: false };
-          const text = await resp.text();
-          const extract = (key) => {
-            const re = new RegExp('"' + key + '"\\s*:\\s*(\\d+|"[^"]*")');
-            const m = text.match(re);
-            if (!m) return null;
-            let v = m[1];
-            if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
-            return v;
-          };
-          return {
-            ok: true,
-            id: extract('id'),
-            username: extract('username') || '',
-            global_name: extract('global_name') || '',
-            email: extract('email'),
-            avatar: extract('avatar'),
-          };
+          if (!resp.ok) return { ok: false, status: resp.status };
+          try {
+            const data = await resp.json();
+            return {
+              ok: true,
+              id: String(data.id || ''),
+              username: data.username || '',
+              global_name: data.global_name || data.username || '',
+              email: data.email || null,
+              avatar: data.avatar || null,
+              discriminator: data.discriminator || null,
+            };
+          } catch (e) { return { ok: false, parseError: String(e.message).slice(0,50) }; }
         } catch {}
         return { ok: false };
       }, token);
       if (r && r.ok) {
         return {
-          id: r.id, username: r.username,
-          global_name: r.global_name, email: r.email, avatar: r.avatar,
+          id: r.id, username: r.username || r.global_name,
+          global_name: r.global_name || r.username, email: r.email, avatar: r.avatar,
         };
       }
+      // Fallback: 从 Discord /app 页面 DOM 提取用户名
+      try {
+        const dom = await page.evaluate(() => {
+          const els = document.querySelectorAll('[aria-label*="user"], [aria-label*="User"]');
+          for (const el of els) {
+            const label = (el.getAttribute('aria-label') || '').trim();
+            const m = label.match(/^(.+?)(?:#\d+)?$/);
+            if (m && m[1] && m[1].length > 1 && m[1].length < 64) {
+              return { id: null, username: m[1], domFallback: true };
+            }
+          }
+          return null;
+        });
+        if (dom) return dom;
+      } catch {}
     } catch {}
     return null;
   };
@@ -479,7 +577,8 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   let scanCount = 0;
 
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 2000));
+    // 如果 token 已抓到，跳过等待立即处理
+    if (!tokenReady) await new Promise(r => setTimeout(r, 2000));
     scanCount++;
 
     if (taskId && http && await checkCancelled(http, taskId)) {
@@ -507,10 +606,33 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       continue;
     }
 
+    // 🆕 检测登录成功：URL 从 /login 变成 /app 或 /channels
+    const curUrl = page.url() || '';
+    const loggedIn = curUrl.includes('/app') || curUrl.includes('/channels') || curUrl.includes('/library');
+    if (loggedIn && !result.token) {
+      if (scanCount <= 3 || scanCount % 10 === 0) {
+        console.log(`[Browser] ✅ 检测到登录成功！URL=${curUrl.slice(0,60)}，立即扫描 token...`);
+      }
+    }
+
     let token = capturedToken;
+    // 🆕 先查 JS hook 捕获的 token（最快最可靠）
+    if (!token) {
+      try {
+        const jsToken = await page.evaluate(() => window.__capturedDiscordToken);
+        if (jsToken && jsToken.length > 50) {
+          token = jsToken;
+          console.log(`[Browser] token from JS hook (${token.length} chars)`);
+          tokenReady = true;
+        }
+      } catch {}
+    }
     if (!token) {
       token = await scanStorage();
-      if (token) console.log(`[Browser] 🎯 storage 扫描捕获 token (${token.length} chars)`);
+      if (token) {
+        console.log(`[Browser] 🎯 storage 扫描捕获 token (${token.length} chars)`);
+        tokenReady = true;
+      }
     }
     if (token && token !== result.token) result.token = token;
 
@@ -530,12 +652,12 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       }
     }
 
-    if (result.token && result.userId) {
+    if (result.token && result.userId && result.username) {
       result.browserProfilePath = userDataDir;
       result.fingerprintId = fp.fingerprintId;
       capacity.release('START_ACCOUNT');
       trace.browserWorkflow('capture_done', { userId: result.userId });
-      console.log('[Browser] 🎉 采集成功！浏览器保持打开');
+      console.log(`[Browser] 🎉 采集成功！ user=${result.username} id=${result.userId} avatar=${result.avatarUrl || '(无)'}`);
       return result;
     }
   }

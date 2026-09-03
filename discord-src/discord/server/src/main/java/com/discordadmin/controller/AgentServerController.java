@@ -393,7 +393,7 @@ public class AgentServerController {
                 "  \"heartbeatIntervalMs\": 5000,\n" +
                 "  \"pollIntervalMs\": 5000,\n" +
                 "  \"production\": false,\n" +
-                "  \"version\": \"1.7.14\",\n" +
+                "  \"version\": \"1.8.4\",\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
                 "    \"type\": \"chromium\",\n" +
@@ -472,7 +472,7 @@ public class AgentServerController {
             }
         } catch (Exception ignored) {}
         // 3️⃣ 最后兜底：返回硬编码版本（和 build.sh 同步）
-        return "1.7.14";
+        return "1.8.4";
     }
 
     private String extractVersion(String json) {
@@ -504,12 +504,9 @@ public class AgentServerController {
                         // 排除文件（和手动 zip 打包保持一致）
                         String[] skipFiles = {
                             ".DS_Store",           // macOS 垃圾
-                            "config.json",         // ⚠️ 敏感（含 token），用户自己填
                             "README.md",           // 有 README_INSTALL.txt
-                            "package-lock.json",   // 让用户 npm install 时重新生成
                             "agent.log",           // 运行时文件
                             "server.js",           // 旧启动脚本（如有）
-                            "discord.js.bak",      // 备份文件
                         };
                         for (String skip : skipFiles) {
                             if (relStr.equals(skip)) return;
