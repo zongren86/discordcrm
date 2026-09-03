@@ -745,7 +745,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
  *    ❌ context.route 资源拦截 —— 特别是 capture.discordapp.com 遥测
  *    ❌ page.addInitScript(getInitScript) —— patch fetch/XHR 可被 Discord 检测
  *    ❌ context.setExtraHTTPHeaders —— 命令行 --accept-language 已覆盖
- *    ❌ page.goto —— 用户自己打开 Discord
+ *    ✅ page.goto("https://discord.com/app") —— 打开 Discord 页面（公开 URL，不影响反作弊）
  *
  *    保留的（同行机制正确的全部保留）：
  *    ✅ 系统 Chrome（SYSTEM_CHROME 优先）
@@ -781,6 +781,8 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agent
   // buildLaunchOpts 已自动应用系统 Chrome + --disable-enable-automation + ignoreDefaultArgs
   const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
   const page = context.pages()[0] || await context.newPage();
+  // 🆕 v1.8.8: 自动打开 Discord（公开 URL，不影响反作弊）
+  page.goto("https://discord.com/app").catch(() => {});
 
   console.log('[Browser] ✅ Chrome 已打开 🆓 fingerprint=' + fp.fingerprintId +
               ' executable=' + (launchOpts.executablePath ? 'SYSTEM_CHROME' : 'Playwright_Chromium'));
