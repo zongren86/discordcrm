@@ -393,11 +393,12 @@ public class AgentServerController {
                 "  \"heartbeatIntervalMs\": 5000,\n" +
                 "  \"pollIntervalMs\": 5000,\n" +
                 "  \"production\": false,\n" +
-                "  \"version\": \"1.8.7\",\n" +
+                "  \"version\": \"1.8.8\",\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
-                "    \"type\": \"chromium\",\n" +
+                "    \"type\": \"auto\",\n" +
                 "    \"userDataDir\": \"./data/browser-profile\",\n" +
+                "    \"executablePath\": \"\",\n" +
                 "    \"viewport\": {\n" +
                 "      \"width\": 1280,\n" +
                 "      \"height\": 800\n" +
@@ -408,7 +409,9 @@ public class AgentServerController {
                 "serverUrl 必须含 /api 后缀，如 http://192.168.0.110:8090/api",
                 "首次启动 Chromium 会弹浏览器窗口，请在其中完成 Discord 登录",
                 "Windows 用户用 PowerShell/cmd 执行，不要用 Git Bash",
-                "国内用户务必配置 npm 和 Playwright 镜像，否则下载会超时"
+                "国内用户务必配置 npm 和 Playwright 镜像，否则下载会超时",
+                "browser.type: auto(自动探测系统Chrome) | system-chrome(必须用系统Chrome) | edge | playwright-chromium",
+                "browser.executablePath 手动指定Chrome路径，优先级最高（同行机制）"
         ));
         return ResponseEntity.ok(result);
     }
@@ -472,7 +475,7 @@ public class AgentServerController {
             }
         } catch (Exception ignored) {}
         // 3️⃣ 最后兜底：返回硬编码版本（和 build.sh 同步）
-        return "1.8.7";
+        return "1.8.8";
     }
 
     private String extractVersion(String json) {

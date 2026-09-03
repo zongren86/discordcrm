@@ -57,7 +57,54 @@ function findSystemChrome() {
   return null;
 }
 
-const SYSTEM_CHROME = findSystemChrome();
+// 🆕 v1.8.8: 支持 config.json 手动指定浏览器路径（同行机制 chrome_executable_path）
+// 优先级（用户明确要求：手动配置就跳过自动探测）：
+//   1. config.browser.executablePath 有值 → 直接用 → 跳过 findSystemChrome() 自动探测
+//   2. config.browser.type === "edge" → 用 Playwright channel="msedge"
+//   3. config.browser.type === "system-chrome" → 必须自动探测到系统 Chrome，找不到报错
+//   4. 默认 auto → 先查 executablePath → 再自动探测 → 最后 fallback Playwright Chromium
+let SYSTEM_CHROME = null;
+let BROWSER_TYPE = 'auto';
+try {
+  const cfg = require('./config').loadConfig();
+  const br = cfg.browser || {};
+  BROWSER_TYPE = br.type || 'auto';
+
+  // 🆕 用户明确要求：手动配置了 executablePath 就跳过自动探测
+  if (br.executablePath && br.executablePath.trim()) {
+    const cfgPath = path.resolve(path.dirname(path.join(__dirname, 'config.json')), br.executablePath.trim());
+    if (fs.existsSync(cfgPath)) {
+      SYSTEM_CHROME = cfgPath;
+      console.log('[Browser] 🎯 使用 config.json.executablePath（跳过自动探测）: ' + cfgPath);
+    } else {
+      console.error('[Browser] ❌ executablePath 指向的文件不存在: ' + cfgPath);
+      console.error('   请确认路径或去掉 executablePath 让它自动探测');
+      process.exit(1);
+    }
+  } else if (BROWSER_TYPE === 'edge') {
+    SYSTEM_CHROME = null;  // Playwright channel="msedge" 处理
+    console.log('[Browser] 🎯 browser.type=edge，用系统 Edge');
+  } else if (BROWSER_TYPE === 'system-chrome') {
+    SYSTEM_CHROME = findSystemChrome();
+    if (!SYSTEM_CHROME) {
+      console.error('[Browser] ❌ browser.type=system-chrome 但找不到系统 Chrome！');
+      console.error('   请在 config.json 里加 "browser.executablePath": "C:\\Path\\To\\chrome.exe"');
+      process.exit(1);
+    }
+    console.log('[Browser] ✅ 自动探测到系统 Chrome: ' + SYSTEM_CHROME);
+  } else {
+    // type=auto 或未指定：自动探测，找不到 fallback Playwright Chromium
+    SYSTEM_CHROME = findSystemChrome();
+    if (SYSTEM_CHROME) {
+      console.log('[Browser] ✅ 自动探测到系统 Chrome: ' + SYSTEM_CHROME);
+    } else {
+      console.warn('[Browser] ⚠️ 未找到系统 Chrome，fallback 到 Playwright Chromium（有自动化痕迹，建议装系统 Chrome）');
+    }
+  }
+} catch(e) {
+  console.warn('[Browser] config 加载失败，继续用自动探测: ' + e.message);
+  SYSTEM_CHROME = findSystemChrome();
+}
 
 // ============ Chrome 启动参数 ============
 
@@ -216,8 +263,15 @@ function buildLaunchOpts(fp, extra = {}) {
   };
   
   // ⭐ 使用系统 Chrome（避免 Playwright 内置 Chromium 的特征）
-  // ⭐ 强制用系统 Chrome（不用 Playwright 自带 Chromium，后者 TLS/UA 全被标记）
-  if (SYSTEM_CHROME) opts.executablePath = SYSTEM_CHROME;
+  // v1.8.8: 支持 config.json 的 browser.type 覆盖（同行机制）
+  if (SYSTEM_CHROME) {
+    opts.executablePath = SYSTEM_CHROME;
+  // 🆕 v1.8.8: 用模块级 BROWSER_TYPE（config.json 里的 type）
+  } else if (typeof BROWSER_TYPE !== 'undefined' && BROWSER_TYPE === 'edge') {
+    opts.channel = 'msedge';
+    console.log('[Browser] 🎯 用 Edge: channel=msedge');
+  }
+  // playwright-chromium 或 auto 找不到系统 Chrome → 都不设置 executablePath，让 Playwright 用内置 Chromium
   
   // ⭐ 从指纹注入 UA + 语言 + 时区
   if (fp) {

@@ -48,6 +48,19 @@ function loadConfig() {
     process.exit(1);
   }
 
+  // 🆕 v1.8.8: 校验 browser 配置（同行机制）
+  const br = cfg.browser || (cfg.browser = {});
+  if (!br.type) br.type = 'auto';
+  if (!br.userDataDir) br.userDataDir = './data/browser-profile';
+  if (!br.viewport) br.viewport = { width: 1280, height: 800 };
+  // executablePath 校验
+  if (br.executablePath) {
+    const absPath = path.resolve(path.dirname(CONFIG_PATH), br.executablePath);
+    if (br.executablePath && !fs.existsSync(absPath)) {
+      console.warn(`[配置] browser.executablePath 指向的文件不存在: ${absPath}，将尝试自动探测`);
+    }
+  }
+
   return cfg;
 }
 
