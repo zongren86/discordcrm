@@ -1040,6 +1040,7 @@ import {
   listGifFavorites, addGifFavorite, removeGifFavorite, checkGifFavorited, normalizeGifUrl as normalizeGifUrlApi, uploadGifFile,
   sendGifMessage as sendGifMessageApi, resolveGifUrl as resolveGifUrlApi
 } from '@/api'
+import config from '@/config'  // 附件相对路径 → 绝对路径
 import lottie from 'lottie-web'
 import { lottieToGif } from '@/utils/lottieToGif'
 
@@ -1128,6 +1129,24 @@ const isActionHover = ref(false)
 const attachmentPreview = ref(null)
 const editTargetMsg = ref(null)
 const editText = ref('')
+// 把后端返回的相对 url 变成浏览器能访问的绝对 url (dev/prod 都能用)
+function normalizeAttachmentUrl(u) {
+  if (!u) return u
+  // 已经是绝对 URL / blob URL → 直接返回
+  if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('blob:')) return u
+  // 相对路径 → 拼后端 host
+  // config.API_BASE_URL = 'http://localhost:8090' (带 host:port, 不含 /api)
+  if (u.startsWith('/')) {
+    try {
+      const base = (config?.API_BASE_URL || location.origin).replace(/\/$/, '')
+      return base + u
+    } catch {
+      return location.origin + u
+    }
+  }
+  return u
+}
+
 const pendingAttachments = ref([])
 const showAiPanel = ref(false)
 const aiTone = ref('friendly')
@@ -2629,7 +2648,7 @@ async function onFileSelect(e) {
       if (res?.success) {
         pendingAttachments.value.push({
           name: res.filename || file.name,
-          url: res.url,
+          url: normalizeAttachmentUrl(res.url),
           size: res.size,
           contentType: res.contentType
         })
@@ -3262,7 +3281,7 @@ async function onInputDrop(e) {
       if (res?.success) {
         pendingAttachments.value.push({
           name: res.filename || file.name,
-          url: res.url,
+          url: normalizeAttachmentUrl(res.url),
           size: res.size,
           contentType: res.contentType
         })
@@ -3307,7 +3326,7 @@ async function onInputPaste(e) {
       if (res?.success) {
         pendingAttachments.value.push({
           name: res.filename || file.name,
-          url: res.url,
+          url: normalizeAttachmentUrl(res.url),
           size: res.size,
           contentType: res.contentType
         })
