@@ -1937,7 +1937,6 @@ function normalizeGifUrl(url) {
 
 /** 不需要代理的域名（浏览器可直接加载且无 Cloudflare 防护） */
 const NO_PROXY_DOMAINS = [
-  'cdn.discordapp.com',
   'media.discordapp.net',
   'i.imgur.com', 'i.redd.it',
   'c.tenor.com', 'media.tenor.com',
@@ -1966,14 +1965,28 @@ const EXTERNAL_GIF_DOMAINS = [
   'klipy.com',
   'tenor.com', 'giphy.com', 'imgur.com',
   'futuri.io', 'gyazo.com', '4cdn.org', 'redd.it',
-  'twitter.com', 'twimg.com', 'instagram.com'
+  'twitter.com', 'twimg.com', 'instagram.com',
+  'cdn.discordapp.com'  // ⚠️ 整域需要代理，但 avatars/attachments 子路径不需要（在 needsProxy 里特殊处理）
 ]
 
 /** 检查URL是否需要通过后端代理加载 */
 function needsProxy(url) {
   if (!url) return false
   try {
-    const hostname = new URL(url).hostname.toLowerCase()
+    const u = new URL(url)
+    const hostname = u.hostname.toLowerCase()
+    const path = u.pathname.toLowerCase()
+    
+    // ★ cdn.discordapp.com 细分路径：
+    //   /stickers/xxx.json|png  → 需要代理（Discord CORS 阻止浏览器直连 sticker JSON）
+    //   /avatars/xxx, /attachments/xxx  → 不需要代理（浏览器直连 Discord CDN 头像/附件）
+    if (hostname === 'cdn.discordapp.com') {
+      if (path.startsWith('/stickers/')) {
+        return true   // sticker JSON/PNG 必须代理
+      }
+      return false    // avatars/attachments 直连
+    }
+    
     // 已解析的 CDN 域名不需要代理
     if (NO_PROXY_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))) {
       return false
