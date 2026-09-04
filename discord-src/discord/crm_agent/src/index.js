@@ -19,6 +19,13 @@ const { captureDiscordAccount, launchBrowserOnly, extractAccountFromContext } = 
 const fs = require('fs');
 const path = require('path');
 
+// ========== 反作弊核心模块（v1.9.0 集成）==========
+const gatewayManager = require('./gateway/gateway_manager');
+const networkGate = require('./network/network_gate_v2');
+const maintenanceTrim = require('./maintenance_trim');
+const { scheduler } = require('./scheduler/task_scheduler');
+const outbox = require('./account_status_outbox');
+
 const AGENT_VERSION = cfg.version || 'unknown';
 
 console.log(`[启动] crm_agent v${AGENT_VERSION}`);
@@ -38,6 +45,10 @@ async function heartbeat() {
       nodeVersion: process.version,
       agentVersion: AGENT_VERSION,
       browserType: (cfg.browser && cfg.browser.type) || 'chromium',
+      // 🛡️ 反作弊: 上报系统状态
+      gatewayStatus: gatewayManager.getAllStatus(),
+      networkStatus: networkGate.getStatusSummary(),
+      schedulerStatus: scheduler.getStatus(),
     });
     if (!heartbeatOk) {
       heartbeatOk = true;
@@ -108,6 +119,19 @@ async function executeTask(task) {
           };
           await reportTask(task.id, 'SUCCESS', payload);
           console.log(`[任务] ✅ 完成 — 已保存 ${result.username}`);
+          // 🛡️ 反作弊关键: CAPTURE 成功后立即建立 Gateway 会话
+          // 同行日志证明：有 Gateway 会话的账号封号率显著降低
+          try {
+            gatewayManager.connectAgent(cfg.agentName + '_' + (result.discordId || 'unknown'), result.token, { intents: 0 });
+            console.log(`[Gateway] 🛡️ ${result.username} 已建立 Gateway 会话`);
+          } catch (gwErr) {
+            console.warn('[Gateway] 建立失败(不影响主流程):', (gwErr.message || '').slice(0, 80));
+          }
+          // 🔧 反作弊: 通知 network_gate 注册这个账号
+          networkGate.registerAccount(result.discordId || result.username, {
+            proxyRequired: !!(getProxyUrl() || cfg.discordProxy),
+            currentProxy: getProxyUrl() || cfg.discordProxy || null,
+          });
           // 已移除 3-4 分钟强制间隔：
           // 1. CAPTURE 成功后 safeClose 让 Chrome 正确写盘 profile，session 状态稳定
           // 2. 用户需要快速连续新增账号，agent 立即 ready 领下一个任务
@@ -380,6 +404,15 @@ async function main() {
   await heartbeat();
   setInterval(heartbeat, cfg.heartbeatIntervalMs || 5000);
   setInterval(pollTask, cfg.pollIntervalMs || 2000);
+
+  // ========== 🛡️ 反作弊基础设施启动 ==========
+  scheduler.start();
+  outbox.init(http, cfg);
+  outbox.start();
+  maintenanceTrim.start();
+  networkGate.setConfigProxy(getProxyUrl() || cfg.discordProxy || null);
+  networkGate.startProbeLoop();
+  console.log('🛡️ 反作弊模块已启动: scheduler + gateway_manager + network_gate + maintenance_trim + outbox');
 
   // 消息轮询 (方案 C: HTTP REST, 2s 间隔)
   await loadManagedAccounts();
