@@ -382,7 +382,7 @@ const roleLabel = computed(() => {
   const role = auth.agent?.role
   const label = roleMap[role] || role || '用户'
   const merchant = auth.agent?.merchantName
-  return merchant ? `${label} · ${merchant}` : label
+  return merchant ? `${label}  ${merchant}` : label
 })
 
 const avatarStyle = computed(() => ({
@@ -630,11 +630,8 @@ onMounted(async () => {
   font-size: 20px;
 }
 .sidebar-menu :deep(.el-sub-menu__title > span) {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: none;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 /* 箭头: 彻底干掉 Element Plus 默认的 margin-left/position/right */
 .sidebar-menu :deep(.el-sub-menu__icon-arrow) {
