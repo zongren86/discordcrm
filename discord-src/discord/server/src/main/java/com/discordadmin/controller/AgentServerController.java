@@ -393,7 +393,7 @@ public class AgentServerController {
                 "  \"heartbeatIntervalMs\": 5000,\n" +
                 "  \"pollIntervalMs\": 5000,\n" +
                 "  \"production\": false,\n" +
-                "  \"version\": \"1.8.7\",\n" +
+                "  \"version\": \"" + agentVer + "\",\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
                 "    \"type\": \"chromium\",\n" +
