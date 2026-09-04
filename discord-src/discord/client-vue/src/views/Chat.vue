@@ -674,12 +674,16 @@
                 :label="lang.name"
               />
             </el-select>
-            <el-button size="small" type="primary" plain @click="requestTranslationPreview" :disabled="!inputText.trim()">
-              <el-icon><Location /></el-icon> 预览翻译
-            </el-button>
-            <el-button size="small" type="primary" plain @click="translateCurrentMsg">
-              <el-icon><Location /></el-icon> 翻译
-            </el-button>
+            <el-tooltip content="预览翻译">
+              <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="requestTranslationPreview" :disabled="!inputText.trim()" title="预览翻译">
+                <el-icon><Location /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip content="批量翻译对话">
+              <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="translateCurrentMsg" title="批量翻译对话">
+                <el-icon><Location /></el-icon>
+              </el-button>
+            </el-tooltip>
           </div>
         </div>
 
@@ -5673,12 +5677,13 @@ video.msg-gif-img {
 
 .msg-lang-tag {
   margin-right: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .msg-translate-wrap .el-button,
 .msg-translate-wrap .el-tag {
   align-self: flex-start;
+  font-size: 12px;
 }
 
 .original-text,
@@ -5692,6 +5697,9 @@ video.msg-gif-img {
   color: rgba(255, 255, 255, 0.8);
 }
 
+.toolbar-right .el-button {
+  font-size: 12px;
+}
 .arrow-icon {
   display: inline-block;
   transition: transform 0.2s ease;
@@ -6004,6 +6012,7 @@ video.msg-gif-img {
 }
 .msg-input :deep(.el-textarea__inner::placeholder) {
   color: var(--color-text-3);
+  font-size: 12px;
 }
 .msg-input :deep(.el-textarea__inner:focus) {
   box-shadow: none !important;
@@ -6013,6 +6022,7 @@ video.msg-gif-img {
   flex-shrink: 0;
   height: 40px;
   padding: 0 22px;
+  font-size: 12px;
   font-weight: 600;
   border-radius: 10px;
   background: var(--color-primary);
