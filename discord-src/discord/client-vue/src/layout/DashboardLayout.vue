@@ -372,27 +372,16 @@ const agentInitial = computed(() => {
   return name.charAt(0).toUpperCase()
 })
 
-const roleLabel = computed(() => {
-  const roleMap = {
-    PLATFORM_ADMIN: '平台管理员',
-    MERCHANT_ADMIN: '商户管理员',
-    MANAGER: '主管',
-    SALES: '销售',
-    SERVICE: '客服'
-  }
-  const role = auth.agent?.role
-  const rawLabel = roleMap[role] || role || ''
-  const label = (rawLabel && rawLabel !== '用户') ? rawLabel : ''
-  const merchant = auth.agent?.merchantName
-  if (merchant) {
-    return label ? `${label}  ${merchant}` : merchant
-  }
-  return label || '用户'
-})
+const ROLE_MAP = {
+  PLATFORM_ADMIN: '平台管理员',
+  MERCHANT_ADMIN: '商户管理员',
+  MANAGER: '主管',
+  SALES: '销售',
+  SERVICE: '客服'
+}
 
 const roleText = computed(() => {
-  const role = auth.agent?.role
-  const rawLabel = roleMap[role] || role || ''
+  const rawLabel = ROLE_MAP[auth.agent?.role] || auth.agent?.role || ''
   return (rawLabel && rawLabel !== '用户') ? rawLabel : ''
 })
 
@@ -636,18 +625,15 @@ onMounted(async () => {
   color: var(--color-text);
   display: flex !important;
   align-items: center !important;
-  gap: 10px;
+  gap: 6px;
 }
 .sidebar-menu :deep(.el-sub-menu__title > .el-icon:not(.el-sub-menu__icon-arrow)) {
   flex-shrink: 0;
   font-size: 20px;
 }
 .sidebar-menu :deep(.el-sub-menu__title > span) {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: none;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 /* 箭头: 彻底干掉 Element Plus 默认的 margin-left/position/right */
 .sidebar-menu :deep(.el-sub-menu__icon-arrow) {
