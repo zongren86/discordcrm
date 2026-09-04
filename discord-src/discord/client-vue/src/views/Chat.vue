@@ -443,8 +443,13 @@
                         </button>
                       </el-tooltip>
                     </div>
+                    <!-- 发送中的 pending 消息占位 -->
+                    <div v-if="msg.isPending" class="msg-gif-loading">
+                      <div class="loading-spinner"></div>
+                      <span class="pending-label">{{ msg.pendingTitle || '发送中...' }}</span>
+                    </div>
                     <!-- klipy.com页面URL解析中显示加载状态 -->
-                    <div v-if="isPageUrl(gifUrlOf(msg)) && msg.gifUrl && !isGifUrlResolved(msg.gifUrl)" class="msg-gif-loading">
+                    <div v-else-if="isPageUrl(gifUrlOf(msg)) && msg.gifUrl && !isGifUrlResolved(msg.gifUrl)" class="msg-gif-loading">
                       <div class="loading-spinner"></div>
                       <span>加载中...</span>
                     </div>
@@ -661,7 +666,9 @@
           <div class="toolbar-right">
             <span class="detected-lang">好友: {{ detectedLang }}</span>
             <span class="target-lang-label">目标:</span>
-            <el-select v-model="targetLang" size="small" class="lang-select" @change="onTargetLangChange">
+<el-select v-model="targetLang" size="small" class="lang-select" @change="onTargetLangChange">
+    // --- origin/main ---
+    <el-select v-model="targetLang" size="small" class="lang-select" :teleported="false" @change="onTargetLangChange">
               <el-option
                 v-for="lang in supportedLanguages"
                 :key="lang.code"
@@ -669,7 +676,7 @@
                 :label="lang.name"
               />
             </el-select>
-            <el-tooltip content="预览翻译 (Alt+W 输入框内直接翻译)" placement="top" :show-after="200">
+<el-tooltip content="预览翻译 (Alt+W 输入框内直接翻译)" placement="top" :show-after="200">
               <el-button size="small" type="primary" plain class="icon-only-btn" @click="requestTranslationPreview" :disabled="!inputText.trim()">
                 <el-icon><View /></el-icon>
               </el-button>
@@ -677,6 +684,15 @@
             <el-tooltip content="翻译全部消息" placement="top" :show-after="200">
               <el-button size="small" type="primary" plain class="icon-only-btn" @click="translateCurrentMsg">
                 <el-icon><ChatDotRound /></el-icon>
+    // --- origin/main ---
+    <el-tooltip content="预览翻译" :teleported="false" popper-class="chat-toolbar-tooltip">
+              <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="requestTranslationPreview" :disabled="!inputText.trim()">
+                <el-icon><EditPen /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip content="批量翻译对话" :teleported="false" popper-class="chat-toolbar-tooltip">
+              <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="translateCurrentMsg">
+                <el-icon><Reading /></el-icon>
               </el-button>
             </el-tooltip>
           </div>
@@ -1022,7 +1038,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Loading, ChatDotRound, Refresh, ArrowUp, ArrowDown, InfoFilled, Promotion,
+  Search, Loading, ChatDotRound, Refresh, ArrowUp, ArrowDown, InfoFilled, Promotion, EditPen, Reading,
   Location, User, Top, Stamp, Plus, Close, Document, CopyDocument, Delete,
   ChatLineSquare, Edit, MoreFilled, Switch, PriceTag, UploadFilled, Calendar, Microphone,
   Warning, RefreshRight
@@ -1982,7 +1998,9 @@ function normalizeGifUrl(url) {
 const NO_PROXY_DOMAINS = [
   'media.discordapp.net',
   'i.imgur.com', 'i.redd.it',
-  'c.tenor.com', 'media.tenor.com'
+  'c.tenor.com', 'media.tenor.com',
+  'media.giphy.com',
+  'static2.klipy.com', 'cdn.klipy.com'
 ]
 
 /** 已解析的 klipy.com URL 缓存：原始URL → CDN URL（CDN 也需要代理绕过 Cloudflare） */
@@ -2003,11 +2021,11 @@ function isGifUrlResolved(url) {
 
 /** 需要代理的外部 GIF/动画域名（浏览器直接加载会被 CORS/Cloudflare 阻止） */
 const EXTERNAL_GIF_DOMAINS = [
-  'klipy.com', 'static2.klipy.com', 'cdn.klipy.com',
+  'klipy.com',
   'tenor.com', 'giphy.com', 'imgur.com',
   'futuri.io', 'gyazo.com', '4cdn.org', 'redd.it',
   'twitter.com', 'twimg.com', 'instagram.com',
-  'cdn.discordapp.com'  // Discord 官方 CDN，用于加载 Sticker/Lottie JSON
+  'cdn.discordapp.com'  // ⚠️ 整域需要代理，但 avatars/attachments 子路径不需要（在 needsProxy 里特殊处理）
 ]
 
 /** 检查URL是否需要通过后端代理加载 */
@@ -2016,6 +2034,7 @@ function needsProxy(url) {
   try {
     const u = new URL(url)
     const hostname = u.hostname.toLowerCase()
+
     // 已解析的 CDN 域名不需要代理
     if (NO_PROXY_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))) {
       return false
@@ -2920,15 +2939,40 @@ async function sendGifFromFavorite(favorite) {
   if (!favorite || !conversations.currentConversationId) return
   if (sendingGif.value) return
   sendingGif.value = true
-  
+
+  const convId = conversations.currentConversationId
+  const pendingId = 'pending-' + Date.now()
+
+  // 先插入占位消息（让用户立即看到发送中）
+  const pendingMsg = {
+    id: pendingId, direction: 'OUTBOUND',
+    content: favorite.gifUrl, gifUrl: favorite.gifUrl,
+    isPending: true, pendingTitle: favorite.title || 'GIF',
+    createdAt: new Date().toISOString()
+  }
+  conversations.appendMessage(convId, pendingMsg)
+
   try {
-    await sendGifMessageApi(conversations.currentConversationId, favorite.gifUrl, favorite.title)
+    const realMsg = await sendGifMessageApi(convId, favorite.gifUrl, favorite.title)
+    // 用真实数据替换占位
+    const msgs = [...(conversations.messagesMap[convId] || [])]
+    const idx = msgs.findIndex(m => m.id === pendingId)
+    if (idx >= 0) {
+      msgs.splice(idx, 1, { ...realMsg })
+      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+    }
     gifPickerVisible.value = false
-    // 等待消息加载到列表后再滚动到底部
     await nextTick()
     await nextTick()
     scrollToBottom({ force: true })
   } catch (e) {
+    // 失败：删除占位
+    const msgs = [...(conversations.messagesMap[convId] || [])]
+    const idx = msgs.findIndex(m => m.id === pendingId)
+    if (idx >= 0) {
+      msgs.splice(idx, 1)
+      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+    }
     console.error('发送GIF失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，文件可能过大，请选择较小的动图')
@@ -2948,16 +2992,41 @@ async function sendStickerFromFavorite(fav) {
   if (!fav || !fav.gifUrl) return
   if (sendingGif.value) return
   sendingGif.value = true
-  
+
+  const convId = conversations.currentConversationId
+  const pendingId = 'pending-' + Date.now()
+  const url = fav.gifUrl || fav.resolvedUrl || fav.favDisplayUrl || fav.convertedGifUrl
+
+  // 先插入占位消息
+  const pendingMsg = {
+    id: pendingId, direction: 'OUTBOUND',
+    content: url, gifUrl: url,
+    isPending: true, pendingTitle: fav.title || 'Sticker',
+    createdAt: new Date().toISOString()
+  }
+  conversations.appendMessage(convId, pendingMsg)
+
   try {
-    const url = fav.gifUrl || fav.resolvedUrl || fav.favDisplayUrl || fav.convertedGifUrl
-    await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
+    const realMsg = await sendGifMessageApi(convId, url, fav.title || 'Sticker')
+    // 用真实数据替换占位
+    const msgs = [...(conversations.messagesMap[convId] || [])]
+    const idx = msgs.findIndex(m => m.id === pendingId)
+    if (idx >= 0) {
+      msgs.splice(idx, 1, { ...realMsg })
+      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+    }
     gifPickerVisible.value = false
-    // 等待消息加载到列表后再滚动到底部
     await nextTick()
     await nextTick()
     scrollToBottom({ force: true })
   } catch (e) {
+    // 失败：删除占位
+    const msgs = [...(conversations.messagesMap[convId] || [])]
+    const idx = msgs.findIndex(m => m.id === pendingId)
+    if (idx >= 0) {
+      msgs.splice(idx, 1)
+      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+    }
     console.error('发送Sticker失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，请重试')
@@ -5542,6 +5611,11 @@ video.msg-gif-img {
   font-size: 14px;
 }
 
+.pending-label {
+  font-size: 12px;
+  color: var(--color-text-3);
+  margin-left: 6px;
+}
 .loading-spinner {
   width: 32px;
   height: 32px;
@@ -5671,12 +5745,13 @@ video.msg-gif-img {
 
 .msg-lang-tag {
   margin-right: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .msg-translate-wrap .el-button,
 .msg-translate-wrap .el-tag {
   align-self: flex-start;
+  font-size: 12px;
 }
 
 .original-text,
@@ -5690,6 +5765,9 @@ video.msg-gif-img {
   color: rgba(255, 255, 255, 0.8);
 }
 
+.toolbar-right .el-button {
+  font-size: 12px;
+}
 .arrow-icon {
   display: inline-block;
   transition: transform 0.2s ease;
@@ -5786,9 +5864,21 @@ video.msg-gif-img {
   background: var(--color-bg-3);
   box-shadow: none !important;
   border-radius: 6px;
+  font-size: 12px;
 }
-.lang-select :deep(.el-select__selected-item) {
+.lang-select :deep(.el-select__selected-item),
+.lang-select :deep(.el-select__placeholder),
+.lang-select :deep(.el-select__selected-item span),
+.lang-select :deep(.el-select__suffix),
+.lang-select :deep(.el-select__arrow) {
+  font-size: 12px;
   color: var(--color-text);
+}
+.lang-select :deep(.el-option),
+.lang-select :deep(.el-option-item),
+.lang-select :deep(.el-select-dropdown__item),
+.lang-select :deep(.el-select-dropdown__item span) {
+  font-size: 12px !important;
 }
 
 .emoji-picker {
@@ -5913,8 +6003,16 @@ video.msg-gif-img {
   margin-bottom: 6px;
   padding: 0 2px;
 }
-.input-hint .el-icon {
-  font-size: 12px;
+/* 工具栏 tooltip — teleported=false 后 :deep 能命中 */
+.toolbar-right :deep(.el-tooltip__popper),
+.toolbar-right :deep(.el-tooltip__content),
+.toolbar-right :deep(.el-tooltip__text),
+.toolbar-right :deep(.el-popper),
+.toolbar-right :deep(.el-popper *) {
+  font-size: 12px !important;
+}
+.input-hint * {
+  font-size: 12px !important;
 }
 
 .shortcut-hint {
@@ -6042,6 +6140,7 @@ video.msg-gif-img {
   flex-shrink: 0;
   height: 40px;
   padding: 0 22px;
+  font-size: 12px;
   font-weight: 600;
   border-radius: 10px;
   background: var(--color-primary);
@@ -7105,7 +7204,21 @@ video.msg-gif-img {
   font-size: 15px !important;
   margin: 0;
 }
-
+    // --- origin/main ---
+    /* Tooltip hover 文案 — 暴力全覆盖确保命中 */
+[class*='chat-toolbar-tooltip'] {
+  font-size: 12px !important;
+}
+[class*='chat-toolbar-tooltip'] * {
+  font-size: 12px !important;
+  line-height: 1.3 !important;
+}
+[class*='chat-toolbar-tooltip'] .el-tooltip__content,
+[class*='chat-toolbar-tooltip'] .el-tooltip__text,
+[class*='chat-toolbar-tooltip'] span,
+[class*='chat-toolbar-tooltip'] div {
+  font-size: 12px !important;
+}
 .date-popover-popper {
   border-radius: 12px !important;
   border: 1px solid var(--color-border, #e4e7ed) !important;

@@ -98,13 +98,9 @@
           </el-avatar>
           <div class="user-meta">
             <div class="user-name">{{ auth.agent?.displayName || auth.agent?.username || 'Agent' }}</div>
-            <div class="user-role">{{ roleLabel }}</div>
+            <div v-if="roleText" class="user-role">{{ roleText }}</div>
+            <div v-if="merchantName" class="user-merchant">{{ merchantName }}</div>
           </div>
-          <el-tooltip content="退出登录">
-            <el-button link type="danger" class="logout-btn" @click="handleLogout">
-              <el-icon><SwitchButton /></el-icon>
-            </el-button>
-          </el-tooltip>
         </div>
         <div v-else class="user-info-collapsed">
           <el-avatar
@@ -141,6 +137,12 @@
           <el-tooltip :content="theme.isFullscreen ? '退出全屏' : '全屏'" placement="bottom">
             <el-button circle size="small" class="top-bar-btn" @click="theme.toggleFullscreen()">
               <el-icon><FullScreen /></el-icon>
+            </el-button>
+          </el-tooltip>
+          <!-- 退出登录 -->
+          <el-tooltip content="退出登录" placement="bottom">
+            <el-button circle size="small" class="top-bar-btn logout-top-btn" @click="handleLogout">
+              <el-icon><SwitchButton /></el-icon>
             </el-button>
           </el-tooltip>
         </div>
@@ -370,19 +372,20 @@ const agentInitial = computed(() => {
   return name.charAt(0).toUpperCase()
 })
 
-const roleLabel = computed(() => {
-  const roleMap = {
-    PLATFORM_ADMIN: '平台管理员',
-    MERCHANT_ADMIN: '商户管理员',
-    MANAGER: '主管',
-    SALES: '销售',
-    SERVICE: '客服'
-  }
-  const role = auth.agent?.role
-  const label = roleMap[role] || role || '用户'
-  const merchant = auth.agent?.merchantName
-  return merchant ? `${label} · ${merchant}` : label
+const ROLE_MAP = {
+  PLATFORM_ADMIN: '平台管理员',
+  MERCHANT_ADMIN: '商户管理员',
+  MANAGER: '主管',
+  SALES: '销售',
+  SERVICE: '客服'
+}
+
+const roleText = computed(() => {
+  const rawLabel = ROLE_MAP[auth.agent?.role] || auth.agent?.role || ''
+  return (rawLabel && rawLabel !== '用户') ? rawLabel : ''
 })
+
+const merchantName = computed(() => auth.agent?.merchantName || '')
 
 const avatarStyle = computed(() => ({
   background: 'linear-gradient(135deg, var(--color-primary), var(--color-pink))',
@@ -564,7 +567,7 @@ onMounted(async () => {
 
 .sidebar-menu :deep(.el-sub-menu .el-menu-item) {
   height: 38px;
-  margin-left: 8px;
+  margin-left: 0;
   padding: 0 14px 0 28px !important;
   color: var(--color-text-2);
   border-radius: 6px;
@@ -611,6 +614,9 @@ onMounted(async () => {
 }
 
 /* sub-menu 标题: icon + 文字 + 箭头, 三者紧贴, 箭头靠最右 */
+.sidebar-menu :deep(.el-sub-menu) {
+  margin-left: 8px;
+}
 .sidebar-menu :deep(.el-sub-menu__title) {
   height: 46px;
   border-radius: 8px;
@@ -619,18 +625,15 @@ onMounted(async () => {
   color: var(--color-text);
   display: flex !important;
   align-items: center !important;
-  gap: 10px;
+  gap: 6px;
 }
 .sidebar-menu :deep(.el-sub-menu__title > .el-icon:not(.el-sub-menu__icon-arrow)) {
   flex-shrink: 0;
   font-size: 20px;
 }
 .sidebar-menu :deep(.el-sub-menu__title > span) {
-  flex: 1 1 auto;
-  min-width: 0;
+  flex: none;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 /* 箭头: 彻底干掉 Element Plus 默认的 margin-left/position/right */
 .sidebar-menu :deep(.el-sub-menu__icon-arrow) {
@@ -701,8 +704,14 @@ onMounted(async () => {
 }
 
 .user-role {
-  font-size: var(--font-xs);
+  font-size: 12px;
   color: var(--color-text-3);
+}
+
+.user-merchant {
+  font-size: 14px;
+  color: var(--color-text-2);
+  font-weight: 500;
   margin-top: 2px;
 }
 
@@ -745,6 +754,10 @@ onMounted(async () => {
 .top-bar-btn:hover {
   color: var(--color-primary);
   background: var(--color-primary-light);
+}
+.top-bar-btn.logout-top-btn:hover {
+  color: var(--el-color-danger);
+  background: var(--el-color-danger-light-9, rgba(245, 108, 108, 0.1));
 }
 
 .main-area {

@@ -174,8 +174,13 @@ public class ProxyController {
                     byte[] body = response.body();
 
                     // 如果是图片/GIF/视频内容，即使状态码是403，也尝试返回（有些CDN会返回内容但状态码是403）
-                    if (statusCode == 200 || statusCode == 206 || 
-                        (statusCode == 403 && isMediaContent(contentType, body))) {
+                    log.info("{}请求 attempt={} url={} status={} ct={} size={}",
+                        useProxy ? "代理" : "直连", attempt+1, url, statusCode, contentType, body != null ? body.length : 0);
+
+                    // 放宽成功判断: 200/204/206/301/302/403/404 只要有 body 就返回
+                    if (statusCode == 200 || statusCode == 204 || statusCode == 206
+                        || statusCode == 301 || statusCode == 302
+                        || ((body != null && body.length > 0) && (statusCode == 403 || statusCode == 404))) {
                         
                         // 检测 Cloudflare 拦截页面
                         if (statusCode == 403 && contentType.contains("text/html") && isCloudflareBlocked(body)) {
@@ -203,7 +208,7 @@ public class ProxyController {
                         return new ResponseEntity<>(body, headers, statusCode);
                     }
                 } catch (Exception e) {
-                    log.debug("{}请求尝试 {} 失败：{} - {}", useProxy ? "代理" : "直连", attempt + 1, url, e.getMessage());
+                    log.warn("{}请求尝试 {} 异常：{} - {} ({})", useProxy ? "代理" : "直连", attempt + 1, url, e.getMessage(), e.getClass().getSimpleName());
                     
                     // 代理失败时，自动降级为直连
                     if (useProxy && attempt == 0) {
