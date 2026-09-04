@@ -659,9 +659,9 @@
           </div>
 
           <div class="toolbar-right">
-            <span class="detected-lang">好友语言: {{ detectedLang }}</span>
-            <span class="target-lang-label">目标语言:</span>
-            <el-select v-model="targetLang" size="small" class="lang-select" @change="onTargetLangChange">
+            <span class="detected-lang">好友: {{ detectedLang }}</span>
+            <span class="target-lang-label">目标:</span>
+            <el-select v-model="targetLang" size="small" class="lang-select" :teleported="false" @change="onTargetLangChange">
               <el-option
                 v-for="lang in supportedLanguages"
                 :key="lang.code"
@@ -670,10 +670,10 @@
               />
             </el-select>
             <el-button size="small" type="primary" plain @click="requestTranslationPreview" :disabled="!inputText.trim()">
-              <el-icon><Location /></el-icon>预览
+              <el-icon><Location /></el-icon> 预览翻译
             </el-button>
             <el-button size="small" type="primary" plain @click="translateCurrentMsg">
-              <el-icon><Location /></el-icon>翻译
+              <el-icon><Location /></el-icon> 翻译
             </el-button>
           </div>
         </div>
@@ -1595,7 +1595,7 @@ const inputHint = computed(() => {
 
 const inputPlaceholder = computed(() => {
   const targetName = LANGUAGE_NAMES[targetLang.value] || targetLang.value
-  return `输入消息，Enter 发送，Shift+Enter 换行。中文自动翻译成${targetName}发送。`
+  return `输入消息，Enter 发送，Shift+Enter 换行。中文会自动翻译成${targetName}发送。`
 })
 
 const isOnline = computed(() => {
@@ -5674,15 +5674,6 @@ video.msg-gif-img {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;  /* ★ 工具栏右侧所有元素统一 12px */
-}
-.toolbar-right :deep(.el-button--small),
-.toolbar-right :deep(.el-button--medium),
-.toolbar-right :deep(.el-select),
-.toolbar-right :deep(.el-select__selected-item),
-.toolbar-right :deep(.el-input__wrapper),
-.toolbar-right :deep(.el-input__inner) {
-  font-size: 12px !important;
 }
 
 .toolbar-btn {
@@ -5690,7 +5681,6 @@ video.msg-gif-img {
   border: none;
   color: var(--color-text-3);
   transition: background 0.15s;
-  font-size: 12px;   /* ★ 工具栏按钮统一 12px */
 }
 .toolbar-btn:hover {
   background: var(--color-bg-hover);
@@ -5733,6 +5723,9 @@ video.msg-gif-img {
 }
 .lang-select :deep(.el-select__selected-item) {
   color: var(--color-text);
+}
+.lang-select :deep(.el-option) {
+  font-size: 12px;
 }
 
 .emoji-picker {
