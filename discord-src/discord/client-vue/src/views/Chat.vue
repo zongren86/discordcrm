@@ -687,7 +687,7 @@
           <div class="input-hint" v-if="inputHint">
             <el-icon><InfoFilled /></el-icon>
             <span>{{ inputHint }}</span>
-            <span class="shortcut-hint">（Alt/Cmd+W 翻译）</span>
+            <span class="shortcut-hint">（Alt+W 翻译 / Mac: Cmd+Shift+W）</span>
           </div>
 
           <div v-if="showAiPanel" class="ai-panel">
@@ -3330,12 +3330,19 @@ function handleGlobalKeydown(e) {
   console.log('[GLOBAL KEY] code=', e.code, 'key=', e.key, 'alt=', e.altKey, 'meta=', e.metaKey)
   const isAltOrCmd = e.altKey || e.metaKey
   
-  // Alt+W (Windows) / Cmd+W (Mac) — 翻译输入框
-  if (isAltOrCmd && e.code === 'KeyW') {
-    console.log('[GLOBAL] Alt/Cmd+W matched!')
+  // 翻译输入框快捷键（避开浏览器保护的 Cmd+W 关闭标签页）
+  // Alt+W                    — 全平台 (Win/Mac/Linux) 可拦截
+  // Cmd+Shift+W / Ctrl+Shift+W — 备选方案
+  const isKeyW = e.code === 'KeyW'
+  const isShift = e.shiftKey
+  const translateShortcut = (e.altKey && isKeyW) ||
+                            (e.metaKey && isShift && isKeyW) ||
+                            (e.ctrlKey && isShift && isKeyW)
+  if (translateShortcut) {
+    console.log('[GLOBAL] translate shortcut matched!', e.altKey, e.metaKey, e.ctrlKey, isShift)
     e.preventDefault()
     e.stopPropagation()
-    e.stopImmediatePropagation()  // capture阶段彻底拦截，阻止Chrome关闭标签页
+    e.stopImmediatePropagation()
     if (inputText.value.trim()) {
       doTranslateInput()
     } else {
@@ -3349,8 +3356,8 @@ function handleGlobalKeydown(e) {
 }
 
 function onInputKeydown(e) {
-  // Alt+W / Cmd+W — 已由全局 handleGlobalKeydown 统一处理
-  if (e.altKey || e.metaKey) return
+  // 翻译快捷键已由全局 handleGlobalKeydown 统一处理
+  if (e.altKey || e.metaKey || e.ctrlKey) return
   
   if (e.code === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
@@ -4407,7 +4414,7 @@ async function translateCurrentMsg() {
 }
 
 /** 请求翻译预览 - 调用后端翻译API获取真实翻译结果 */
-/** 直接翻译输入框内容并替换（用于快捷键 Alt+W/Cmd+W） */
+/** 直接翻译输入框内容并替换（用于快捷键 Alt+W / Cmd+Shift+W / Ctrl+Shift+W） */
 async function translateAndReplaceInput(text) {
   if (!text) return
   console.log('[DEBUG translateAndReplaceInput] text=', text, 'targetLang=', targetLang.value)
