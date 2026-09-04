@@ -47,6 +47,11 @@ public class DiscordMemberService {
     private final FetchProgressRepository fetchProgressRepository;
     private final FriendRepository friendRepository;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.discordadmin.service.CloudWebSocketService cloudWebSocketService;
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.discordadmin.repository.DiscordAccountRepository discordAccountRepository;
+
     @Value("${discord.proxy.host:}")
     private String proxyHost;
 
@@ -265,6 +270,15 @@ public class DiscordMemberService {
         progress.setStartedAt(Instant.now());
         progress.setMaxRequests(req.getMaxRequests());
         progress.setMaxMembers(req.getMaxMembers());
+        // 新字段：token 来源 + 采集出口
+        progress.setTokenSource(req.getTokenSource() != null ? req.getTokenSource() : "EXISTING_ACCOUNT");
+        if ("MANUAL".equals(req.getTokenSource()) && req.getManualToken() != null) {
+            progress.setManualToken(req.getManualToken());
+        }
+        progress.setFetchExit(req.getFetchExit() != null ? req.getFetchExit() : "SERVER_DIRECT");
+        if ("PROXY_AGENT".equals(req.getFetchExit()) && req.getAgentDeviceId() != null) {
+            progress.setAgentDeviceId(req.getAgentDeviceId());
+        }
         progress = fetchProgressRepository.save(progress);  // 保存并获取ID
         st.progressId = progress.getId();  // 关联进度ID
 
@@ -273,7 +287,21 @@ public class DiscordMemberService {
             serverLocks.put(st.guildServerId, taskId);
         }
 
-        pool.submit(() -> runTask(taskId, req));
+        // 根据采集出口选择执行方式
+        String exitMode = req.getFetchExit() != null ? req.getFetchExit() : "SERVER_DIRECT";
+        if ("PROXY_AGENT".equals(exitMode)) {
+            // 通过在线 mumu-agent 执行采集
+            if (req.getAgentDeviceId() == null || req.getAgentDeviceId().isBlank()) {
+                throw new IllegalArgumentException("PROXY_AGENT 模式需要指定 agentDeviceId");
+            }
+            if ("MANUAL".equals(req.getTokenSource()) && (req.getManualToken() == null || req.getManualToken().isBlank())) {
+                throw new IllegalArgumentException("PROXY_AGENT + MANUAL 模式需要提供手工 token");
+            }
+            pool.submit(() -> runTaskViaAgent(taskId, req));
+        } else {
+            // 应用服务器直连（现有 GatewayMemberFetcher + 防反作弊增强）
+            pool.submit(() -> runTask(taskId, req));
+        }
         return taskId;
     }
 
@@ -602,6 +630,192 @@ public class DiscordMemberService {
      * - 不存在的成员：插入
      * - 不删除任何已保存的数据
      */
+
+    /**
+     * PROXY_AGENT 模式：通过在线 mumu-agent 执行采集
+     * 异步下发命令后立即返回，进度/结果通过 FETCH_PROGRESS/FETCH_RESULT 回传
+     */
+    private void runTaskViaAgent(String taskId, MemberFetchRequest req) {
+        TaskState st = tasks.get(taskId);
+        if (st == null) return;
+        st.status = "RUNNING";
+        st.startedAt = System.currentTimeMillis();
+        st.progressMessage = "正在通过代理 Agent 启动采集...";
+
+        try {
+            String guildId = resolveGuildId(req.getLink());
+            st.guildId = guildId;
+            st.progressMessage = "已解析服务器 ID: " + guildId + "，下发采集命令到 Agent...";
+
+            // 获取 token（优先手工输入，否则用请求里的 token）
+            String token;
+            if ("MANUAL".equals(req.getTokenSource()) && req.getManualToken() != null && !req.getManualToken().isBlank()) {
+                token = req.getManualToken();
+            } else {
+                token = req.getToken();
+            }
+            if (token == null || token.isBlank()) {
+                throw new IllegalStateException("Token 为空，无法启动采集");
+            }
+
+            // 保存 FetchProgress 的 guildId
+            fetchProgressRepository.findById(st.progressId).ifPresent(p -> {
+                p.setGuildId(guildId);
+                p.setStatus("RUNNING");
+                fetchProgressRepository.save(p);
+            });
+
+            // 构造下发参数
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("taskId", taskId);
+            params.put("token", token);
+            params.put("guildId", guildId);
+            params.put("guildServerId", st.guildServerId);
+            params.put("fetchLimit", req.getMaxMembers());
+            params.put("maxRequests", req.getMaxRequests());
+            params.put("pageDelayMs", (int)(Math.max(10.0, req.getPageDelay()) * 1000));
+            params.put("maxDepth", req.getMaxDepth());
+
+            // 下发命令
+            cloudWebSocketService.sendDiscordFetchCommand(req.getAgentDeviceId(), params);
+            st.progressMessage = "采集命令已下发到 Agent，等待执行...";
+            log.info("PROXY_AGENT: taskId={} 已下发到 agentDeviceId={}, guildId={}", 
+                    taskId, req.getAgentDeviceId(), guildId);
+
+        } catch (Exception e) {
+            log.error("runTaskViaAgent 启动失败", e);
+            st.status = "FAILED";
+            st.error = e.getMessage();
+            st.failureReason = e.getMessage();
+            st.completedAt = System.currentTimeMillis();
+            st.progressMessage = "启动失败: " + e.getMessage();
+            // 更新 FetchProgress
+            fetchProgressRepository.findById(st.progressId).ifPresent(p -> {
+                p.setStatus("FAILED");
+                p.setErrorMessage(e.getMessage());
+                p.setFailureReason(e.getMessage());
+                p.setCompletedAt(Instant.now());
+                fetchProgressRepository.save(p);
+            });
+            // 释放锁
+            if (st.guildServerId > 0) serverLocks.remove(st.guildServerId);
+        }
+    }
+
+    /** Agent 回传采集进度 */
+    public void handleAgentFetchProgress(String taskId, Map<String, Object> payload) {
+        TaskState st = tasks.get(taskId);
+        if (st == null) return;
+
+        st.currentPrefix = (String) payload.getOrDefault("currentPrefix", "");
+        st.requestsSent = safeInt(payload, "requestsSent");
+        st.membersUnique = safeInt(payload, "membersUnique");
+        st.prefixesDone = safeInt(payload, "prefixesDone");
+        st.prefixesTotal = safeInt(payload, "prefixesTotal");
+        st.totalRespondedMembers = safeInt(payload, "totalRespondedMembers");
+        st.totalResponseTimeMs = safeLong(payload, "totalResponseTimeMs");
+        st.lastResponded = safeInt(payload, "lastResponded");
+        st.lastDeduped = safeInt(payload, "lastDeduped");
+        st.lastRequestTimeMs = safeLong(payload, "lastRequestTimeMs");
+        st.lastPrefix = (String) payload.getOrDefault("lastPrefix", st.lastPrefix);
+
+        StringBuilder msg = new StringBuilder("[agent] fetching ");
+        msg.append(st.requestsSent).append(" ");
+        msg.append(st.currentPrefix).append(" ");
+        msg.append(st.lastResponded).append(" ");
+        msg.append(st.lastDeduped);
+        st.progressMessage = msg.toString();
+
+        // 节流保存 FetchProgress
+        if (st.progressId != null && (st.prefixesDone % 5 == 0 || "done".equals(payload.get("stage")))) {
+            fetchProgressRepository.findById(st.progressId).ifPresent(p -> {
+                p.setRequestCount(st.requestsSent);
+                p.setRawMemberCount(st.membersUnique);
+                p.setCompletedPages(st.prefixesDone);
+                p.setRetryCount(safeInt(payload, "reconnects"));
+                p.setTotalRespondedMembers(st.totalRespondedMembers);
+                p.setTotalResponseTimeMs(st.totalResponseTimeMs);
+                p.setLastPrefix(st.lastPrefix);
+                fetchProgressRepository.save(p);
+            });
+        }
+    }
+
+    /** Agent 回传采集结果（完成/失败） */
+    public void handleAgentFetchResult(String taskId, Map<String, Object> payload) {
+        TaskState st = tasks.get(taskId);
+        if (st == null) return;
+
+        boolean success = Boolean.TRUE.equals(payload.get("success"));
+        st.completedAt = System.currentTimeMillis();
+
+        if (success) {
+            st.status = "COMPLETED";
+            st.progressMessage = "采集完成（代理模式）";
+            // 落库成员数据
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> members = (List<Map<String, Object>>) payload.get("members");
+            if (members != null && !members.isEmpty()) {
+                List<MemberRecord> recs = new ArrayList<>();
+                for (Map<String, Object> m : members) {
+                    MemberRecord r = new MemberRecord();
+                    r.setUserId(String.valueOf(m.getOrDefault("id", "")));
+                    r.setUsername((String) m.getOrDefault("username", ""));
+                    r.setGlobalName((String) m.getOrDefault("discordName", ""));
+                    r.setAvatarUrl((String) m.getOrDefault("avatarUrl", ""));
+                    recs.add(r);
+                }
+                st.records = recs;
+                if (st.guildServerId > 0) {
+                    batchSaveMembers(st.guildServerId, st.guildId, recs);
+                }
+                log.info("PROXY_AGENT: taskId={} 落库成员 {} 个", taskId, recs.size());
+            }
+        } else {
+            st.status = "FAILED";
+            String error = (String) payload.getOrDefault("error", "未知错误");
+            st.error = error;
+            st.failureReason = error;
+            st.progressMessage = "采集失败: " + error;
+            // token 失效回写 DiscordAccount
+            String agentToken = (String) payload.get("usedToken");
+            if (agentToken != null && (error.contains("4004") || error.contains("4010") || error.contains("4007") || error.contains("token.*invalid") || error.contains("token.*expired"))) {
+                discordAccountRepository.findAll().forEach(acct -> {
+                    if (agentToken.equals(acct.getToken())) {
+                        acct.setTokenValid(false);
+                        discordAccountRepository.save(acct);
+                        log.warn("PROXY_AGENT: taskId={} token 失效，已标记 DiscordAccount id={}", taskId, acct.getId());
+                    }
+                });
+            }
+        }
+
+        // 更新 FetchProgress
+        if (st.progressId != null) {
+            fetchProgressRepository.findById(st.progressId).ifPresent(p -> {
+                p.setStatus(success ? "COMPLETED" : "FAILED");
+                p.setCompletedAt(Instant.now());
+                if (success) {
+                    p.setRawMemberCount(st.records != null ? st.records.size() : st.membersUnique);
+                    p.setRequestCount(st.requestsSent);
+                } else {
+                    p.setErrorMessage(st.error);
+                    p.setFailureReason(st.failureReason);
+                }
+                fetchProgressRepository.save(p);
+            });
+        }
+
+        // 释放锁
+        if (st.guildServerId > 0) {
+            String lockedTaskId = serverLocks.get(st.guildServerId);
+            if (taskId.equals(lockedTaskId)) {
+                serverLocks.remove(st.guildServerId);
+            }
+        }
+        log.info("PROXY_AGENT: taskId={} {} (requests={}, members={})", taskId, success ? "COMPLETED" : "FAILED", st.requestsSent, st.membersUnique);
+    }
+
     private void batchSaveMembers(Long guildServerId, String guildId, List<MemberRecord> records) {
         // 仅查询当前批次涉及的 userId，避免全表扫描
         List<String> userIds = records.stream().map(MemberRecord::getUserId).toList();

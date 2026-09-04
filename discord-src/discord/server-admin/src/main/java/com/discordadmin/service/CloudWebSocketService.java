@@ -9,6 +9,7 @@ import com.discordadmin.repository.AgentRepository;
 import com.discordadmin.repository.EmuInstanceRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -30,6 +31,11 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     private final AgentRegistrationRepository agentRepository;
     private final AgentRepository agentEntityRepository;
     private final EmuInstanceRepository instanceRepository;
+
+    @Autowired
+    private com.discordadmin.discord.member.DiscordMemberService discordMemberService;
+    @Autowired
+    private com.discordadmin.repository.DiscordAccountRepository discordAccountRepository;
     private final ObjectMapper objectMapper;
     
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
@@ -147,6 +153,8 @@ public class CloudWebSocketService extends TextWebSocketHandler {
                 case "REGISTER" -> handleRegister(session, msg);
                 case "HEARTBEAT" -> handleHeartbeat(session, msg);
                 case "TASK_RESULT" -> handleTaskResult(session, msg);
+                case "FETCH_PROGRESS" -> handleFetchProgress(msg);
+                case "FETCH_RESULT" -> handleFetchResult(msg);
                 case "REGISTER_ACK" -> {} // Agent 收到云端注册确认
                 case "AGENT_COMMAND_RESULT" -> handleCommandResult(msg);
                 default -> log.warn("未知消息类型: {}", type);
@@ -666,6 +674,26 @@ public class CloudWebSocketService extends TextWebSocketHandler {
         return agent != null && "ONLINE".equals(agent.getStatus());
     }
     
+    /** 获取在线 Agent 简洁列表（前端下拉选择用） */
+    public java.util.List<java.util.Map<String, Object>> getOnlineAgentSimpleList() {
+        java.util.List<java.util.Map<String, Object>> result = new java.util.ArrayList<>();
+        for (java.util.Map.Entry<String, AgentRegistration> entry : onlineAgents.entrySet()) {
+            AgentRegistration agent = entry.getValue();
+            if (!"ONLINE".equals(agent.getStatus())) continue;
+            java.util.Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("deviceId", agent.getDeviceId());
+            item.put("name", agent.getDeviceId() != null ? agent.getDeviceId() : "unknown");
+            item.put("platform", agent.getOs() != null ? agent.getOs() : "unknown");
+            item.put("userId", agent.getUserId());
+            item.put("status", "ONLINE");
+            item.put("lastSeen", agent.getLastHeartbeatAt() != null ? agent.getLastHeartbeatAt().toEpochMilli() : null);
+            item.put("emulatorCount", agent.getEmulatorCount());
+            item.put("runningEmulatorCount", agent.getRunningEmulatorCount());
+            result.add(item);
+        }
+        return result;
+    }
+
     public AgentRegistration getAgentByDeviceId(String deviceId) {
         return onlineAgents.get(deviceId);
     }
@@ -1108,6 +1136,46 @@ public class CloudWebSocketService extends TextWebSocketHandler {
             result.put("message", e.getMessage());
         }
         return result;
+    }
+
+
+    /** Agent 回传采集进度 */
+    private void handleFetchProgress(Map<String, Object> msg) {
+        String taskId = (String) msg.get("taskId");
+        Map<String, Object> payload = (Map<String, Object>) msg.get("payload");
+        if (taskId == null || payload == null) {
+            log.warn("FETCH_PROGRESS 缺少 taskId 或 payload");
+            return;
+        }
+        discordMemberService.handleAgentFetchProgress(taskId, payload);
+    }
+
+    /** Agent 回传采集结果 */
+    private void handleFetchResult(Map<String, Object> msg) {
+        String taskId = (String) msg.get("taskId");
+        Map<String, Object> payload = (Map<String, Object>) msg.get("payload");
+        if (taskId == null || payload == null) {
+            log.warn("FETCH_RESULT 缺少 taskId 或 payload");
+            return;
+        }
+        discordMemberService.handleAgentFetchResult(taskId, payload);
+    }
+
+    /** 向指定 agent 发送 DISCORD_FETCH 命令（不等结果，异步执行） */
+    public String sendDiscordFetchCommand(String deviceId, Map<String, Object> params) {
+        WebSocketSession session = findSessionByDeviceId(deviceId);
+        if (session == null || !session.isOpen()) {
+            throw new RuntimeException("Agent 不在线: deviceId=" + deviceId);
+        }
+        String taskId = params.get("taskId") != null ? (String) params.get("taskId") 
+            : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12);
+        Map<String, Object> message = new java.util.HashMap<>();
+        message.put("type", "DISCORD_FETCH");
+        message.put("taskId", taskId);
+        message.put("params", params != null ? params : new java.util.HashMap<>());
+        sendMessage(session, message);
+        log.info("下发 DISCORD_FETCH 命令: taskId={}, deviceId={}", taskId, deviceId);
+        return taskId;
     }
 
 }

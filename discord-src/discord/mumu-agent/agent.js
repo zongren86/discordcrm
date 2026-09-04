@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const fs = require('fs');
 const path = require('path');
 const { execSync, execFileSync, spawn, spawnSync } = require('child_process');
+const { DiscordGatewayFetcher } = require('./discord_gateway_fetcher');
 const NL = String.fromCharCode(10);
 
 function getTimestamp() {
@@ -2952,6 +2953,40 @@ async function handleMessage(msg) {
             }
             break;
             
+
+        case 'DISCORD_FETCH':
+            {
+                const params = msg.params || {};
+                const taskId = params.taskId || msg.taskId;
+                const token = params.token;
+                const guildId = params.guildId;
+                if (!token || !guildId) {
+                    send({ type: 'FETCH_RESULT', taskId, payload: { success: false, error: '缺少 token 或 guildId' } });
+                    break;
+                }
+                const fetcher = new DiscordGatewayFetcher({
+                    token, guildId,
+                    fetchLimit: params.fetchLimit || 2000000,
+                    maxRequests: params.maxRequests || 1000,
+                    pageDelayMs: params.pageDelayMs || 60000,
+                    maxDepth: params.maxDepth || 5,
+                    progressCallback: (p) => send({ type: 'FETCH_PROGRESS', taskId, payload: p }),
+                    resultCallback: (r) => {
+                        if (r.success) {
+                            send({ type: 'FETCH_RESULT', taskId, payload: { ...r, usedToken: token } });
+                        } else {
+                            send({ type: 'FETCH_RESULT', taskId, payload: { ...r, usedToken: token } });
+                        }
+                    },
+                });
+                console.log(`[Agent] 启动 DISCORD_FETCH: taskId=${taskId}, guildId=${guildId}`);
+                fetcher.start().catch(err => {
+                    console.error('[Agent] DISCORD_FETCH 异常:', err.message);
+                    send({ type: 'FETCH_RESULT', taskId, payload: { success: false, error: err.message, usedToken: token } });
+                });
+            }
+            break;
+
         default:
             console.log(`[Agent] 未处理的消息类型: ${type}`);
             send({

@@ -104,4 +104,20 @@ public class FetchProgress {
 
     @Column(name = "created_at")
     private Instant createdAt = Instant.now();
+
+    /** Token 来源: EXISTING_ACCOUNT(使用关联的 DiscordAccount token) | MANUAL(手工输入) */
+    @Column(name = "token_source", length = 32)
+    private String tokenSource = "EXISTING_ACCOUNT";
+
+    /** 手工输入的 token（仅 tokenSource=MANUAL 时有值） */
+    @Column(name = "manual_token", length = 512)
+    private String manualToken;
+
+    /** 采集出口: SERVER_DIRECT(应用服务器直连) | PROXY_AGENT(通过在线 mumu-agent) */
+    @Column(name = "fetch_exit", length = 32)
+    private String fetchExit = "SERVER_DIRECT";
+
+    /** PROXY_AGENT 模式下选中的 mumu-agent deviceId */
+    @Column(name = "agent_device_id", length = 128)
+    private String agentDeviceId;
 }

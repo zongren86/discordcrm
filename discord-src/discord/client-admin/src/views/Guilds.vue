@@ -204,6 +204,51 @@
           </el-descriptions-item>
         </el-descriptions>
 
+        <el-divider content-position="left">💡 Token 来源</el-divider>
+
+        <el-form label-width="120px">
+          <el-form-item label="Token 来源">
+            <el-radio-group v-model="syncDialog.tokenSource">
+              <el-radio value="EXISTING_ACCOUNT">账号已有 token</el-radio>
+              <el-radio value="MANUAL">手工输入 token</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="syncDialog.tokenSource === 'MANUAL'" label="手工 Token">
+            <el-input
+              v-model="syncDialog.manualToken"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              placeholder="粘贴完整的 Discord USER token"
+            />
+          </el-form-item>
+        </el-form>
+
+        <template v-if="syncDialog.tokenSource === 'MANUAL'">
+          <el-divider content-position="left">📡 采集出口</el-divider>
+
+          <el-form label-width="120px">
+            <el-form-item label="采集出口">
+              <el-radio-group v-model="syncDialog.fetchExit">
+                <el-radio value="SERVER_DIRECT">应用服务器（直连 Discord）</el-radio>
+                <el-radio value="PROXY_AGENT">代理（mumu-agent）</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item v-if="syncDialog.fetchExit === 'PROXY_AGENT'" label="选择 Agent">
+              <el-select v-model="syncDialog.selectedAgentId" placeholder="选择在线 Agent" style="width: 100%" @change="onAgentSelected">
+                <el-option
+                  v-for="agent in syncDialog.onlineAgents"
+                  :key="agent.deviceId"
+                  :value="agent.deviceId"
+                  :label="`${agent.name || agent.deviceId} (${agent.platform || 'unknown'} / ${agent.ip || ''})`"
+                />
+              </el-select>
+              <div v-if="syncDialog.onlineAgents.length === 0" class="text-muted" style="font-size:12px;">
+                当前没有在线的 mumu-agent，请先在代理机器上启动 agent
+              </div>
+            </el-form-item>
+          </el-form>
+        </template>
+
         <el-divider content-position="left">抓取配置</el-divider>
 
         <el-form :model="syncDialog.config" label-width="120px">
@@ -1077,6 +1122,14 @@ function openSyncDialog(server) {
   syncDialog.resumeSync = true
   // 回填完整 token（非脱敏），供展示与编辑
   syncDialog.token = server.accountToken || server.token || ""
+  // 新字段初始化
+  syncDialog.tokenSource = 'EXISTING_ACCOUNT'
+  syncDialog.manualToken = ''
+  syncDialog.fetchExit = 'SERVER_DIRECT'
+  syncDialog.selectedAgentId = null
+  syncDialog.onlineAgents = []
+  // 加载在线 Agent 列表
+  loadOnlineAgents()
   // 加载商户配置作为默认值
   guildServers.loadMerchantConfig().then(config => {
     if (config) {
@@ -1090,6 +1143,25 @@ function openSyncDialog(server) {
     }
   }).catch(() => {})
   syncDialog.visible = true
+}
+
+async function loadOnlineAgents() {
+  try {
+    const res = await fetch('/api/emu/agent/online', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('auth_token') } })
+    if (res.ok) {
+      const data = await res.json()
+      syncDialog.onlineAgents = data.data || data || []
+      if (syncDialog.onlineAgents.length === 0) {
+        console.warn('[Fetch] 没有在线的 mumu-agent')
+      }
+    }
+  } catch (e) {
+    console.warn('[Fetch] 加载在线 agents 失败:', e.message)
+  }
+}
+
+function onAgentSelected(deviceId) {
+  console.log('[Fetch] 选中 agent:', deviceId)
 }
 
 function maskToken(token) {
@@ -1109,8 +1181,34 @@ async function startFetch() {
       return
     }
 
+    // Token 来源处理
+    let finalToken = tokenValue
+    let tokenSource = syncDialog.tokenSource || 'EXISTING_ACCOUNT'
+    let manualToken = null
+    if (tokenSource === 'MANUAL') {
+      if (!syncDialog.manualToken || !syncDialog.manualToken.trim()) {
+        ElMessage.error('请输入手工 token')
+        syncDialog.fetching = false
+        return
+      }
+      manualToken = syncDialog.manualToken.trim()
+      finalToken = manualToken
+    }
+
+    // 采集出口处理
+    let fetchExit = syncDialog.fetchExit || 'SERVER_DIRECT'
+    let agentDeviceId = null
+    if (fetchExit === 'PROXY_AGENT') {
+      if (!syncDialog.selectedAgentId) {
+        ElMessage.error('请选择在线的 Agent')
+        syncDialog.fetching = false
+        return
+      }
+      agentDeviceId = syncDialog.selectedAgentId
+    }
+
     const result = await guildServers.startFetch({
-      token: tokenValue,
+      token: finalToken,
       link: syncDialog.server.guildId,
       guildServerId: syncDialog.server.id,
       discordAccountId: syncDialog.server.discordAccountId,
@@ -1120,7 +1218,11 @@ async function startFetch() {
       requestCount: syncDialog.config.requestCount,
       maxDepth: syncDialog.config.maxDepth,
       maxRequests: syncDialog.config.maxRequests,
-      resumeSync: syncDialog.resumeSync
+      resumeSync: syncDialog.resumeSync,
+      tokenSource: tokenSource,
+      manualToken: manualToken,
+      fetchExit: fetchExit,
+      agentDeviceId: agentDeviceId
     })
 
     if (result.success) {

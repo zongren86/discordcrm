@@ -29,4 +29,13 @@ public class MemberFetchRequest {
     private String channelId;
     /** 是否续传（true=从上次断点继续，false=全量重新同步） */
     private boolean resumeSync = true;
+
+    /** Token 来源: EXISTING_ACCOUNT(默认,使用关联的 DiscordAccount token) | MANUAL(手工输入 token) */
+    private String tokenSource = "EXISTING_ACCOUNT";
+    /** 手工输入的 token（仅 tokenSource=MANUAL 时使用） */
+    private String manualToken;
+    /** 采集出口: SERVER_DIRECT(默认,应用服务器直连) | PROXY_AGENT(通过在线 mumu-agent) */
+    private String fetchExit = "SERVER_DIRECT";
+    /** PROXY_AGENT 模式下选中的 mumu-agent deviceId */
+    private String agentDeviceId;
 }

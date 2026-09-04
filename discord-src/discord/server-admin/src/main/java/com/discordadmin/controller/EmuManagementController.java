@@ -967,6 +967,16 @@ public class EmuManagementController {
     }
 
     /**
+     * 获取在线 Agent 简洁列表（供采集对话框选择代理）
+     */
+    @GetMapping("/agent/online")
+    public java.util.List<java.util.Map<String, Object>> getOnlineAgents() {
+        return cloudWebSocketService != null 
+            ? cloudWebSocketService.getOnlineAgentSimpleList() 
+            : new java.util.ArrayList<>();
+    }
+
+    /**
      * 生成 mumu-agent 配置文件内容（供商户下载）
      */
     @GetMapping("/agent/config")

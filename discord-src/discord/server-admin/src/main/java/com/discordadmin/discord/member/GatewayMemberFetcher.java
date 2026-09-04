@@ -28,9 +28,15 @@ public class GatewayMemberFetcher {
     private static final Logger log = LoggerFactory.getLogger(GatewayMemberFetcher.class);
     private static final String GATEWAY_URL = "wss://gateway.discord.gg/?v=10&encoding=json";
     private static final String ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789_.";
-    private static final String UA =
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-          + "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+    private static final String[] OS_LIST = {"Windows", "Windows", "Windows", "MacOS", "MacOS", "Linux"};
+    private static final String[] BROWSER_LIST = {"Chrome", "Chrome", "Chrome", "Edge", "Firefox"};
+    private static final String[] DEVICE_LIST = {"Desktop", "Desktop", "Desktop", "Mobile"};
+    private static final String[][] UA_TEMPLATES = {
+            {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Safari/537.36", "Chrome"},
+            {"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Safari/537.36", "Chrome"},
+            {"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Safari/537.36 Edg/%s.0.0.0", "Edge"},
+            {"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s.0.0.0 Safari/537.36", "Chrome"},
+    };
 
     private static final double MIN_REQUEST_INTERVAL = 10.0;
     private static final int MAX_RECONNECT = 10;
@@ -828,7 +834,13 @@ public class GatewayMemberFetcher {
 
             webSocket = factory.createSocket(GATEWAY_URL);
             webSocket.setMaxPayloadSize(64 * 1024 * 1024);
-            webSocket.addHeader("User-Agent", UA);
+            // UA 也随机化（与 properties 自洽）
+            long uaSeed = System.nanoTime() ^ (guildId != null ? guildId.hashCode() : 0);
+            Random uaRng = new Random(uaSeed);
+            int tplIdx = uaRng.nextInt(UA_TEMPLATES.length);
+            int chromeMajor = 140 + uaRng.nextInt(6);  // Chrome 140-145
+            String ua = String.format(UA_TEMPLATES[tplIdx][0], chromeMajor, chromeMajor);
+            webSocket.addHeader("User-Agent", ua);
 
             webSocket.addListener(new WebSocketAdapter() {
                 @Override
@@ -1130,11 +1142,17 @@ public class GatewayMemberFetcher {
             // GUILD_MEMBERS = 1 << 1 = 2, 这是获取服务器成员所必需的意图
             int GUILD_MEMBERS_INTENT = 1 << 1;
             d.put("intents", GUILD_MEMBERS_INTENT);
-            d.put("properties", Map.of(
-                    "os", "MacOS",
-                    "browser", "Chrome",
-                    "device", "Mac"
-            ));
+            // 防反作弊：IDENTIFY properties 随机化（同一采集任务稳定，不同任务变化）
+            long fpSeed = System.nanoTime() ^ (guildId != null ? guildId.hashCode() : 0);
+            Random rng = new Random(fpSeed);
+            String os = OS_LIST[rng.nextInt(OS_LIST.length)];
+            String browser = BROWSER_LIST[rng.nextInt(BROWSER_LIST.length)];
+            String device = DEVICE_LIST[rng.nextInt(DEVICE_LIST.length)];
+            Map<String, Object> properties = new LinkedHashMap<>();
+            properties.put("os", os);
+            properties.put("browser", browser);
+            properties.put("device", device);
+            d.put("properties", properties);
             d.put("compress", true);
             d.put("large_threshold", 250);
             d.put("shard", new int[]{0, 1});
