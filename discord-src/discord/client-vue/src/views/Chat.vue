@@ -1800,9 +1800,15 @@ function isImageOnlyMsg(msg) {
   if (!msg) return false
   const imgs = imageAttachmentsOf(msg)
   if (imgs.length === 0) return false
-  const text = msg.content?.trim() || ''
-  const isPlaceholderText = text === '[图片]' || text === '[GIF]' || text === '[语音消息]' || text === '[Sticker]'
-  return !text || isPlaceholderText
+  // 两个文本字段都要检查
+  const text = (msg.content?.trim() || '') + ' ' + (msg.translatedContent?.trim() || '')
+  const placeholderRegex = /^\s*(\[图片消息\]|\[图片\]|\[GIF\]|\[语音消息\]|\[Sticker\]|\[附件消息\]|\[Attachment\])\s*$/
+  // 两边都是空 或 都是占位符 → 纯图片
+  const contentOnly = msg.content?.trim() || ''
+  const transOnly = msg.translatedContent?.trim() || ''
+  const contentOk = !contentOnly || placeholderRegex.test(contentOnly)
+  const transOk = !transOnly || placeholderRegex.test(transOnly)
+  return contentOk && transOk
 }
 
 /** 判断是否为媒体消息（GIF/Sticker/纯图片），用于移除气泡背景 */
