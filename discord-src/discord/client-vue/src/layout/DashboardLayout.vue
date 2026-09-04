@@ -98,7 +98,8 @@
           </el-avatar>
           <div class="user-meta">
             <div class="user-name">{{ auth.agent?.displayName || auth.agent?.username || 'Agent' }}</div>
-            <div class="user-role">{{ roleLabel }}</div>
+            <div v-if="roleText" class="user-role">{{ roleText }}</div>
+            <div v-if="merchantName" class="user-merchant">{{ merchantName }}</div>
           </div>
         </div>
         <div v-else class="user-info-collapsed">
@@ -380,10 +381,22 @@ const roleLabel = computed(() => {
     SERVICE: '客服'
   }
   const role = auth.agent?.role
-  const label = roleMap[role] || role || '用户'
+  const rawLabel = roleMap[role] || role || ''
+  const label = (rawLabel && rawLabel !== '用户') ? rawLabel : ''
   const merchant = auth.agent?.merchantName
-  return merchant ? `${label}  ${merchant}` : label
+  if (merchant) {
+    return label ? `${label}  ${merchant}` : merchant
+  }
+  return label || '用户'
 })
+
+const roleText = computed(() => {
+  const role = auth.agent?.role
+  const rawLabel = roleMap[role] || role || ''
+  return (rawLabel && rawLabel !== '用户') ? rawLabel : ''
+})
+
+const merchantName = computed(() => auth.agent?.merchantName || '')
 
 const avatarStyle = computed(() => ({
   background: 'linear-gradient(135deg, var(--color-primary), var(--color-pink))',
@@ -630,8 +643,11 @@ onMounted(async () => {
   font-size: 20px;
 }
 .sidebar-menu :deep(.el-sub-menu__title > span) {
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* 箭头: 彻底干掉 Element Plus 默认的 margin-left/position/right */
 .sidebar-menu :deep(.el-sub-menu__icon-arrow) {
@@ -702,8 +718,14 @@ onMounted(async () => {
 }
 
 .user-role {
-  font-size: var(--font-xs);
+  font-size: 12px;
   color: var(--color-text-3);
+}
+
+.user-merchant {
+  font-size: 14px;
+  color: var(--color-text-2);
+  font-weight: 500;
   margin-top: 2px;
 }
 
