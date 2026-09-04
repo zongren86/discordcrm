@@ -37,3 +37,25 @@
 - 2026-08-23：执行 `git checkout HEAD -- Chat.vue` 导致所有未提交功能丢失，花费大量时间重新实现
 - **绝对禁止**在未确认的情况下用 git 命令覆盖工作目录文件
 - 正确做法：使用 git stash 保存工作，或手动备份后再操作
+
+## Agent 职责边界（2026-09-04 明确）
+
+### 本 Agent 负责（main-temp-2 分支）
+- `discord-src/discord/server/` — 后端核心 Spring Boot
+- `discord-src/discord/client-vue/` — 聊天前端 Vue 3
+- `discord-src/discord/crm_agent/` — 模拟器代理 Node.js
+
+### 打包输出路径
+- 统一输出到 `discord-src/discord/deploy-package/crm/`
+- 目录尚不存在，首次打包时创建
+
+### 其他 agent 负责
+- `discord-src/discord/server-admin/` — 管理后端（另一 agent）
+- `discord-src/discord/client-admin/` — 管理前端（另一 agent）
+- `discord-src/discord/mumu-agent/` — MuMu 模拟器对接（独立）
+
+### Git 分支策略
+- 本 agent 工作分支：`main-temp-2`
+- 远程主分支：`main`
+- 禁止自动 git push；危险操作先输出 git status 让用户确认
+- 每次改动完成立即 git add + git commit，保持工作区干净

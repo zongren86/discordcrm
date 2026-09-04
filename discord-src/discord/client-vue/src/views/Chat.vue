@@ -2006,10 +2006,20 @@ const EXTERNAL_GIF_DOMAINS = [
 function needsProxy(url) {
   if (!url) return false
   try {
-    const hostname = new URL(url).hostname.toLowerCase()
+    const u = new URL(url)
+    const hostname = u.hostname.toLowerCase()
     // 已解析的 CDN 域名不需要代理
     if (NO_PROXY_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))) {
       return false
+    }
+    // cdn.discordapp.com 路径细分：
+    //   /stickers/*.json → 需代理（Lottie JSON 被浏览器 CORS 拦截）
+    //   /avatars/*, /attachments/* → 直连（普通图片/视频，无 CORS 问题）
+    //   其他路径 → 保守走代理
+    if (hostname === 'cdn.discordapp.com') {
+      const p = u.pathname
+      if (p.startsWith('/avatars/') || p.startsWith('/attachments/')) return false
+      return true
     }
     return EXTERNAL_GIF_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))
   } catch {
