@@ -586,7 +586,7 @@ public class MessageService {
                 String fileName = att.get("name");
                 String contentType = att.get("contentType");
                 if (url == null || url.isBlank()) continue;
-                if (url.startsWith("/")) url = "http://localhost:8090" + url;
+                if (url.startsWith("/")) url = baseUrl.replaceAll("/+$", "") + url;
                 try {
                     HttpClient client = HttpClient.newBuilder()
                             .connectTimeout(Duration.ofSeconds(30)).build();
@@ -722,7 +722,7 @@ public class MessageService {
                 if (url == null || url.isBlank()) continue;
                 // 如果是相对路径，补全为绝对URL
                 if (url.startsWith("/")) {
-                    url = "http://localhost:8090" + url;
+                    url = baseUrl.replaceAll("/+$", "") + url;
                 }
                 
                 try {
