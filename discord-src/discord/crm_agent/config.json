@@ -1,19 +1,19 @@
 {
-  "serverUrl": "http://127.0.0.1:8090/api",
-  "agentName": "yfy01",
-  "token": "",
-  "heartbeatIntervalMs": 5000,
-  "pollIntervalMs": 5000,
-  "browser": {
-    "headless": false,
-    "userDataDir": "./data/browser-profile",
-    "viewport": {
-      "width": 1280,
-      "height": 800
+    "serverUrl": "http://127.0.0.1:8090/api",
+    "agentName": "yfy01",
+    "token": "",
+    "heartbeatIntervalMs": 5000,
+    "pollIntervalMs": 5000,
+    "browser": {
+        "headless": false,
+        "userDataDir": "./data/browser-profile",
+        "viewport": {
+            "width": 1280,
+            "height": 800
+        },
+        "type": "auto",
+        "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
     },
-    "type": "auto",
-    "executablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-  },
-  "version": "1.9.0",
-  "production": false
+    "version": "1.9.1",
+    "production": false
 }
