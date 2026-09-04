@@ -22,11 +22,9 @@ import java.util.UUID;
 @RequestMapping("/api/attachments")
 public class AttachmentController {
 
-    @Value("${app.upload.dir:uploads}")
+    @Value("${app.upload.path:uploads}")
     private String uploadDir;
 
-    @Value("${server.base-url:http://localhost:8090}")
-    private String serverBaseUrl;
 
     @PostMapping("/upload")
     public Map<String, Object> upload(@RequestParam("file") MultipartFile file) {
