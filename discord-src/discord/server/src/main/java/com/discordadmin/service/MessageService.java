@@ -661,6 +661,21 @@ public class MessageService {
                 java.util.List<java.util.Map<String, String>> attArr = new java.util.ArrayList<>();
                 java.util.Map<String, String> m = new java.util.HashMap<>();
                 m.put("url", cdnUrl);
+                // 从 URL 推断 filename 和 contentType，让前端能识别图片
+                                String fileName = cdnUrl.substring(cdnUrl.lastIndexOf('/') + 1); int qIdx = fileName.indexOf("?"); if (qIdx >= 0) fileName = fileName.substring(0, qIdx);
+
+                m.put("name", fileName);
+                String lower = cdnUrl.toLowerCase();
+                String ct = "application/octet-stream";
+                if (lower.endsWith(".png")) ct = "image/png";
+                else if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) ct = "image/jpeg";
+                else if (lower.endsWith(".gif")) ct = "image/gif";
+                else if (lower.endsWith(".webp")) ct = "image/webp";
+                else if (lower.endsWith(".bmp")) ct = "image/bmp";
+                else if (lower.endsWith(".svg")) ct = "image/svg+xml";
+                else if (lower.endsWith(".mp4")) ct = "video/mp4";
+                else if (lower.endsWith(".webm")) ct = "video/webm";
+                m.put("contentType", ct);
                 attArr.add(m);
                 message.setAttachmentsJson(om.writeValueAsString(attArr));
             }

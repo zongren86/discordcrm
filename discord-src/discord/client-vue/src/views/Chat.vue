@@ -1745,12 +1745,15 @@ function senderNameOf(msg) {
 }
 
 function displayContentOf(msg) {
-  if (msg?.messageType === 'voice') return ''
-  if (isGifMsg(msg)) return ''
+  if (!msg) return ''
+  if (msg.messageType === 'voice') return ''
+  if (isGifMsg(msg) || isStickerMsg(msg)) return ''
+  // 纯图片消息：隐藏占位文本（[图片消息]/[GIF] 等）
+  if (isImageOnlyMsg(msg)) return ''
   // 统一默认显示中文（translatedContent），"查看原文"展开后显示对应原文/发送内容
   // INBOUND: translatedContent=中文译文, content=好友原文
   // OUTBOUND: translatedContent=中文译文, sentContent=实际发出的目标语言内容, content=用户输入
-  return msg?.translatedContent || msg?.content || ''
+  return msg.translatedContent || msg.content || ''
 }
 
 function isGifMsg(msg) {
@@ -2643,6 +2646,17 @@ function parseReactions(msg) {
 function isImage(filename) {
   if (!filename) return false
   return /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(filename)
+}
+
+/** 更可靠的图片判断：优先 contentType，其次 URL 扩展名，最后 filename */
+function isImageAtt(att) {
+  if (!att) return false
+  const ct = (att.contentType || '').toLowerCase()
+  if (ct.startsWith('image/')) return true
+  // URL 扩展名（附件可能只有 url 字段没有 filename）
+  const url = att.url || ''
+  if (/\.(jpg|jpeg|png|gif|webp|bmp|svg)([?#]|$)/i.test(url)) return true
+  return isImage(att.filename || att.name)
 }
 
 function isGifAttachment(att) {
