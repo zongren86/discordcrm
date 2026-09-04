@@ -14,7 +14,7 @@
 })();
 
 const { http, cfg } = require('./http');
-const { discordHttp, fetchFriends, fetchDmChannels, sendMessageWithFiles } = require('./discord');
+const { discordHttp, fetchFriends, fetchDmChannels, sendMessageWithFiles, getProxyUrl } = require('./discord');
 const { captureDiscordAccount, launchBrowserOnly, extractAccountFromContext } = require('./browser');
 const fs = require('fs');
 const path = require('path');
@@ -27,6 +27,7 @@ console.log(`[配置] serverUrl=${cfg.serverUrl}  agentName=${cfg.agentName || '
 let heartbeatOk = false;
 let busy = false;
 let currentTaskId = null;
+const browserOpenAccounts = new Set();  // 浏览器唤起中 → 暂停该账号的 API 轮询（防双通道风控）
 
 async function heartbeat() {
   try {
@@ -35,6 +36,7 @@ async function heartbeat() {
       name: cfg.agentName,
       serverAddress: cfg.publicAddress || '',
       nodeVersion: process.version,
+      agentVersion: AGENT_VERSION,
       browserType: (cfg.browser && cfg.browser.type) || 'chromium',
     });
     if (!heartbeatOk) {
@@ -88,10 +90,12 @@ async function executeTask(task) {
       case 'CAPTURE_DISCORD_ACCOUNT': {
         await reportTask(task.id, 'RUNNING');
         try {
+          // ⭐ 把 discordProxy 传进去 → 地理探测才能匹配代理出口 IP
           const result = await captureDiscordAccount(cfg.browser || {}, {
             taskId: task.id,
             http: http,
             agentName: cfg.agentName,
+            proxyUrl: getProxyUrl() || cfg.discordProxy || null,
           });
           // 带 browserProfilePath 回传给后端
           const payload = {
@@ -104,12 +108,11 @@ async function executeTask(task) {
           };
           await reportTask(task.id, 'SUCCESS', payload);
           console.log(`[任务] ✅ 完成 — 已保存 ${result.username}`);
-          // 防风控: 采集成功后强制间隔 3 分钟，避免短时间内批量采集
-          if (cfg.agentMode !== 'debug') {
-            const delay = 180000 + Math.floor(Math.random() * 60000); // 3-4 分钟随机
-            console.log(`[风控] 采集间隔等待 ${Math.round(delay/60000)} 分钟再处理下一个任务...`);
-            await new Promise(r => setTimeout(r, delay));
-          }
+          // 已移除 3-4 分钟强制间隔：
+          // 1. CAPTURE 成功后 safeClose 让 Chrome 正确写盘 profile，session 状态稳定
+          // 2. 用户需要快速连续新增账号，agent 立即 ready 领下一个任务
+          // 3. 反作弊靠 browser.js 层的 initScript/指纹/资源拦截，不靠人为延迟
+
         } catch (err) {
           if (err.code === 'CANCELLED') {
             await reportTask(task.id, 'CANCELLED');
@@ -139,7 +142,11 @@ async function executeTask(task) {
         }
         await reportTask(task.id, 'RUNNING');
         try {
-          const { context } = await launchBrowserOnly(profilePath, cfg.browser || {});
+          // ⭐ 把 agentName + discordProxy 传进去 → 地理探测才能匹配代理出口 IP
+          const { context } = await launchBrowserOnly(profilePath, cfg.browser || {}, {
+            agentName: cfg.agentName,
+            proxyUrl: getProxyUrl() || cfg.discordProxy || null,
+          });
           console.log('[任务] ✅ 浏览器已打开');
 
           // ⚠️ 关键: 浏览器打开时暂停该账号的消息轮询

@@ -1,3 +1,46 @@
+<<<<<<< HEAD
+# Node / Agent
+crm_agent/node_modules/
+crm_agent/data/
+crm_agent/*.log
+crm_agent/.bak/
+*.bak
+
+# Java / 后端
+server/target/
+*.class
+*.jar
+.idea/
+*.iml
+
+# 前端
+client-vue/node_modules/
+client-vue/dist/
+client-vue/.vite/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# 系统
+*.log
+*.tmp
+.env
+.env.local
+
+# 敏感
+crm_agent/config.json
+
+# server 大目录（不入库）
+server/uploads/
+server/scripts/lottie-to-gif/node_modules/
+server/src/main/resources/static/
+server/src/main/resources/agent-package.zip
+server/src/main/resources/crm_agent-v*.zip
+
+# agent .bak 文件
+crm_agent/src/*.bak
+=======
 # Node.js
 node_modules/
 dist/
@@ -39,3 +82,4 @@ Thumbs.db
 start-all.py
 start-all.sh
 start_discord.py
+>>>>>>> origin/main

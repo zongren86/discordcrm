@@ -62,40 +62,31 @@ const SYSTEM_CHROME = findSystemChrome();
 // ============ Chrome 启动参数 ============
 
 function getLaunchArgs() {
+  // 🆕 v1.8.7: 对齐同行策略 + 反 Playwright --enable-automation（Discord 核心风控信号）
+  // 真正的反检测靠：系统 Chrome + initScript 伪造 + chromiumSandbox:false（Playwright 选项）
   return [
-    // 基础清理
+    // 基础清理（同行同款）
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-infobars',
-    '--disable-background-networking',
     '--disable-sync',
     '--metrics-recording-only',
     '--no-pings',
-    
-    // ⭐ 关键：清除 Playwright 默认的自动化标记
-    // Playwright 会自动加 --enable-automation + --disable-blink-features=AutomationControlled
-    // 这些被 Discord 检测到直接封！
-    // 我们通过 executablePath/channel 启动真实 Chrome，
-    // Playwright 的这些参数需要显式覆盖
-    
-    // 窗口大小相关
-    '--window-size=1280,800',
-    '--start-maximized',
-    
-    // 稳定
+    "--disable-enable-automation",
+    "--disable-blink-features=AutomationControlled",
+    // 🔴 v1.8.7: 移除（正常用户有插件，无插件=风控信号）
+    '--disable-background-networking',
+
+    // 服务器加速（同行没加但安全，服务器确实没 GPU/共享内存问题）
+    '--disable-gpu',
+    '--disable-dev-shm-usage',
     '--disable-breakpad',
     '--disable-component-update',
     '--disable-domain-reliability',
-    '--disable-features=AudioServiceOutOfProcess',
-    '--disable-ipc-flooding-protection',
-    '--disable-notifications',
-    '--disable-offer-store-unmasked-wallet-cards',
-    '--disable-offer-upload-credit-cards',
-    '--disable-print-preview',
-    '--disable-setuid-sandbox',
-    '--disable-speech-api',
-    '--disable-web-security',
-    '--no-sandbox',
+
+    // 窗口
+    '--window-size=1280,800',
+    '--start-maximized',
   ];
 }
 
@@ -152,6 +143,61 @@ async function safeClose(context) {
   } catch {}
 }
 
+// ============ 第 4 层防线：强制 Chrome profile 语言偏好 ============
+// 根因：Chrome profile/Default/Preferences 里的 intl.* 字段会覆盖
+// --lang / --accept-language / Playwright locale 等启动参数。
+// 每次 launchPersistentContext 前必须确保 Preferences 里的语言是对的。
+function ensureProfileIntl(userDataDir, fp) {
+  try {
+    const acceptLanguages = fp.languages;
+    const languagesArr = fp.languages.split(',');
+
+    // ============ 文件 1: Default/Preferences ============
+    const prefsDir = path.join(userDataDir, 'Default');
+    if (!fs.existsSync(prefsDir)) fs.mkdirSync(prefsDir, { recursive: true });
+    const prefsFile = path.join(prefsDir, 'Preferences');
+    let prefs = {};
+    if (fs.existsSync(prefsFile)) {
+      try { prefs = JSON.parse(fs.readFileSync(prefsFile, 'utf8')); }
+      catch { try { fs.copyFileSync(prefsFile, prefsFile + '.bak.' + Date.now()); } catch {} prefs = {}; }
+    }
+    prefs.intl = prefs.intl || {};
+    prefs.intl.accept_languages = acceptLanguages;
+    prefs.intl.selected_languages = languagesArr;
+    prefs.spellcheck = prefs.spellcheck || {};
+    prefs.spellcheck.dictionaries = [fp.locale.split('-')[0]];
+    prefs.translate = prefs.translate || {};
+    prefs.translate.enabled = false;
+    // 关键：content_settings.default.language —— Chrome 语言偏好的核心键！
+    prefs.profile = prefs.profile || {};
+    prefs.profile.default_content_setting_values = prefs.profile.default_content_setting_values || {};
+    prefs.profile.default_content_setting_values.language = fp.locale;
+    // 还有一个：download.default_directory 无关，不用管
+    fs.writeFileSync(prefsFile, JSON.stringify(prefs));
+    console.log('[Browser] 📝 Default/Preferences.intl.accept_languages =', acceptLanguages);
+    console.log('[Browser] 📝 Default/Preferences.profile.default_content_setting_values.language =', fp.locale);
+
+    // ============ 文件 2: Local State（比 Preferences 更全局）============
+    const localStateFile = path.join(userDataDir, 'Local State');
+    let ls = {};
+    if (fs.existsSync(localStateFile)) {
+      try { ls = JSON.parse(fs.readFileSync(localStateFile, 'utf8')); } catch { ls = {}; }
+    }
+    ls.intl = ls.intl || {};
+    ls.intl.accept_languages = acceptLanguages;
+    ls.intl.selected_languages = languagesArr;
+    ls.browser = ls.browser || {};
+    ls.browser.enabled_labs_experiments = ls.browser.enabled_labs_experiments || [];
+    fs.writeFileSync(localStateFile, JSON.stringify(ls));
+    console.log('[Browser] 📝 Local State.intl.accept_languages =', acceptLanguages);
+
+    return true;
+  } catch (e) {
+    console.warn('[Browser] ⚠️ 写入 profile 语言偏好失败:', e.message);
+    return false;
+  }
+}
+
 // ============ 构建 launchPersistentContext 选项 ============
 
 /**
@@ -164,23 +210,37 @@ function buildLaunchOpts(fp, extra = {}) {
     headless: extra.headless ?? false,
     chromiumSandbox: false,
     args: getLaunchArgs(),
+    // 🆕 v1.8.7: 禁 Playwright 默认注入的 --enable-automation 和 CDP 开关
+    ignoreDefaultArgs: ["--enable-automation", "--enableAutomationTools"],
     ignoreHTTPSErrors: true,
   };
   
   // ⭐ 使用系统 Chrome（避免 Playwright 内置 Chromium 的特征）
+  // ⭐ 强制用系统 Chrome（不用 Playwright 自带 Chromium，后者 TLS/UA 全被标记）
   if (SYSTEM_CHROME) opts.executablePath = SYSTEM_CHROME;
   
-  // ⭐ 从指纹注入 UA
+  // ⭐ 从指纹注入 UA + 语言 + 时区
   if (fp) {
     opts.userAgent = fp.userAgent;
     opts.locale = fp.locale;
     opts.timezoneId = fp.timezone;
     opts.viewport = fp.viewport;
     opts.deviceScaleFactor = fp.devicePixelRatio;
+    // ⭐ 关键：Chromium 启动时强制 --lang，覆盖系统 Chrome 默认语言
+    // 避免 Windows 系统 Chrome 自带韩文语言包被 Chromium 优先使用
+    opts.args.push('--lang=' + fp.locale);
+    // ⭐ 最关键：--accept-language 命令行参数直接覆盖所有 HTTP 请求的 Accept-Language
+    // 这个参数比 Playwright locale 更底层，hCaptcha / Discord / DevTools 都读这个
+    opts.args.push('--accept-language=' + fp.languages);
+    // Playwright locale 参数本身会设置 navigator.language，但 Chromium
+    // 内部一些组件（包括 hCaptcha）看的是 --lang 参数
   } else {
+    // 指纹模块没加载 → 用默认配对（Asia/Shanghai + zh-CN，地理自洽）
     opts.userAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + fingerprint.getSystemChromeVersion() + ' Safari/537.36';
     opts.locale = 'zh-CN';
     opts.timezoneId = 'Asia/Shanghai';
+    opts.args.push('--lang=zh-CN');
+    opts.args.push('--accept-language=zh-CN,zh,en-US,en');
   }
   
   // 代理（如果账号绑定了）
@@ -204,8 +264,8 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   // 初始化追踪
   trace.start();
   
-  // ⭐ 获取账号独立指纹
-  const fp = fingerprint.getOrCreateFingerprint(agentName);
+  // ⭐ 获取账号独立指纹（地理感知：通过代理探测出口 IP）
+  const fp = await fingerprint.getOrCreateFingerprint(agentName, { proxyUrl });
   
   // ⭐ 如果有代理，绑定并检测
   if (proxyUrl) {
@@ -241,8 +301,30 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       executablePath: launchOpts.executablePath ? 'SYSTEM_CHROME' : '(playwright)',
     }));
     
+    // ⭐ 第 4 层防线：强制 profile/Default/Preferences 语言
+    ensureProfileIntl(userDataDir, fp);
     context = await chromium.launchPersistentContext(userDataDir, launchOpts);
     trace.browserWorkflow('context_created', { pages: context.pages().length });
+    // ⭐ 第 2 层防线：强制 HTTP Accept-Language header（Discord/hCaptcha 优先读这个）
+    await context.setExtraHTTPHeaders({ 'Accept-Language': fp.languages });
+
+    // ⚡⚡⚡ 资源拦截：Discord 登录页只需要 HTML + JS + CSS，拦截非必要资源
+    // 这让页面加载从 3-8s 降到 1-2s，而且不影响 token 捕获
+    try {
+      // 1. 图片/字体/media — 登录页 UI 能显示就行
+      // ⚠️ 不拦图片！Discord 头像/表情/hCaptcha 验证都需要 png/jpg/svg
+   // 只拦追踪脚本、广告、Discord 自己的遥测
+      // 2. 远端字体 CDN
+      await context.route(/fonts\.(googleapis|gstatic|adobe|cloudflare)\.com/, route => route.abort());
+      // 3. 追踪/遥测脚本 — 完全不影响登录功能
+      await context.route(/(segment|hotjar|fullstory|mixpanel|amplitude|datadog|posthog|google-analytics|analytics)\.com/, route => route.abort());
+      await context.route(/(googletagmanager|facebook|fbcdn|tiktok)\.com/, route => route.abort());
+      await context.route(/(clarity|userpilot|pendo|heap\.io|logrocket)\.(com|io)/, route => route.abort());
+      await context.route(/capture\.discordapp\.com/, route => route.abort());  // Discord 自己的遥测!
+      // 4. 广告/CDN（非必要的）
+      await context.route(/doubleclick\.net|googlesyndication\.com/, route => route.abort());
+    } catch { /* route 可能已经被注册，忽略 */ }
+
   } catch (e) {
     capacity.release('START_ACCOUNT');
     trace.browserWorkflow('capture_fail', { reason: String(e.message).slice(0, 200) });
@@ -254,8 +336,9 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   // ⭐ 注入动态反检测脚本（从指纹生成）
   await page.addInitScript(getInitScript(fp));
 
-  // 网络拦截抓 token（双路：Authorization header + storage 扫描）
+  // 网络拦截抓 token（双向：request 的 Authorization header + response 的）
   let capturedToken = null;
+  let tokenReady = false;  // 🆕 标志位：token 一抓到就触发，跳过 2 秒等待
   const responseHandler = (response) => {
     try {
       const headers = response.headers();
@@ -263,13 +346,89 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
         if (!capturedToken || capturedToken !== auth) {
           capturedToken = auth;
-          console.log(`[Browser] 🎯 网络拦截捕获 token (${auth.length} chars)`);
-          trace.event('token_captured', { source: 'network', len: auth.length });
+          tokenReady = true;
+          console.log(`[Browser] 🎯 response 拦截捕获 token (${auth.length} chars)`);
+          trace.event('token_captured', { source: 'response', len: auth.length });
         }
       }
     } catch {}
   };
   context.on('response', responseHandler);
+  // request 方向也抓（更可靠，Discord 每次 API 调用都带 Authorization）
+  const requestHandler = (request) => {
+    try {
+      const url = request.url();
+      if (!url.includes('discord.com/api')) return;
+      const headers = request.headers();
+      const auth = headers['authorization'] || headers['Authorization'];
+      if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
+        if (!capturedToken || capturedToken !== auth) {
+          capturedToken = auth;
+          tokenReady = true;
+          console.log(`[Browser] 🎯 request 拦截捕获 token (${auth.length} chars) url=${url.slice(0,60)}`);
+          trace.event('token_captured', { source: 'request', len: auth.length });
+        }
+      }
+    } catch {}
+  };
+  context.on('request', requestHandler);
+
+  // 🆕 JS 层终极保险：hook fetch/XHR 抓 Authorization header
+  // 这一层在 Discord 的 JS 运行时直接拦截，最可靠
+  const jsHook = `
+(() => {
+    const origFetch = window.fetch;
+    window.fetch = async function(input, init) {
+        try {
+            const url = typeof input === 'string' ? input : input?.url || '';
+            if (url.includes('discord.com/api') && init?.headers) {
+                const h = init.headers;
+                let auth = typeof h.get === 'function' ? h.get('authorization') || h.get('Authorization')
+                        : (h['authorization'] || h['Authorization']);
+                if (auth && !auth.startsWith('Bot ') && auth.length > 50) {
+                    window.__capturedDiscordToken = auth;
+                    console.log('[TokenHook] fetch captured token');
+                }
+            }
+        } catch {}
+        return origFetch.apply(this, arguments);
+    };
+    const origSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function(name, val) {
+        try {
+            if ((name.toLowerCase() === 'authorization') && val && !val.startsWith('Bot ') && val.length > 50) {
+                window.__capturedDiscordToken = val;
+                console.log('[TokenHook] XHR captured token');
+            }
+        } catch {}
+        return origSetHeader.apply(this, arguments);
+    };
+})();`;
+  await context.addInitScript(jsHook);
+  console.log('[Browser] JS fetch/XHR token hook injected');
+
+  // 🆕 CDP: 监听 WebSocket Gateway 帧（Discord 2025+ token 在这里）
+  try {
+    const cdp = await context.newCDPSession(await context.pages()[0] || await context.newPage());
+    cdp.on('Network.webSocketFrameSent', (frame) => {
+      try {
+        const payload = JSON.parse(frame.payload);
+        // op=2 IDENTIFY / op=4 RESUME / op=12 HEARTBEAT 都带 token
+        if (payload.op === 2 || payload.op === 4) {
+          const t = payload.d?.token;
+          if (t && t.length > 50 && (!capturedToken || capturedToken !== t)) {
+            capturedToken = t;
+            tokenReady = true;
+            console.log(`[Browser] 🎯 CDP WebSocket 捕获 token (${t.length} chars) op=${payload.op}`);
+            trace.event('token_captured', { source: 'websocket', len: t.length, op: payload.op });
+          }
+        }
+      } catch {}
+    });
+    await cdp.send('Network.enable');
+  } catch (e) {
+    console.warn('[Browser] CDP 初始化失败（不影响 HTTP 拦截）:', e.message?.slice(0, 80));
+  }
 
   console.log('[Browser] 打开 Discord 登录页...');
   let gotoOk = false;
@@ -319,41 +478,52 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
               if (v && tokenPattern.test(v)) return v;
             }
           }
-          if (typeof indexedDB !== 'undefined') {
+          // 优先扫 Discord 已知 indexedDB（2024+ 用这些存 token）
+          const DISCORD_DBS = ['discord_store', 'discord_cache', 'KeyDBCache', 'discordMeta'];
+          const scanDB = (dbName) => new Promise((resolve) => {
+            let found = null;
             try {
-              const dbs = await indexedDB.databases();
-              for (const db of dbs) {
-                if (!db.name) continue;
-                let t = null;
-                await new Promise((resolve) => {
-                  const req = indexedDB.open(db.name);
-                  req.onsuccess = async () => {
+              const req = indexedDB.open(dbName);
+              req.onsuccess = async () => {
+                try {
+                  const tx = req.result.transaction(req.result.objectStoreNames, 'readonly');
+                  for (const n of req.result.objectStoreNames) {
                     try {
-                      const names = req.result.objectStoreNames;
-                      for (const n of names) {
-                        const all = req.result.transaction(n, 'readonly').objectStore(n).getAll();
-                        await new Promise(r2 => {
-                          all.onsuccess = () => {
-                            for (const item of all.result || []) {
-                              const s = typeof item === 'string' ? item : JSON.stringify(item);
-                              const m = s.match(tokenPattern);
-                              if (m) { t = m[0]; break; }
-                            }
-                            r2();
-                          };
-                          all.onerror = () => r2();
-                        });
-                        if (t) break;
-                      }
+                      const store = tx.objectStore(n);
+                      const all = store.getAll();
+                      await new Promise(r2 => {
+                        all.onsuccess = () => {
+                          for (const item of all.result || []) {
+                            const s = typeof item === 'string' ? item : JSON.stringify(item);
+                            const m = s.match(tokenPattern);
+                            if (m && !found) { found = m[0]; }
+                          }
+                          r2();
+                        };
+                        all.onerror = () => r2();
+                      });
+                      if (found) break;
                     } catch {}
-                    resolve();
-                  };
-                  req.onerror = () => resolve();
-                });
-                if (t) return t;
-              }
-            } catch {}
+                  }
+                } catch {}
+                resolve(found);
+              };
+              req.onerror = () => resolve(null);
+              req.onupgradeneeded = () => resolve(null);
+            } catch { resolve(null); }
+          });
+          for (const dbName of DISCORD_DBS) {
+            const t = await scanDB(dbName);
+            if (t) return t;
           }
+          try {
+            const dbs = await indexedDB.databases();
+            for (const db of dbs) {
+              if (!db.name || DISCORD_DBS.includes(db.name)) continue;
+              const t = await scanDB(db.name);
+              if (t) return t;
+            }
+          } catch {}
           return null;
         } catch { return null; }
       });
@@ -365,33 +535,43 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       const r = await page.evaluate(async (t) => {
         try {
           const resp = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: t } });
-          if (!resp.ok) return { ok: false };
-          const text = await resp.text();
-          const extract = (key) => {
-            const re = new RegExp('"' + key + '"\\s*:\\s*(\\d+|"[^"]*")');
-            const m = text.match(re);
-            if (!m) return null;
-            let v = m[1];
-            if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
-            return v;
-          };
-          return {
-            ok: true,
-            id: extract('id'),
-            username: extract('username') || '',
-            global_name: extract('global_name') || '',
-            email: extract('email'),
-            avatar: extract('avatar'),
-          };
+          if (!resp.ok) return { ok: false, status: resp.status };
+          try {
+            const data = await resp.json();
+            return {
+              ok: true,
+              id: String(data.id || ''),
+              username: data.username || '',
+              global_name: data.global_name || data.username || '',
+              email: data.email || null,
+              avatar: data.avatar || null,
+              discriminator: data.discriminator || null,
+            };
+          } catch (e) { return { ok: false, parseError: String(e.message).slice(0,50) }; }
         } catch {}
         return { ok: false };
       }, token);
       if (r && r.ok) {
         return {
-          id: r.id, username: r.username,
-          global_name: r.global_name, email: r.email, avatar: r.avatar,
+          id: r.id, username: r.username || r.global_name,
+          global_name: r.global_name || r.username, email: r.email, avatar: r.avatar,
         };
       }
+      // Fallback: 从 Discord /app 页面 DOM 提取用户名
+      try {
+        const dom = await page.evaluate(() => {
+          const els = document.querySelectorAll('[aria-label*="user"], [aria-label*="User"]');
+          for (const el of els) {
+            const label = (el.getAttribute('aria-label') || '').trim();
+            const m = label.match(/^(.+?)(?:#\d+)?$/);
+            if (m && m[1] && m[1].length > 1 && m[1].length < 64) {
+              return { id: null, username: m[1], domFallback: true };
+            }
+          }
+          return null;
+        });
+        if (dom) return dom;
+      } catch {}
     } catch {}
     return null;
   };
@@ -401,7 +581,8 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
   let scanCount = 0;
 
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 2000));
+    // 如果 token 已抓到，跳过等待立即处理
+    if (!tokenReady) await new Promise(r => setTimeout(r, 2000));
     scanCount++;
 
     if (taskId && http && await checkCancelled(http, taskId)) {
@@ -429,10 +610,33 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       continue;
     }
 
+    // 🆕 检测登录成功：URL 从 /login 变成 /app 或 /channels
+    const curUrl = page.url() || '';
+    const loggedIn = curUrl.includes('/app') || curUrl.includes('/channels') || curUrl.includes('/library');
+    if (loggedIn && !result.token) {
+      if (scanCount <= 3 || scanCount % 10 === 0) {
+        console.log(`[Browser] ✅ 检测到登录成功！URL=${curUrl.slice(0,60)}，立即扫描 token...`);
+      }
+    }
+
     let token = capturedToken;
+    // 🆕 先查 JS hook 捕获的 token（最快最可靠）
+    if (!token) {
+      try {
+        const jsToken = await page.evaluate(() => window.__capturedDiscordToken);
+        if (jsToken && jsToken.length > 50) {
+          token = jsToken;
+          console.log(`[Browser] token from JS hook (${token.length} chars)`);
+          tokenReady = true;
+        }
+      } catch {}
+    }
     if (!token) {
       token = await scanStorage();
-      if (token) console.log(`[Browser] 🎯 storage 扫描捕获 token (${token.length} chars)`);
+      if (token) {
+        console.log(`[Browser] 🎯 storage 扫描捕获 token (${token.length} chars)`);
+        tokenReady = true;
+      }
     }
     if (token && token !== result.token) result.token = token;
 
@@ -452,12 +656,18 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       }
     }
 
-    if (result.token && result.userId) {
+    if (result.token && result.userId && result.username) {
       result.browserProfilePath = userDataDir;
       result.fingerprintId = fp.fingerprintId;
       capacity.release('START_ACCOUNT');
       trace.browserWorkflow('capture_done', { userId: result.userId });
-      console.log('[Browser] 🎉 采集成功！浏览器保持打开');
+      console.log('[Browser] 🎉 采集成功！', result.username, result.userId);
+      // ⚠️ 关键：成功后立即关闭 context，让 Chrome 把 Cookie/session/localStorage 正确写盘
+      // 不关的话 profile 是半成品 → 后续 LAUNCH_BROWSER 打开时 Discord 会要求重新验证/登录
+      context.off('response', responseHandler);
+      context.off('request', requestHandler);
+      await safeClose(context);
+      console.log('[Browser] ✅ profile 已持久化到磁盘，后续唤起会从干净状态启动');
       return result;
     }
   }
@@ -471,36 +681,55 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
 }
 
 /**
- * launchBrowserOnly —— 只唤起浏览器，不采集（v2: 独立 profile + 指纹）
+ * launchBrowserOnly —— 纯手工唤起浏览器（v1.8.7 反作弊优化版）
+ *
+ * 🆕 v1.8.7 设计原则：反作弊第一。
+ *    这个函数是给用户手工操作用的（加好友/发消息等），Chrome 必须表现得
+ *    像用户自己双击 Chrome 图标打开的一样 —— 零自动化痕迹。
+ *
+ *    删除的（风控信号）：
+ *    ❌ context.route 资源拦截 —— 特别是 capture.discordapp.com 遥测
+ *    ❌ page.addInitScript(getInitScript) —— patch fetch/XHR 可被 Discord 检测
+ *    ❌ context.setExtraHTTPHeaders —— 命令行 --accept-language 已覆盖
+ *    ❌ page.goto —— 用户自己打开 Discord
+ *
+ *    保留的（同行机制正确的全部保留）：
+ *    ✅ 系统 Chrome（SYSTEM_CHROME 优先）
+ *    ✅ 代理绑定（Clash 同出口）
+ *    ✅ 指纹生成（UA/locale/timezone 地理自洽）
+ *    ✅ buildLaunchOpts（含 --disable-enable-automation）
+ *    ✅ launchPersistentContext（持久化 profile）
+ *    ✅ ignoreDefaultArgs（禁 Playwright 加的 --enable-automation）
  */
 async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agentName, proxyUrl } = {}) {
   if (!browserProfilePath) throw new Error('缺少 browserProfilePath');
   const userDataDir = path.resolve(browserProfilePath);
   if (!fs.existsSync(userDataDir)) throw new Error('浏览器 profile 不存在: ' + userDataDir);
 
-  // ⭐ 指纹（如果没传 agentName 就用 profile 目录名）
-  const fp = fingerprint.getOrCreateFingerprint(agentName || path.basename(userDataDir));
-  
-  // ⭐ 代理
+  // ⭐ 指纹（地理感知：通过代理探测出口 IP）—— 保留同行机制
+  const fp = await fingerprint.getOrCreateFingerprint(agentName || path.basename(userDataDir), { proxyUrl });
+
+  // ⭐ 代理绑定（Clash 同出口）—— 保留同行机制
   if (proxyUrl) networkGate.bindAccountProxy(agentName || path.basename(userDataDir), proxyUrl);
 
-  console.log('[Browser] 唤起持久化浏览器 profile...');
-  const launchOpts = buildLaunchOpts(fp, {
-    headless: false,
-    proxyUrl,
-  });
-  
-  let context = await chromium.launchPersistentContext(userDataDir, launchOpts);
+  // 🆕 v1.8.7: ensureProfileIntl 已移到 CAPTURE 冷启动时执行。
+  // LAUNCH_BROWSER 不写 profile 文件 —— Discord 检测 profile 文件时间戳/格式异常。
+  const isHot = fs.existsSync(path.join(userDataDir, 'Default', 'Preferences'));
+  if (!isHot) {
+    console.log('[Browser] ⚠️ launchBrowserOnly 冷启动 profile！补充写入 ensureProfileIntl...');
+    ensureProfileIntl(userDataDir, fp);
+  }
 
+  console.log('[Browser] 🧊 唤起纯手工 Chrome（零自动化痕迹） profile=' + (isHot ? '热启动' : '冷启动'));
+  const launchOpts = buildLaunchOpts(fp, { headless: false, proxyUrl });
+
+  // 🆕 v1.8.7: 纯手工 —— 不挂 route / 不注入 initScript / 不 setExtraHTTPHeaders
+  // buildLaunchOpts 已自动应用系统 Chrome + --disable-enable-automation + ignoreDefaultArgs
+  const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
   const page = context.pages()[0] || await context.newPage();
-  // ⭐ 注入动态反检测脚本
-  await page.addInitScript(getInitScript(fp));
-  
-  try {
-    await page.goto('https://discord.com/app', { waitUntil: 'domcontentloaded', timeout: 10000 }).catch(() => {});
-  } catch {}
-  
-  console.log('[Browser] ✅ 浏览器已打开 (fingerprint=' + fp.fingerprintId + ')');
+
+  console.log('[Browser] ✅ Chrome 已打开 🆓 fingerprint=' + fp.fingerprintId +
+              ' executable=' + (launchOpts.executablePath ? 'SYSTEM_CHROME' : 'Playwright_Chromium'));
   return { context, page };
 }
 

@@ -32,4 +32,13 @@ public interface AgentTaskRepository extends JpaRepository<AgentTask, Long> {
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
     @org.springframework.data.jpa.repository.Query("UPDATE AgentTask t SET t.discordAccount = NULL WHERE t.discordAccount.id = :accountId")
     void detachAccountFromTasks(@org.springframework.data.repository.query.Param("accountId") Long accountId);
+
+    /** 删除指定节点下所有任务（级联删节点用）—— 原生 SQL 绕过 JPA 实体引用 */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
+    @org.springframework.data.jpa.repository.Query(value = "DELETE FROM agent_tasks WHERE agent_server_id = :serverId", nativeQuery = true)
+    int deleteByAgentServerId(@org.springframework.data.repository.query.Param("serverId") Long agentServerId);
+
+    /** 统计指定节点下任务数（给前端友好提示）*/
+    @org.springframework.data.jpa.repository.Query(value = "SELECT COUNT(*) FROM agent_tasks WHERE agent_server_id = :serverId", nativeQuery = true)
+    long countByAgentServerId(@org.springframework.data.repository.query.Param("serverId") Long agentServerId);
 }

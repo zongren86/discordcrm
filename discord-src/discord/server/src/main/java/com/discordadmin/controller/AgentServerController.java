@@ -390,12 +390,13 @@ public class AgentServerController {
                 "  \"serverUrl\": \"http://127.0.0.1:8090/api\",\n" +
                 "  \"agentName\": \"crm-agent-01\",\n" +
                 "  \"token\": \"在此粘贴前端生成的token\",\n" +
-                "  \"heartbeatIntervalMs\": 30000,\n" +
+                "  \"heartbeatIntervalMs\": 5000,\n" +
                 "  \"pollIntervalMs\": 5000,\n" +
+                "  \"production\": false,\n" +
+                "  \"version\": \"1.8.7\",\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
-                "    \"type\": \"auto\",\n" +
-                "    \"executablePath\": \"\",\n" +
+                "    \"type\": \"chromium\",\n" +
                 "    \"userDataDir\": \"./data/browser-profile\",\n" +
                 "    \"viewport\": {\n" +
                 "      \"width\": 1280,\n" +
@@ -438,42 +439,56 @@ public class AgentServerController {
 
     private String readAgentVersion() {
         try {
+            // 1️⃣ 开发环境：源码目录存在 → 读 package.json
             Path sourceDir = resolveAgentSourceDir();
             if (sourceDir != null) {
-                // 优先从 package.json 读（npm 标准），兜底 config.json
                 Path pkgFile = sourceDir.resolve("package.json");
                 if (Files.exists(pkgFile)) {
-                    String pkgJson = Files.readString(pkgFile);
-                    int pIdx = pkgJson.indexOf("\"version\"");
-                    if (pIdx >= 0) {
-                        int pColon = pkgJson.indexOf(':', pIdx + 1);
-                        int pQ1 = pkgJson.indexOf('"', pColon + 1);
-                        int pQ2 = pkgJson.indexOf('"', pQ1 + 1);
-                        if (pQ2 > pQ1) return pkgJson.substring(pQ1 + 1, pQ2);
-                    }
+                    String v = extractVersion(Files.readString(pkgFile));
+                    if (v != null) return v;
                 }
-                // 兜底 config.json
-                Path cfgFile = sourceDir.resolve("config.json");
-                if (Files.exists(cfgFile)) {
-                    String json = Files.readString(cfgFile);
-                    // 找 "version": "xxx" —— 简单字符串解析
-                    int idx = json.indexOf("\"version\"");
-                    if (idx >= 0) {
-                        int colon = json.indexOf(':', idx + 1);
-                        if (colon > 0) {
-                            int q1 = json.indexOf('"', colon + 1);
-                            if (q1 > 0) {
-                                int q2 = json.indexOf('"', q1 + 1);
-                                if (q2 > q1) {
-                                    return json.substring(q1 + 1, q2);
+            }
+            // 2️⃣ 生产环境：从 JAR 内嵌 zip 读 package.json（agent-package.zip 或 crm_agent-v*.zip）
+            String[] zipNames = {"agent-package.zip", "crm_agent-v.zip"};
+            for (String zipName : zipNames) {
+                try (var zis = getClass().getClassLoader().getResourceAsStream(zipName)) {
+                    if (zis == null) continue;
+                    try (var zf = new java.util.zip.ZipFile(java.nio.file.Files.createTempFile("agent-ver-", ".zip").toFile())) {
+                        var tmpPath = java.nio.file.Files.createTempFile("agent-ver-", ".zip");
+                        java.nio.file.Files.write(tmpPath, zis.readAllBytes());
+                        try (var realZf = new java.util.zip.ZipFile(tmpPath.toFile())) {
+                            var entry = realZf.getEntry("crm_agent/package.json");
+                            if (entry == null) entry = realZf.getEntry("package.json");
+                            if (entry != null) {
+                                try (var is = realZf.getInputStream(entry)) {
+                                    String v = extractVersion(new String(is.readAllBytes()));
+                                    if (v != null) return v;
                                 }
                             }
                         }
+                        java.nio.file.Files.deleteIfExists(tmpPath);
                     }
-                }
+                } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {}
-        return "1.16.0";
+<<<<<<< Updated upstream
+        // 3️⃣ 最后兜底：返回硬编码版本（和 build.sh 同步）
+        return "1.8.7";
+    }
+
+    private String extractVersion(String json) {
+        int idx = json.indexOf("\"version\"");
+        if (idx < 0) return null;
+        int colon = json.indexOf(':', idx + 1);
+        if (colon < 0) return null;
+        int q1 = json.indexOf('"', colon + 1);
+        if (q1 < 0) return null;
+        int q2 = json.indexOf('"', q1 + 1);
+        if (q2 <= q1) return null;
+        return json.substring(q1 + 1, q2);
+=======
+        return "unknown";
+>>>>>>> Stashed changes
     }
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
     private byte[] buildZip(Path sourceDir) throws IOException {
@@ -485,18 +500,46 @@ public class AgentServerController {
                     try {
                         Path rel = sourceDir.relativize(p);
                         String relStr = rel.toString().replace('\\', '/');
-                        // 排除目录
+                        // 排除目录（和手动 zip 打包保持一致）
                         String[] skipDirs = {"node_modules", "data", ".git", ".idea", ".vscode", "__pycache__"};
                         for (String skip : skipDirs) {
                             if (relStr.equals(skip) || relStr.startsWith(skip + "/")) return;
                         }
-                        // 排除文件
-                        String[] skipFiles = {".DS_Store", "package-lock.json", "config.json"};
+<<<<<<< Updated upstream
+                        // 排除文件（和手动 zip 打包保持一致）
+                        String[] skipFiles = {
+                            ".DS_Store",           // macOS 垃圾
+                            "README.md",           // 有 README_INSTALL.txt
+                            "agent.log",           // 运行时文件
+                            "server.js",           // 旧启动脚本（如有）
+                        };
                         for (String skip : skipFiles) {
                             if (relStr.equals(skip)) return;
                         }
-                        // 排除隐藏文件
+                        // 排除隐藏文件（.开头）
                         if (relStr.startsWith(".")) return;
+                        // 排除 .bak 备份文件（任意层级的 *.bak, *.bak2, *.v1.bak 等）
+                        if (relStr.endsWith(".bak") || relStr.contains(".bak.") || relStr.contains(".bak2")) return;
+=======
+                        // 排除文件（精确名）
+                        String[] skipFiles = {".DS_Store", "package-lock.json"};
+                        // 排除后缀（通配）
+                        String[] skipSuffixes = {".bak", ".bak.1", ".orig", ".swp"};
+                        Path fnObj = p.getFileName();
+                        if (fnObj != null) {
+                            String fname = fnObj.toString();
+                            // 精确文件名
+                            for (String skip : skipFiles) {
+                                if (fname.equals(skip)) return;
+                            }
+                            // 后缀
+                            for (String suffix : skipSuffixes) {
+                                if (fname.endsWith(suffix)) return;
+                            }
+                            // 所有层级的隐藏文件都排除
+                            if (fname.startsWith(".")) return;
+                        }
+>>>>>>> Stashed changes
                         // 空目录跳过
                         if (Files.isDirectory(p)) return;
 

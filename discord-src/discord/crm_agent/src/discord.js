@@ -21,12 +21,30 @@ let SocksProxyAgent = null;
 try { HttpsProxyAgent = require('https-proxy-agent').HttpsProxyAgent; } catch {}
 try { SocksProxyAgent = require('socks-proxy-agent').SocksProxyAgent; } catch {}
 
+// 本地自动探测：猫熊 VPN / Clash / v2rayN / Shadowrocket / Surge 常见端口
+const LOCAL_PROBE_CANDIDATES = [
+  { url: 'http://127.0.0.1:7890',  label: 'HTTP 7890  (Clash全家桶默认)' },
+  { url: 'socks5://127.0.0.1:7891', label: 'SOCKS 7891 (Clash全家桶默认)' },
+  { url: 'http://127.0.0.1:10809', label: 'HTTP 10809 (v2rayN默认)' },
+  { url: 'socks5://127.0.0.1:10808', label: 'SOCKS 10808 (v2rayN默认)' },
+  { url: 'http://127.0.0.1:6152',  label: 'HTTP 6152  (Surge默认)' },
+  { url: 'socks5://127.0.0.1:1080', label: 'SOCKS 1080 (Shadowrocket/QuantumultX)' },
+];
+
+let localProbeCache = null;  // 只探测一次，结果缓存
+
 function detectProxyUrl() {
-  // 优先级 1: config.json 显式配置（最可靠）
-  if (cfg.discordProxy && cfg.discordProxy.trim()) {
-    const url = cfg.discordProxy.trim();
-    console.log(`[Discord] 代理 → config.json: ${url}`);
-    return url;
+  // 优先级 1: config.json 显式配置
+  //   "discordProxy": "http://127.0.0.1:7890" → 强制用这个
+  //   "discordProxy": "none" / "" / null      → 强制直连（生产服务器）
+  if (cfg.discordProxy !== undefined && cfg.discordProxy !== null && cfg.discordProxy !== '') {
+    const v = cfg.discordProxy.trim().toLowerCase();
+    if (v === 'none' || v === 'direct' || v === 'off') {
+      if (!cfg.production) console.log('[Discord] 代理 → config.json 明确禁用 ("discordProxy": "none")，强制直连');
+      return 'NONE';  // 特殊标记，告诉上层不要走代理
+    }
+    if (!cfg.production) console.log(`[Discord] 代理 → config.json: ${cfg.discordProxy.trim()}`);
+    return cfg.discordProxy.trim();
   }
 
   // 优先级 2: 环境变量
@@ -35,7 +53,7 @@ function detectProxyUrl() {
                 || process.env.HTTPS_PROXY || process.env.https_proxy
                 || process.env.HTTP_PROXY || process.env.http_proxy;
   if (envProxy && envProxy.trim()) {
-    console.log(`[Discord] 代理 → 环境变量: ${envProxy.trim()}`);
+    if (!cfg.production) console.log(`[Discord] 代理 → 环境变量: ${envProxy.trim()}`);
     return envProxy.trim();
   }
 
@@ -60,17 +78,51 @@ function detectProxyUrl() {
             proxyUrl = (httpsMatch || httpMatch)[1];
           }
           if (!proxyUrl.startsWith('http')) proxyUrl = 'http://' + proxyUrl;
-          console.log(`[Discord] 代理 → Windows 系统代理: ${proxyUrl}`);
+          if (!cfg.production) console.log(`[Discord] 代理 → Windows 系统代理: ${proxyUrl}`);
           return proxyUrl;
         }
       }
     } catch {}
   }
 
-  // 没配置代理 → 提醒用户
-  console.warn(`[Discord] ⚠️ 未配置代理，将直连 discord.com（国内会被 GFW 拦截）`);
-  console.warn(`[Discord] 💡 解决: 在 config.json 加 "discordProxy": "http://127.0.0.1:7890"`);
-  console.warn(`[Discord] 💡 或者设置环境变量 ALL_PROXY=http://127.0.0.1:7890 后启动`);
+  // 优先级 4: 自动探测本地常见代理端口（异步探测，返回 null 让 findWorkingProxy 接管）
+  if (!cfg.production) console.log(`[Discord] 🔍 未配置代理，开始探测本地常见端口（猫熊/Clash/v2rayN/Surge...）`);
+  return 'AUTO_PROBE';  // 特殊标记
+}
+
+async function autoProbeLocalProxy() {
+  if (localProbeCache) return localProbeCache;
+
+  let HttpsProxyAgent = null, SocksProxyAgent = null;
+  try { HttpsProxyAgent = require('https-proxy-agent').HttpsProxyAgent; } catch {}
+  try { SocksProxyAgent = require('socks-proxy-agent').SocksProxyAgent; } catch {}
+
+  async function testOne({ url, label }) {
+    const net = require('net');
+    return new Promise(resolve => {
+      const u = new URL(url);
+      const sock = net.connect({ host: u.hostname, port: u.port });
+      let resolved = false;
+      const finish = (ok) => { if (!resolved) { resolved = true; sock.destroy(); resolve(ok ? url : null); } };
+      sock.once('connect', () => finish(true));
+      sock.once('error', () => finish(false));
+      setTimeout(() => finish(false), 800);
+    });
+  }
+
+  for (const cand of LOCAL_PROBE_CANDIDATES) {
+    process.stdout.write(`[Discord]   🔌 试 ${cand.label} ... `);
+    const ok = await testOne(cand);
+    if (ok) {
+      if (!cfg.production) console.log(`✅ 通了！→ ${ok}`);
+      localProbeCache = ok;
+      return ok;
+    }
+    console.log(`❌ 不通`);
+  }
+
+  if (!cfg.production) console.log(`[Discord] 🔍 本地代理探测完毕 → 全部不通，将直连 discord.com`);
+  localProbeCache = null;
   return null;
 }
 // Windows Clash 常见端口 fallback
@@ -104,7 +156,7 @@ async function findWorkingProxy() {
   }
 
   // 1. 先试用户配的
-  console.log(`[Discord] 🧪 先试用户配置: ${proxyUrl}`);
+  if (!cfg.production) console.log(`[Discord] 🧪 先试用户配置: ${proxyUrl}`);
   let agent = await testOne(proxyUrl);
   if (agent) { console.log(`[Discord] ✅ 用户配置可用`); return agent; }
   console.warn(`[Discord] ⚠️ 用户配置超时, 开始自动探测可用端口...`);
@@ -136,7 +188,7 @@ function buildAgent(proxyUrl) {
     const protocol = u.protocol.toLowerCase();
 
     if ((protocol === 'socks5:' || protocol === 'socks4:') && SocksProxyAgent) {
-      console.log(`[Discord] 🔌 SOCKS 代理: ${url}`);
+      if (!cfg.production) console.log(`[Discord] 🔌 SOCKS 代理: ${url}`);
       return new SocksProxyAgent(url);
     }
 
@@ -149,7 +201,7 @@ function buildAgent(proxyUrl) {
     }
 
     if (HttpsProxyAgent) {
-      console.log(`[Discord] 🔌 HTTP 代理: ${url}`);
+      if (!cfg.production) console.log(`[Discord] 🔌 HTTP 代理: ${url}`);
       return new HttpsProxyAgent(url);
     }
 
@@ -164,9 +216,14 @@ function buildAgent(proxyUrl) {
   }
 }
 
-const proxyUrl = detectProxyUrl();
-// buildAgent 先返回临时 agent, 启动时再 findWorkingProxy 替换
-let agentOrProxy = proxyUrl ? buildAgent(proxyUrl) : null;
+let proxyUrl = detectProxyUrl();
+// 处理特殊标记：NONE=强制直连, AUTO_PROBE=异步探测后决定
+if (proxyUrl === 'NONE') {
+  // 显式禁用代理 → 生产服务器场景，直接跳过
+  proxyUrl = null;
+}
+// buildAgent 先返回临时 agent, 启动时再 findWorkingProxy / autoProbeLocalProxy 替换
+let agentOrProxy = (proxyUrl && proxyUrl !== 'AUTO_PROBE') ? buildAgent(proxyUrl) : null;
 
 /**
  * 安全地把 JSON 里的大整数（16-20 位 Snowflake ID）转成字符串字面量
@@ -242,15 +299,31 @@ const discordHttp = axios.create(axiosConfig);
 
 // 异步自检 + 自动 fallback
 (async function init() {
+  // 特殊：本地自动探测模式（没配代理）
+  if (proxyUrl === 'AUTO_PROBE') {
+    const found = await autoProbeLocalProxy();
+    if (found) {
+      if (!cfg.production) console.log(`[Discord] ✅ 探测到本地代理: ${found}`);
+      proxyUrl = found;
+      agentOrProxy = buildAgent(found);
+      // 后续走 findWorkingProxy 验证 + fallback 裸连
+    } else {
+      if (!cfg.production) console.log('[Discord] ℹ️ 本地无可用代理，将直连 discord.com');
+      proxyUrl = null;
+      agentOrProxy = null;
+    }
+  }
+
   if (!proxyUrl) {
-    // 没配代理 → 直接测裸连 (猫熊VPN/TUN 模式)
-    console.log('[Discord] 🧪 裸连自检中 (让 VPN/TUN 接管)...');
+    // 没配代理 → 直接测裸连 (VPN/TUN 模式)
+    if (!cfg.production) console.log('[Discord] 🧪 裸连自检中...');
     try {
       await axios.get('https://discord.com/api/v10/gateway', { timeout: 8000, validateStatus: () => true });
-      console.log('[Discord] ✅ 裸连自检通过! VPN/TUN 工作正常');
+      console.log('[Discord] ✅ 裸连自检通过!');
     } catch(e) {
-      console.error('[Discord] ❌ 裸连也不通! VPN/TUN 可能没启动');
-      console.error('[Discord] 💡 确认猫熊VPN正在运行且已连接');
+      console.error('[Discord] ❌ 裸连也不通!');
+      console.error('[Discord] 💡 国内环境请启动本地代理并确保端口可达');
+      console.error('[Discord] 💡 或在 config.json 加 "discordProxy": "http://127.0.0.1:7890"');
     }
     return;
   }
@@ -262,14 +335,14 @@ const discordHttp = axios.create(axiosConfig);
     Object.assign(discordHttp.defaults, {
       httpAgent: working, httpsAgent: working,
     });
-    console.log('[Discord] ✅ axios agent 已切换到可用代理');
+    if (!cfg.production) console.log('[Discord] ✅ axios agent 已切换到可用代理');
   } else if (!working) {
     console.error('[Discord] ❌ 所有代理端口都试过了, 全不通!');
     // 关键: 自动测裸连, 看 Windows TUN/系统代理能不能接管
-    console.log('[Discord] 🧪 尝试裸连 (让 TUN/系统代理接管)...');
+    if (!cfg.production) console.log('[Discord] 🧪 尝试裸连 (让 TUN/系统代理接管)...');
     try {
       await axios.get('https://discord.com/api/v10/gateway', { timeout: 8000, validateStatus: () => true });
-      console.log('[Discord] ✅ 裸连通了！自动切换到裸连模式（依赖系统代理/TUN）');
+      if (!cfg.production) console.log('[Discord] ✅ 裸连通了！自动切换到裸连模式（依赖系统代理/TUN）');
       // 清掉所有 agent, 让 Node 直连 (Windows Clash TUN 会自动路由)
       Object.assign(discordHttp.defaults, { httpAgent: undefined, httpsAgent: undefined, proxy: undefined });
       agentOrProxy = null;
@@ -397,4 +470,10 @@ async function sendMessageWithFiles(token, channelId, content, files) {
   return resp.data;
 }
 
-module.exports = { discordHttp, fetchFriends, fetchDmChannels, sendMessageWithFiles };
+// 暴露当前代理 URL（供 browser.js 启动 Chrome 时用）
+function getProxyUrl() {
+  if (!proxyUrl || proxyUrl === 'NONE' || proxyUrl === 'AUTO_PROBE') return null;
+  return proxyUrl;
+}
+
+module.exports = { discordHttp, fetchFriends, fetchDmChannels, sendMessageWithFiles, getProxyUrl };

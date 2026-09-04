@@ -1,33 +1,62 @@
 @echo off
+REM ============================================================================
+REM crm_agent 一键启动（Windows）
+REM 首次运行自动: npm install + playwright install chromium
+REM ============================================================================
+chcp 65001 >nul
 cd /d "%~dp0"
 
-where node >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Node.js not found. Please install Node.js 18+ from https://nodejs.org
-    pause
-    exit /b 1
+echo ========================================
+echo  crm_agent 启动中...
+echo ========================================
+
+REM 1. 检查 Node.js >= 18
+echo.
+echo | set /p=  检查 Node.js... 
+for /f "tokens=1 delims=v" %%v in ('node -v 2^>nul') do set NODE_V=%%v
+if "%NODE_V%"=="" (
+  echo [错误] 未安装 Node.js
+  echo 请安装 Node.js ^>= 18: https://nodejs.org/
+  pause
+  exit /b 1
+)
+for /f "tokens=1 delims=." %%m in ("%NODE_V%") do set NODE_MAJOR=%%m
+if %NODE_MAJOR% LSS 18 (
+  echo [错误] Node.js 版本过低 v%NODE_V%
+  pause
+  exit /b 1
+)
+echo v%NODE_V% OK
+
+REM 2. 检查 config.json
+echo | set /p=  检查 config.json... 
+if not exist config.json (
+  echo [错误] config.json 不存在
+  echo 请编辑 config.json 填写 token
+  pause
+  exit /b 1
+)
+echo OK
+
+REM 3. npm install
+if not exist node_modules (
+  echo.
+  echo  首次运行，安装依赖...
+  call npm install --registry=https://registry.npmmirror.com
+  echo  依赖安装完成
 )
 
-if not exist "config.json" (
-    echo [ERROR] config.json not found. Please configure serverUrl, token, agentName first.
-    pause
-    exit /b 1
-)
+REM 4. 检查 Playwright Chromium
+echo | set /p=  检查 Chromium... 
+call npx playwright install chromium 2>nul
+echo OK
 
-if not exist "node_modules" (
-    echo [INFO] Installing dependencies...
-    REM 先试官方源（国内走 npmmirror，海外走官方）
-    call npm install --no-audit --no-fund --registry=https://registry.npmjs.org
-    if errorlevel 1 (
-        echo [WARN] 官方源失败，重试 npmmirror...
-        call npm install --no-audit --no-fund --registry=https://registry.npmmirror.com
-        if errorlevel 1 (
-            echo [ERROR] npm install failed. Try: npm config set registry https://registry.npmmirror.com
-            pause
-            exit /b 1
-        )
-    )
-    REM 注意：不需要 playwright install chromium，我们用系统 Chrome
-)
+REM 5. 启动
+echo.
+echo ========================================
+echo  启动 agent（Ctrl+C 停止）
+echo ========================================
+echo.
 
-node src/index.js
+node src\index.js
+pause

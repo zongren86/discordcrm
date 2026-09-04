@@ -47,6 +47,14 @@ public class AgentTask {
     @Column(name = "result", columnDefinition = "MEDIUMTEXT")
     private String result;
 
+    /** 错误信息（FAILED/CANCELLED 时填充，方便前端展示） */
+    @Column(name = "error_message", length = 1024)
+    private String errorMessage;
+
+    /** 优先级（数值越大越优先） */
+    @Column(name = "priority")
+    private Integer priority = 0;
+
     /** 任务发起人 userId */
     @Column(name = "created_by_user_id")
     private Long createdByUserId;

@@ -332,6 +332,14 @@
           <el-button @click="cancelAgentCapture" type="danger" :loading="agentResultDialog.cancelling">取消登录</el-button>
           <el-button @click="closeAgentResultDialog">关闭弹窗</el-button>
         </template>
+        <template v-else-if="agentResultDialog.status === 'CANCELLED'">
+          <el-button @click="closeAgentResultDialog">关闭</el-button>
+          <el-button type="primary" @click="continueAgentAdd">继续添加</el-button>
+        </template>
+        <template v-else-if="agentResultDialog.status === 'FAILED'">
+          <el-button @click="closeAgentResultDialog">关闭</el-button>
+          <el-button type="primary" @click="continueAgentAdd">继续添加</el-button>
+        </template>
         <template v-else>
           <el-button @click="closeAgentResultDialog">关闭</el-button>
           <el-button v-if="agentResultDialog.status === 'SUCCESS'" type="primary" @click="closeAgentResultDialog">完成</el-button>
@@ -625,7 +633,7 @@ async function startAgentCapture() {
 
     await new Promise(r => setTimeout(r, 1500))
     await pollAgentTask()
-    agentResultDialog._pollTimer = setInterval(pollAgentTask, 3000)
+    agentResultDialog._pollTimer = setInterval(pollAgentTask, 2000)
   } catch (e) {
     console.error('[AgentCapture] 创建失败，完整错误=', e)
     console.error('[AgentCapture] response=', e?.response)
@@ -704,6 +712,21 @@ async function cancelAgentCapture() {
 function closeAgentResultDialog() {
   stopAgentPolling()
   agentResultDialog.visible = false
+}
+
+// CANCELLED 后点"继续添加" → 关闭监控弹窗 → 打开代理添加弹窗
+async function continueAgentAdd() {
+  closeAgentResultDialog()
+  agentDialog.visible = true
+  agentDialog.loadingServers = true
+  agentDialog.form.agentServerId = null
+  try {
+    agentDialog.servers = await listAgentServers() || []
+  } catch (e) {
+    agentDialog.servers = []
+  } finally {
+    agentDialog.loadingServers = false
+  }
 }
 
 const botDialog = reactive({
