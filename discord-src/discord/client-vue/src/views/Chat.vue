@@ -674,12 +674,12 @@
                 :label="lang.name"
               />
             </el-select>
-            <el-tooltip content="预览翻译" popper-class="chat-toolbar-tooltip">
+            <el-tooltip content="预览翻译" :teleported="false" popper-class="chat-toolbar-tooltip">
               <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="requestTranslationPreview" :disabled="!inputText.trim()">
                 <el-icon><EditPen /></el-icon>
               </el-button>
             </el-tooltip>
-            <el-tooltip content="批量翻译对话" popper-class="chat-toolbar-tooltip">
+            <el-tooltip content="批量翻译对话" :teleported="false" popper-class="chat-toolbar-tooltip">
               <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="translateCurrentMsg">
                 <el-icon><Reading /></el-icon>
               </el-button>
@@ -5927,6 +5927,14 @@ video.msg-gif-img {
   margin-bottom: 6px;
   padding: 0 2px;
 }
+/* 工具栏 tooltip — teleported=false 后 :deep 能命中 */
+.toolbar-right :deep(.el-tooltip__popper),
+.toolbar-right :deep(.el-tooltip__content),
+.toolbar-right :deep(.el-tooltip__text),
+.toolbar-right :deep(.el-popper),
+.toolbar-right :deep(.el-popper *) {
+  font-size: 12px !important;
+}
 .input-hint * {
   font-size: 12px !important;
 }
@@ -7032,9 +7040,18 @@ video.msg-gif-img {
 </style>
 
 <style>
-.chat-toolbar-tooltip,
-.chat-toolbar-tooltip.el-tooltip__popper,
-.chat-toolbar-tooltip .el-tooltip__content {
+/* Tooltip hover 文案 — 暴力全覆盖确保命中 */
+[class*='chat-toolbar-tooltip'] {
+  font-size: 12px !important;
+}
+[class*='chat-toolbar-tooltip'] * {
+  font-size: 12px !important;
+  line-height: 1.3 !important;
+}
+[class*='chat-toolbar-tooltip'] .el-tooltip__content,
+[class*='chat-toolbar-tooltip'] .el-tooltip__text,
+[class*='chat-toolbar-tooltip'] span,
+[class*='chat-toolbar-tooltip'] div {
   font-size: 12px !important;
 }
 .date-popover-popper {
