@@ -215,9 +215,14 @@ function buildLaunchOpts(fp, extra = {}) {
     ignoreHTTPSErrors: true,
   };
   
-  // ⭐ 使用系统 Chrome（避免 Playwright 内置 Chromium 的特征）
-  // ⭐ 强制用系统 Chrome（不用 Playwright 自带 Chromium，后者 TLS/UA 全被标记）
-  if (SYSTEM_CHROME) opts.executablePath = SYSTEM_CHROME;
+  // ⭐ executablePath 优先级：config.json 显式配置 > 自动探测 SYSTEM_CHROME
+  // 这样用户可以在 config.json 里硬指 Chrome 路径（比如 Windows 装在非标准位置）
+  const customPath = extra.executablePath;
+  if (customPath && require('fs').existsSync(customPath)) {
+    opts.executablePath = customPath;
+  } else if (SYSTEM_CHROME) {
+    opts.executablePath = SYSTEM_CHROME;
+  }
   
   // ⭐ 从指纹注入 UA + 语言 + 时区
   if (fp) {
@@ -291,6 +296,7 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
       headless: browserConfig.headless ?? false,
       viewport: browserConfig.viewport || fp.viewport,
       proxyUrl,
+      executablePath: browserConfig.executablePath || (browserConfig.browser && browserConfig.browser.executablePath)
     });
     console.log('[Browser] launch opts:', JSON.stringify({
       userAgent: launchOpts.userAgent.slice(0, 50) + '...',
@@ -721,12 +727,17 @@ async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agent
   }
 
   console.log('[Browser] 🧊 唤起纯手工 Chrome（零自动化痕迹） profile=' + (isHot ? '热启动' : '冷启动'));
-  const launchOpts = buildLaunchOpts(fp, { headless: false, proxyUrl });
+  const launchOpts = buildLaunchOpts(fp, { headless: false, proxyUrl, executablePath: browserConfig.executablePath });
 
   // 🆕 v1.8.7: 纯手工 —— 不挂 route / 不注入 initScript / 不 setExtraHTTPHeaders
   // buildLaunchOpts 已自动应用系统 Chrome + --disable-enable-automation + ignoreDefaultArgs
   const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
   const page = context.pages()[0] || await context.newPage();
+
+  // 🆕 自动导航到 Discord（用户明确要求 LAUNCH_BROWSER 必须自动打开 Discord 页面）
+  try {
+    await page.goto('https://discord.com/app', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+  } catch {}
 
   console.log('[Browser] ✅ Chrome 已打开 🆓 fingerprint=' + fp.fingerprintId +
               ' executable=' + (launchOpts.executablePath ? 'SYSTEM_CHROME' : 'Playwright_Chromium'));
