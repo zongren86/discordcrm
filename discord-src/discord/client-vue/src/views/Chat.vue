@@ -5548,12 +5548,6 @@ video.msg-gif-img {
   color: var(--color-text-3);
   margin-left: 6px;
 }
-:global(.chat-toolbar-tooltip) {
-  font-size: 12px !important;
-}
-:global(.chat-toolbar-tooltip .el-tooltip__content) {
-  font-size: 12px !important;
-}
 .loading-spinner {
   width: 32px;
   height: 32px;
@@ -7038,6 +7032,11 @@ video.msg-gif-img {
 </style>
 
 <style>
+.chat-toolbar-tooltip,
+.chat-toolbar-tooltip.el-tooltip__popper,
+.chat-toolbar-tooltip .el-tooltip__content {
+  font-size: 12px !important;
+}
 .date-popover-popper {
   border-radius: 12px !important;
   border: 1px solid var(--color-border, #e4e7ed) !important;
