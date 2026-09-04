@@ -8,7 +8,7 @@
       <div class="header-actions">
         <el-select
           v-model="filters.discordAccountId"
-          placeholder="选择 Discord 账号"
+          placeholder="选择账号（可选）"
           clearable
           style="width: 240px"
           @change="loadServers"
@@ -144,8 +144,8 @@
     <!-- 编辑/新增服务器 Dialog -->
     <el-dialog v-model="editDialog.visible" :title="editDialog.isEdit ? '编辑服务器' : '新增服务器'" width="560px" :close-on-click-modal="false">
       <el-form :model="editDialog.form" label-width="120px" label-position="left">
-        <el-form-item label="所属账号" required>
-          <el-select v-model="editDialog.form.discordAccountId" placeholder="选择 Discord 账号" style="width: 100%">
+        <el-form-item label="所属账号">
+          <el-select v-model="editDialog.form.discordAccountId" placeholder="选择账号（可选）" style="width: 100%">
             <el-option
               v-for="a in accountOptions"
               :key="a.id"
@@ -1052,7 +1052,7 @@ function openEditDialog(server = null) {
   } else {
     editDialog.form = {
       id: null,
-      discordAccountId: filters.discordAccountId || (accountOptions.value[0]?.id) || null,
+      discordAccountId: filters.discordAccountId || null,
       guildUrl: '',
       guildId: '',
       channelId: '',
@@ -1088,8 +1088,8 @@ async function parseUrl() {
 }
 
 async function saveServer() {
-  if (!editDialog.form.discordAccountId) {
-    ElMessage.warning('请选择所属账号')
+  if (!editDialog.form.guildId) {
+    ElMessage.warning('请填写 Guild ID')
     return
   }
   try {

@@ -24,7 +24,7 @@ public class GuildServer {
     @Column(name = "merchant_id", nullable = false)
     private Long merchantId;
 
-    @Column(name = "discord_account_id", nullable = false)
+    @Column(name = "discord_account_id", nullable = true)
     private Long discordAccountId;
 
     @Column(name = "guild_id", length = 64)
