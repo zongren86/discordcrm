@@ -56,7 +56,14 @@ async function runTrim() {
       console.log(`[Trim] 发现 ${chromeProcesses.length} 个僵尸 Chrome 进程`);
       for (const pid of chromeProcesses) {
         try {
-          process.kill(pid, 'SIGKILL');
+          // 双重验证：只杀 agent 白名单内的 PID
+          if (!isAgentOwnedChrome(pid)) {
+            console.warn('[Trim] 跳过非 agent Chrome PID=' + pid);
+            continue;
+          }
+          try { process.kill(pid, 'SIGKILL'); } catch {
+            console.warn('[Trim] 杀进程失败 PID=' + pid + ': ' + (e && e.message || '').slice(0, 60));
+          }
           trimmedProcesses++;
         } catch {}
       }

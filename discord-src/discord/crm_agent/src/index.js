@@ -132,6 +132,18 @@ async function executeTask(task) {
             proxyRequired: !!(getProxyUrl() || cfg.discordProxy),
             currentProxy: getProxyUrl() || cfg.discordProxy || null,
           });
+          // ⚡ 性能关键: 立即刷新账号列表（不等到 30s 的 ACCOUNT_REFRESH_MS）
+          // 确保新账号 ≤ 2s 内进入 managedAccounts 并被消息轮询覆盖
+          setTimeout(async () => {
+            try {
+              const before = (managedAccounts || []).length;
+              await loadManagedAccounts();
+              const after = (managedAccounts || []).length;
+              if (after > before) {
+                console.log('[性能] ⚡ CAPTURE 后即时刷新: managedAccounts ' + before + ' → ' + after + ' (+' + (after - before) + ')');
+              }
+            } catch {}
+          }, 1500);
           // 已移除 3-4 分钟强制间隔：
           // 1. CAPTURE 成功后 safeClose 让 Chrome 正确写盘 profile，session 状态稳定
           // 2. 用户需要快速连续新增账号，agent 立即 ready 领下一个任务
