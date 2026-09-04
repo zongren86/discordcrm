@@ -674,14 +674,14 @@
                 :label="lang.name"
               />
             </el-select>
-            <el-tooltip content="预览翻译">
-              <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="requestTranslationPreview" :disabled="!inputText.trim()" title="预览翻译">
-                <el-icon><Location /></el-icon>
+            <el-tooltip content="预览翻译" popper-class="chat-toolbar-tooltip">
+              <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="requestTranslationPreview" :disabled="!inputText.trim()">
+                <el-icon><EditPen /></el-icon>
               </el-button>
             </el-tooltip>
-            <el-tooltip content="批量翻译对话">
-              <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="translateCurrentMsg" title="批量翻译对话">
-                <el-icon><Location /></el-icon>
+            <el-tooltip content="批量翻译对话" popper-class="chat-toolbar-tooltip">
+              <el-button size="small" type="primary" plain class="toolbar-translate-btn" @click="translateCurrentMsg">
+                <el-icon><Reading /></el-icon>
               </el-button>
             </el-tooltip>
           </div>
@@ -1021,7 +1021,7 @@
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  Search, Loading, ChatDotRound, Refresh, ArrowUp, ArrowDown, InfoFilled, Promotion,
+  Search, Loading, ChatDotRound, Refresh, ArrowUp, ArrowDown, InfoFilled, Promotion, EditPen, Reading,
   Location, User, Top, Stamp, Plus, Close, Document, CopyDocument, Delete,
   ChatLineSquare, Edit, MoreFilled, Switch, PriceTag, UploadFilled, Calendar, Microphone,
   Warning, RefreshRight
@@ -5548,6 +5548,12 @@ video.msg-gif-img {
   color: var(--color-text-3);
   margin-left: 6px;
 }
+:global(.chat-toolbar-tooltip) {
+  font-size: 12px !important;
+}
+:global(.chat-toolbar-tooltip .el-tooltip__content) {
+  font-size: 12px !important;
+}
 .loading-spinner {
   width: 32px;
   height: 32px;
@@ -5792,8 +5798,11 @@ video.msg-gif-img {
 .lang-select :deep(.el-select__selected-item) {
   color: var(--color-text);
 }
-.lang-select :deep(.el-option) {
-  font-size: 12px;
+.lang-select :deep(.el-option),
+.lang-select :deep(.el-option-item),
+.lang-select :deep(.el-select-dropdown__item),
+.lang-select :deep(.el-select-dropdown__item span) {
+  font-size: 12px !important;
 }
 
 .emoji-picker {
@@ -5918,8 +5927,8 @@ video.msg-gif-img {
   margin-bottom: 6px;
   padding: 0 2px;
 }
-.input-hint .el-icon {
-  font-size: 12px;
+.input-hint * {
+  font-size: 12px !important;
 }
 
 .shortcut-hint {
