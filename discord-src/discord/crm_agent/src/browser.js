@@ -665,15 +665,23 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
     if (result.token && result.userId && result.username) {
       result.browserProfilePath = userDataDir;
       result.fingerprintId = fp.fingerprintId;
-      capacity.release('START_ACCOUNT');
       trace.browserWorkflow('capture_done', { userId: result.userId });
       console.log('[Browser] 🎉 采集成功！', result.username, result.userId);
-      // ⚠️ 关键：成功后立即关闭 context，让 Chrome 把 Cookie/session/localStorage 正确写盘
-      // 不关的话 profile 是半成品 → 后续 LAUNCH_BROWSER 打开时 Discord 会要求重新验证/登录
       context.off('response', responseHandler);
       context.off('request', requestHandler);
-      await safeClose(context);
-      console.log('[Browser] ✅ profile 已持久化到磁盘，后续唤起会从干净状态启动');
+
+      // 🆕 v1.9.5: 保持浏览器打开，让用户更新头像/修改资料
+      // Chrome Persistent Context 实时写盘（Cookies→SQLite, LocalStorage→LevelDB）
+      // 不需要手动 close 才保存 profile，保持打开反而让用户改头像 → profile 更完整
+      // capacity.release 延后到用户关浏览器后（和 LAUNCH_BROWSER 同模式）
+      (async () => {
+        try {
+          await new Promise(resolve => context.on('close', resolve));
+          console.log('[Browser] ✅ 用户关闭浏览器，释放并发槽位');
+        } catch {}
+        capacity.release('START_ACCOUNT');
+        trace.browserWorkflow('capture_profile_saved', { userId: result.userId });
+      })();
       return result;
     }
   }
