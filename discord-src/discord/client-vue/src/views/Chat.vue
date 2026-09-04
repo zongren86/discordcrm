@@ -849,10 +849,16 @@
               </el-button>
             </div>
 
-            <el-input ref="chatInputRef" v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
-              :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
-              :disabled="sending"
-              resize="none" class="msg-input" />
+            <div class="msg-input-wrap">
+              <el-input ref="chatInputRef" v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
+                :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
+                :disabled="sending"
+                resize="none" class="msg-input" />
+              <div v-if="translateLoading" class="translate-inline-spinner" title="翻译中...">
+                <el-icon class="is-loading"><Loading /></el-icon>
+                <span>翻译中</span>
+              </div>
+            </div>
             <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
               :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
               @click="send">
@@ -1010,7 +1016,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import { ElMessage, ElMessageBox , ElLoading} from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Loading, ChatDotRound, Refresh, ArrowUp, ArrowDown, InfoFilled, Promotion,
   Location, User, Top, Stamp, Plus, Close, Document, CopyDocument, Delete,
@@ -1108,6 +1114,7 @@ const dateQuickLabel = computed(() => {
   return found ? found.label : ''
 })
 const inputText = ref('')
+const translateLoading = ref(false)  // Alt+W 翻译时输入框旁小 spinner
 const sending = ref(false)
 const loadingMore = ref(false)
 const showProfile = ref(true)
@@ -4418,7 +4425,9 @@ async function translateCurrentMsg() {
 async function translateAndReplaceInput(text) {
   if (!text) return
   console.log('[DEBUG translateAndReplaceInput] text=', text, 'targetLang=', targetLang.value)
-  const loading = ElLoading.service({ text: '翻译中...', background: 'rgba(0,0,0,0.5)' })
+  // 🔒 防重复点击
+  if (translateLoading.value) return
+  translateLoading.value = true
   try {
     const result = await translateText(text, targetLang.value)
     console.log('[DEBUG translateAndReplaceInput] result=', JSON.stringify(result?.data || result).substring(0, 200))
@@ -4434,7 +4443,7 @@ async function translateAndReplaceInput(text) {
     console.error('[DEBUG] translate error:', e)
     ElMessage.error('翻译失败: ' + (e?.response?.data?.message || e.message || ''))
   } finally {
-    loading.close()
+    translateLoading.value = false
   }
 }
 
@@ -5671,6 +5680,9 @@ video.msg-gif-img {
 .toolbar-right .el-button { font-size: 12px; }
 .toolbar-right .el-select { font-size: 12px; }
 .toolbar-right .el-select .el-input__inner { font-size: 12px; }
+.toolbar-right .el-select-dropdown__item { font-size: 12px; }
+.toolbar-right .el-select-dropdown__wrap { font-size: 12px; }
+.toolbar-right .el-tag { font-size: 12px; }
 
 .toolbar-btn {
   background: var(--color-bg-3);
@@ -5924,6 +5936,10 @@ video.msg-gif-img {
   padding: 8px 10px;
 }
 
+.msg-input-wrap {
+  flex: 1;
+  position: relative;
+}
 .msg-input {
   flex: 1;
 }
@@ -5934,9 +5950,31 @@ video.msg-gif-img {
   padding: 4px 6px;
   line-height: 1.5;
   color: var(--color-text);
+  font-size: 12px;
 }
 .msg-input :deep(.el-textarea__inner::placeholder) {
   color: var(--color-text-3);
+  font-size: 12px;
+}
+.translate-inline-spinner {
+  position: absolute;
+  top: -28px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--el-color-primary, #409eff);
+  background: var(--el-bg-color, #fff);
+  padding: 2px 8px;
+  border-radius: 4px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  z-index: 10;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.translate-inline-spinner .el-icon {
+  font-size: 14px;
 }
 .msg-input :deep(.el-textarea__inner:focus) {
   box-shadow: none !important;
