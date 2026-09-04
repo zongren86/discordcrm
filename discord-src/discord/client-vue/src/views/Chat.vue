@@ -669,12 +669,16 @@
                 :label="lang.name"
               />
             </el-select>
-            <el-button size="small" type="primary" plain @click="requestTranslationPreview" :disabled="!inputText.trim()">
-              <el-icon><Location /></el-icon> 预览翻译
-            </el-button>
-            <el-button size="small" type="primary" plain @click="translateCurrentMsg">
-              <el-icon><Location /></el-icon> 翻译
-            </el-button>
+            <el-tooltip content="预览翻译 (Alt+W 输入框内直接翻译)" placement="top" :show-after="200">
+              <el-button size="small" type="primary" plain class="icon-only-btn" @click="requestTranslationPreview" :disabled="!inputText.trim()">
+                <el-icon><View /></el-icon>
+              </el-button>
+            </el-tooltip>
+            <el-tooltip content="翻译全部消息" placement="top" :show-after="200">
+              <el-button size="small" type="primary" plain class="icon-only-btn" @click="translateCurrentMsg">
+                <el-icon><ChatDotRound /></el-icon>
+              </el-button>
+            </el-tooltip>
           </div>
         </div>
 
@@ -5693,15 +5697,32 @@ video.msg-gif-img {
 .toolbar-right {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: 6px;
+  font-size: 12px !important;
 }
-.toolbar-right .el-button { font-size: 12px; }
-.toolbar-right .el-select { font-size: 12px; }
-.toolbar-right .el-select .el-input__inner { font-size: 12px; }
-.toolbar-right .el-select-dropdown__item { font-size: 12px; }
-.toolbar-right .el-select-dropdown__wrap { font-size: 12px; }
-.toolbar-right .el-tag { font-size: 12px; }
+/* 🔒 强制 Element Plus 内部子组件字号 */
+.toolbar-right .el-button { font-size: 12px !important; padding: 6px 8px; }
+.toolbar-right .el-button .el-icon { font-size: 14px; }
+.toolbar-right .el-select { font-size: 12px !important; }
+.toolbar-right .el-select :deep(.el-input__inner) { font-size: 12px !important; }
+.toolbar-right .el-select :deep(.el-select__selected-item) { font-size: 12px !important; }
+.toolbar-right .el-select-dropdown__item { font-size: 12px !important; }
+.toolbar-right .el-select-dropdown__wrap { font-size: 12px !important; }
+.toolbar-right .el-tag { font-size: 12px !important; }
+.toolbar-right .detected-lang,
+.toolbar-right .target-lang-label { font-size: 12px !important; }
+
+/* icon-only 按钮: 正方形紧凑, 不挡发送按钮 */
+.icon-only-btn {
+  width: 28px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  min-width: 0 !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+}
+.icon-only-btn .el-icon { font-size: 15px; margin: 0; }
 
 .toolbar-btn {
   background: var(--color-bg-3);
@@ -5741,7 +5762,7 @@ video.msg-gif-img {
 }
 
 .lang-select {
-  width: 100px;
+  width: 90px;
 }
 .lang-select :deep(.el-select__wrapper) {
   background: var(--color-bg-3);
