@@ -227,8 +227,11 @@ public class ConversationService {
         }
 
         // 使用翻译工厂（支持 AI 翻译 + 降级免费翻译）
-        translationServiceFactory.translate(inbound.content(), "zh-CN", merchantId)
-                .ifPresent(message::setTranslatedContent);
+        // 空内容不翻译，避免 AI 翻译出 "无" 等占位文字
+        if (inbound.content() != null && !inbound.content().isBlank()) {
+            translationServiceFactory.translate(inbound.content(), "zh-CN", merchantId)
+                    .ifPresent(message::setTranslatedContent);
+        }
         message = messageRepository.save(message);
 
         messagingTemplate.convertAndSend("/topic/conversations/" + conversation.getId(), MessageDto.from(message));

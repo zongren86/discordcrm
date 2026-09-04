@@ -362,7 +362,7 @@
                   <!-- 非GIF附件区域（排除GIF，由专门的GIF区域渲染） -->
                   <div v-if="nonGifAttachments(msg).length" class="msg-attachments">
                     <div v-for="att in nonGifAttachments(msg)" :key="att.url" class="attachment-item">
-                      <img v-if="isImage(att.filename)" :src="proxiedUrl(att.url)" class="attachment-image" @error="onGifError" />
+                      <img v-if="isImage(att.filename || att.name)" :src="proxiedUrl(att.url)" class="attachment-image" @error="onGifError" />
                       <a v-else :href="att.url" target="_blank" class="attachment-file">
                         <el-icon><Document /></el-icon>
                       </a>
@@ -550,7 +550,7 @@
                   </div>
 
                   <!-- 普通文本消息的"外层原文折叠"：对语音消息隐藏，避免和卡片内「查看原文/译文」切换重复 -->
-                  <div v-if="hasOriginal(msg) && !isVoiceMsg(msg)" class="msg-original-wrap">
+                  <div v-if="hasOriginal(msg) && !isVoiceMsg(msg) && !isMediaMsg(msg)" class="msg-original-wrap">
                     <el-button size="small" link type="info" @click="toggleOriginal(msg.id)">
                       {{ originalExpandedSet[msg.id] ? '收起原文' : `查看原文 (${(originalContentOf(msg) || '').length})` }}
                       <el-icon class="arrow-icon" :class="{ flip: originalExpandedSet[msg.id] }"><ArrowDown /></el-icon>
@@ -659,8 +659,8 @@
           </div>
 
           <div class="toolbar-right">
-            <span class="detected-lang">好友语言: {{ detectedLang }}</span>
-            <span class="target-lang-label">目标语言:</span>
+            <span class="detected-lang">好友: {{ detectedLang }}</span>
+            <span class="target-lang-label">目标:</span>
             <el-select v-model="targetLang" size="small" class="lang-select" @change="onTargetLangChange">
               <el-option
                 v-for="lang in supportedLanguages"
@@ -1136,14 +1136,16 @@ const editText = ref('')
 // 把后端返回的相对 url 变成浏览器能访问的绝对 url (dev/prod 都能用)
 function normalizeAttachmentUrl(u) {
   if (!u) return u
-  // 已经是绝对 URL / blob URL → 直接返回
   if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('blob:')) return u
-  // 相对路径 → 拼后端 host
-  // config.API_BASE_URL = 'http://localhost:8090' (带 host:port, 不含 /api)
   if (u.startsWith('/')) {
     try {
-      const base = (config?.API_BASE_URL || location.origin).replace(/\/$/, '')
-      return base + u
+      // 生产 (静态文件被 Spring Boot 服务): 相对路径 /api/xxx 直接用当前 origin
+      // dev (Vite proxy localhost:5173): 也直接用当前 origin → Vite 代理自动转后端
+      // 例外: 当前 origin 是 localhost:8090 直连后端时也 OK
+      const base = location.origin.replace(/\/$/, '')
+      const result = base + u
+      console.log('[normalizeAttachmentUrl]', u, '→', result)
+      return result
     } catch {
       return location.origin + u
     }
@@ -1704,7 +1706,8 @@ function initialOf(obj) {
 }
 
 function getAvatar(obj) {
-  return obj?.avatarUrl || obj?.friendAvatarUrl || ''
+  const raw = obj?.avatarUrl || obj?.friendAvatarUrl || ''
+  return raw ? proxiedUrl(raw) : ''
 }
 
 function initialOfByMsg(msg, direction) {
@@ -1720,13 +1723,15 @@ function initialOfByMsg(msg, direction) {
 }
 
 function getAvatarByMsg(msg, direction) {
+  let raw = ''
   if (direction === 'out') {
     const accId = conversations.currentConversation?.discordAccountId || conversations.currentConversation?.accountId
     const acc = accounts.getAccountById(accId)
-    if (acc?.avatarUrl) return acc.avatarUrl
-    return auth.agent?.avatarUrl || ''
+    raw = acc?.avatarUrl || auth.agent?.avatarUrl || ''
+  } else {
+    raw = msg?.senderAvatarUrl || conversations.currentConversation?.avatarUrl || conversations.currentConversation?.friendAvatarUrl || ''
   }
-  return msg?.senderAvatarUrl || conversations.currentConversation?.avatarUrl || conversations.currentConversation?.friendAvatarUrl || ''
+  return raw ? proxiedUrl(raw) : ''
 }
 
 function senderNameOf(msg) {
@@ -2333,12 +2338,15 @@ function resolveAttachmentUrl(url) {
   if (!url) return ''
   // 如果是相对路径，添加后端基础 URL
   if (url.startsWith('/')) {
-    const base = window.location.origin
-    return url
+    return window.location.origin + url
   }
   // 如果是 localhost 但前端不在 localhost，替换为当前域名
   if (url.includes('localhost:8090') && !window.location.hostname.includes('localhost')) {
-    return url.replace('localhost:8090', window.location.hostname + ':8090')
+    url = url.replace('localhost:8090', window.location.hostname + ':8090')
+  }
+  // 外部 URL 走代理判断，避免 Discord CDN CORS 破图
+  if (typeof proxiedUrl === 'function' && (url.startsWith('http://') || url.startsWith('https://'))) {
+    return proxiedUrl(url)
   }
   return url
 }
@@ -2360,15 +2368,10 @@ function isImageAttachment(att) {
   return /\.(jpg|jpeg|png|gif|webp|bmp)$/.test(name)
 }
 
-/** 获取消息的图片附件列表 */
+/** 获取消息的图片附件列表 —— 使用 parseAttachments 保证格式兼容性 */
 function imageAttachmentsOf(msg) {
-  if (!msg || !msg.attachmentsJson) return []
-  try {
-    const arr = JSON.parse(msg.attachmentsJson)
-    return arr.filter(isImageAttachment)
-  } catch {
-    return []
-  }
+  if (!msg) return []
+  return parseAttachments(msg).filter(isImageAttachment)
 }
 
 /** 打开媒体预览 */
@@ -2424,6 +2427,8 @@ function canTranslateInbound(msg) {
   if (isGifMsg(msg)) return false
   // Sticker/Lottie 消息本身没有文本，不需要翻译按钮
   if (isStickerMsg(msg)) return false
+  // 纯图片/附件消息也不需要翻译入口
+  if (isMediaMsg(msg)) return false
   if (msg.translatedContent && msg.translatedContent !== msg.content) return false
   if (msg.userTranslated) return false
   return !containsChinese(msg.content || '')
@@ -5698,31 +5703,15 @@ video.msg-gif-img {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px !important;
 }
-/* 🔒 强制 Element Plus 内部子组件字号 */
-.toolbar-right .el-button { font-size: 12px !important; padding: 6px 8px; }
-.toolbar-right .el-button .el-icon { font-size: 14px; }
-.toolbar-right .el-select { font-size: 12px !important; }
-.toolbar-right .el-select :deep(.el-input__inner) { font-size: 12px !important; }
-.toolbar-right .el-select :deep(.el-select__selected-item) { font-size: 12px !important; }
-.toolbar-right .el-select-dropdown__item { font-size: 12px !important; }
-.toolbar-right .el-select-dropdown__wrap { font-size: 12px !important; }
-.toolbar-right .el-tag { font-size: 12px !important; }
-.toolbar-right .detected-lang,
-.toolbar-right .target-lang-label { font-size: 12px !important; }
-
-/* icon-only 按钮: 正方形紧凑, 不挡发送按钮 */
+/* icon-only 按钮布局 (scoped) */
 .icon-only-btn {
-  width: 28px !important;
-  height: 28px !important;
-  padding: 0 !important;
-  min-width: 0 !important;
-  display: inline-flex !important;
+  padding: 0;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-.icon-only-btn .el-icon { font-size: 15px; margin: 0; }
+.icon-only-btn .el-icon { margin: 0; }
 
 .toolbar-btn {
   background: var(--color-bg-3);
@@ -6971,11 +6960,12 @@ video.msg-gif-img {
   justify-content: space-between;
   align-items: center;
   font-weight: 600;
+  font-size: 12px;
   margin-bottom: 8px;
   color: var(--el-text-color-primary, #303133);
 }
 .translation-preview-content {
-  font-size: 14px;
+  font-size: 12px;
   color: var(--el-text-color-regular, #606266);
 }
 .translation-preview-loading {
@@ -6995,11 +6985,12 @@ video.msg-gif-img {
 }
 .preview-label {
   font-weight: 500;
+  font-size: 12px;
   margin-right: 4px;
 }
 .translation-preview-hint {
   color: var(--el-text-color-secondary, #909399);
-  font-size: 13px;
+  font-size: 12px;
   margin-top: 4px;
 }
 .translation-preview-actions {
@@ -7024,6 +7015,68 @@ video.msg-gif-img {
 </style>
 
 <style>
+/* 🔓 全局非 scoped —— 保证穿透 Element Plus 组件 */
+
+/* ====== 工具栏字号强制 12px ====== */
+/* 下拉选项（portal 到 body，必须全局） */
+/* 用带父级的高优先级选择器赢过全局 18px 规则 */
+.el-popper .el-select-dropdown .el-select-dropdown__item,
+.el-select-dropdown .el-select-dropdown__item,
+.el-popper .el-select-dropdown .el-select-dropdown__item.is-hovering,
+.el-popper .el-select-dropdown .el-select-dropdown__item.is-selected {
+  font-size: 12px !important;
+  line-height: 20px !important;
+}
+/* 语言标签文字 */
+.detected-lang,
+.target-lang-label,
+.lang-select {
+  font-size: 12px !important;
+}
+/* 输入提示 "检测到中文，发送时将自动翻译为xx" */
+.input-hint,
+.input-hint span {
+  font-size: 12px !important;
+}
+.toolbar-right,
+.toolbar-right .el-button,
+.toolbar-right .el-button .el-icon,
+.toolbar-right .el-select,
+.toolbar-right .el-select__wrapper,
+.toolbar-right .el-select__selected-item,
+.toolbar-right .el-input__inner,
+.toolbar-right .el-textarea__inner,
+.toolbar-right .el-tag,
+.toolbar-right .detected-lang,
+.toolbar-right .target-lang-label,
+.toolbar-right .lang-select,
+.toolbar-right .lang-select * {
+  font-size: 12px !important;
+}
+
+
+
+/* ====== 输入框 placeholder 字号 ====== */
+.msg-input .el-textarea__inner::placeholder,
+.msg-input .el-textarea__inner {
+  font-size: 12px !important;
+}
+
+/* ====== icon-only 按钮 ====== */
+.icon-only-btn {
+  width: 28px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  min-width: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+.icon-only-btn .el-icon {
+  font-size: 15px !important;
+  margin: 0;
+}
+
 .date-popover-popper {
   border-radius: 12px !important;
   border: 1px solid var(--color-border, #e4e7ed) !important;

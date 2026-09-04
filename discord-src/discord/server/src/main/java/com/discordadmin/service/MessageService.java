@@ -1559,18 +1559,40 @@ private boolean isLocalUploadUrl(String url) {
                 }
             }
         } else {
-            // 分享链接：下载后作为附件上传
-            log.info("下载并上传GIF: {}", gifUrl);
-            if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
-                var agentResult = sendGifViaAgent(account, conversation, gifUrl, title);
-                discordMessageId = agentResult.messageId();
-                discordAttachmentUrl = agentResult.attachmentUrl();
-                sentContent = agentResult.sentContent();
-            } else {
-                var result = downloadAndUploadGif(account, conversation, gifUrl, title);
-                discordMessageId = result.messageId();
-                discordAttachmentUrl = result.attachmentUrl();
-                sentContent = result.sentContent();
+            // 分享链接：先尝试解析为 CDN 直链，成功则直接发送（Discord 自动 embedding），跳过下载上传
+            String resolvedCdnUrl = resolveShareUrlToCdnUrl(gifUrl);
+            String finalUrl = resolvedCdnUrl != null ? resolvedCdnUrl : gifUrl;
+            if (resolvedCdnUrl != null) {
+                log.info("GIF 分享链接解析为 CDN 直链: {} → {}", gifUrl, resolvedCdnUrl);
+            }
+            try {
+                if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
+                    // 解析出 CDN 直链后，让 agent 直接发 content=url
+                    var agentResult = sendGifViaAgentDirectUrl(account, conversation, finalUrl);
+                    discordMessageId = agentResult.messageId();
+                    discordAttachmentUrl = finalUrl;
+                    sentContent = finalUrl;
+                    log.info("GIF 直接 URL 发送成功（跳过下载上传）");
+                } else {
+                    discordMessageId = discordUserClient.sendMessage(
+                            account.getToken(), conversation.getChannelId(), finalUrl);
+                    discordAttachmentUrl = finalUrl;
+                    sentContent = finalUrl;
+                    log.info("GIF 直接 URL 发送成功（跳过下载上传）");
+                }
+            } catch (Exception e) {
+                log.warn("直接发送GIF URL失败，降级为下载上传: {}", e.getMessage());
+                if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
+                    var agentResult = sendGifViaAgent(account, conversation, gifUrl, title);
+                    discordMessageId = agentResult.messageId();
+                    discordAttachmentUrl = agentResult.attachmentUrl();
+                    sentContent = agentResult.sentContent();
+                } else {
+                    var result = downloadAndUploadGif(account, conversation, gifUrl, title);
+                    discordMessageId = result.messageId();
+                    discordAttachmentUrl = result.attachmentUrl();
+                    sentContent = result.sentContent();
+                }
             }
         }
 
@@ -1629,6 +1651,35 @@ private boolean isLocalUploadUrl(String url) {
      * AGENT 账号通过 agent 机器发送 GIF/图片/文件
      * 下载文件→base64→调 agent SEND_MESSAGE with files
      */
+    /**
+     * 让 agent 直接发 URL（Discord 自动 embedding），零下载上传开销
+     */
+    private GifSendResult sendGifViaAgentDirectUrl(DiscordAccount account, Conversation conversation, String url) {
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> params = new java.util.HashMap<>();
+            params.put("token", account.getToken());
+            params.put("channelId", conversation.getChannelId());
+            params.put("content", url);
+
+            String paramsJson = om.writeValueAsString(params);
+            com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
+                    account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
+            log.info("[AgentGIF-Direct] taskId={}, account={}, url={}", task.getId(), account.getName(), url);
+
+            String resultJson = agentTaskService.waitForTaskResult(task.getId(), 60000);
+            com.fasterxml.jackson.databind.JsonNode r = om.readTree(resultJson);
+            String discordMessageId = r.path("discordMessageId").asText(null);
+            if (discordMessageId == null) {
+                throw new IllegalStateException("Agent 未返回 discordMessageId: " + r.path("error").asText("未知原因"));
+            }
+            return new GifSendResult(discordMessageId, url, url);
+        } catch (Exception e) {
+            log.error("[AgentGIF-Direct] 发送失败: {}", e.getMessage());
+            throw new IllegalStateException("Agent 直发 GIF 失败: " + e.getMessage(), e);
+        }
+    }
+
     private GifSendResult sendGifViaAgent(DiscordAccount account, Conversation conversation,
                                            String url, String title) {
         try {
@@ -1677,6 +1728,30 @@ private boolean isLocalUploadUrl(String url) {
             throw new IllegalStateException("Agent 发 GIF/文件失败: " + e.getMessage(), e);
         }
     }
+    /**
+     * 从分享链接提取 GIF ID 拼成 CDN 直链，避免下载上传的慢路径
+     * - tenor.com/view/slug-{id} → media.tenor.com/v1/gifs/{id}.gif
+     * - giphy.com/gifs/slug-{id} → media.giphy.com/media/{id}/giphy.gif
+     * 解析失败返回 null
+     */
+    private String resolveShareUrlToCdnUrl(String url) {
+        if (url == null || url.isBlank()) return null;
+        try {
+            String lower = url.toLowerCase();
+            String path = new java.net.URI(url).getPath();
+            if (path == null || path.isBlank()) return null;
+            if (lower.contains("tenor.com")) {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("/view/.*?(\\d{6,})(?:/|$)").matcher(path);
+                if (m.find()) return "https://media.tenor.com/v1/gifs/" + m.group(1) + ".gif";
+            }
+            if (lower.contains("giphy.com")) {
+                java.util.regex.Matcher m = java.util.regex.Pattern.compile("/gifs/(?:[^/]*?)(\\w{6,})(?:/|$)").matcher(path);
+                if (m.find()) return "https://media.giphy.com/media/" + m.group(1) + "/giphy.gif";
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
 
     public boolean isDirectMediaUrl(String url) {
         if (url == null || url.isBlank()) return false;

@@ -54,12 +54,13 @@ export function startWebSocket(token) {
             const store = useConversationsStore()
             const existing = store.conversations.find(c => c.id === conv.id)
             if (existing) {
-              // 保留原有的未读计数，除非后端明确提供了新的未读计数
-              const preservedUnread = existing.unreadCount
+              // 保留原有的未读计数，取 max(客户端累加值, 后端精确值)
+              const preservedUnread = existing.unreadCount || 0
               Object.assign(existing, conv)
-              // 如果后端没有明确提供 unreadCount (undefined)，则保留原有的值
-              if (conv.unreadCount === undefined || conv.unreadCount === null) {
-                existing.unreadCount = preservedUnread || 0
+              const serverUnread = conv.unreadCount || 0
+              // 客户端累加值 > 后端返回值 时保留客户端的（代表刚收到新消息但后端还没刷新完）
+              if (preservedUnread > serverUnread) {
+                existing.unreadCount = preservedUnread
               }
             } else {
               // 新会话，直接添加

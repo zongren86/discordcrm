@@ -123,9 +123,17 @@ export const useConversationsStore = defineStore('conversations', {
           // Object.assign 会把它覆盖回去，造成"显示最新时间→显示更早时间→又显示最新时间"的闪烁
           const oldLastTime = existing.lastMessageAt
           const newLastTime = newConv.lastMessageAt
-          // 以服务端COUNT为权威，直接覆盖本地的近似累加值（服务端unreadCount才是和DB对齐的真未读）
+          // 保护客户端实时累加的 unreadCount：
+          // WebSocket 消息推送会 +1，但轮询可能返回 DB 中尚未更新的旧值，
+          // 这里取 max(现有客户端累加值, 服务端返回值)，避免实时红点闪烁
+          const clientUnread = existing.unreadCount || 0
           Object.assign(existing, newConv)
           existing.pinned = preservedPinned ?? newConv.pinned
+          // 客户端累加值 > 服务端返回值 时保留客户端的（代表有新未读消息刚到）
+          const serverUnread = newConv.unreadCount || 0
+          if (clientUnread > serverUnread) {
+            existing.unreadCount = clientUnread
+          }
           // 如果本地已有更晚的 lastMessageAt（来自 WebSocket 推送），保留本地值
           if (oldLastTime && newLastTime) {
             const oldTs = new Date(oldLastTime).getTime()

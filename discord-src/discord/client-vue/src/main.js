@@ -56,6 +56,10 @@ function classifyError(err, defaultMsg) {
       level: 'warning'
     }
   }
+  // Script error 没有有效信息，静默处理
+  if (text === 'Script error.' || text.includes('Script error')) {
+    return { type: 'silent', title: '', desc: '', level: 'info' }
+  }
   return {
     type: 'unknown',
     title: '操作失败',
@@ -68,6 +72,8 @@ function classifyError(err, defaultMsg) {
 const _lastErrorShown = new Map()
 function showError(err) {
   const info = classifyError(err)
+  // silent 类型不弹窗
+  if (info.type === 'silent') return
   const key = info.type + '|' + info.title
   const now = Date.now()
   if (_lastErrorShown.has(key) && now - _lastErrorShown.get(key) < 5000) return
@@ -93,6 +99,11 @@ app.config.errorHandler = (err, vm, info) => {
 // 全局同步错误
 window.onerror = (msg, source, lineno, colno, error) => {
   console.error('[Window Error]', msg, 'at', source, lineno)
+  // 跨域 Script error 是浏览器安全机制，没有有效错误信息，静默处理
+  if (msg === 'Script error.' || (typeof msg === 'string' && msg.includes('Script error'))) {
+    console.warn('[Window Error] Script error (跨域脚本错误，静默处理)')
+    return true
+  }
   showError(error || msg)
 }
 
@@ -103,6 +114,12 @@ window.addEventListener('unhandledrejection', (event) => {
   const text = String(reason?.message || reason || '')
   if (text.includes('dynamically imported module') || text.includes('HMR')) {
     console.warn('[HMR] 刷新页面即可:', text.split('\n')[0])
+    event.preventDefault()
+    return
+  }
+  // 网络请求被中断/取消（如页面切换导致的 abort）—— 静默处理
+  if (reason?.name === 'AbortError' || text.includes('AbortError') || text.includes('canceled')) {
+    console.warn('[Promise Error] 已取消的请求:', text.substring(0, 100))
     event.preventDefault()
     return
   }

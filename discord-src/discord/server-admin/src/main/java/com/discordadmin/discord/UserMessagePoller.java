@@ -810,7 +810,10 @@ public class UserMessagePoller {
             }
             msgEntity.setDiscordCreatedAt(discordCreatedAt);
             msgEntity.setCreatedAt(discordCreatedAt);
-            msgEntity.setTranslatedContent(content);
+            // 空内容不设 translatedContent，避免后续翻译补偿翻译出"无"等占位
+            if (content != null && !content.isBlank()) {
+                msgEntity.setTranslatedContent(content);
+            }
 
             parsedList.add(new ParsedMessage(msgEntity, isOutbound, content, discordCreatedAt, "voice".equals(resolvedMessageType), processedKey));
         }
