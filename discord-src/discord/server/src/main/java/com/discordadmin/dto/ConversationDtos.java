@@ -80,7 +80,7 @@ public class ConversationDtos {
             // 仅当会话有明确分配的客服（转移后）时才设置agent信息
             if (c.getAssignedAgent() != null && Hibernate.isInitialized(c.getAssignedAgent())) {
                 Agent agent = c.getAssignedAgent();
-                agentName = agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername();
+                agentName = agent.getCleanDisplayName();
                 agentUsername = agent.getUsername();
                 agentId = agent.getId();
             }

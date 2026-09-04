@@ -68,6 +68,19 @@ public class Agent {
     private Set<DiscordAccount> discordAccounts = new HashSet<>();
 
     /**
+     * 获取清理过的显示名 — 自动剥离历史遗留的 accountType 前缀
+     * 例如: "云_云飞扬管理员" → "云飞扬管理员"
+     */
+    public String getCleanDisplayName() {
+        String name = displayName != null ? displayName : username;
+        if (name != null) {
+            // 去掉 1-2 个汉字 + 下划线 的前缀 (历史上 accountType 的中文标签)
+            name = name.replaceAll("^(云|客|管|坐|商|平台|云端)_", "");
+        }
+        return name;
+    }
+
+    /**
      * 判断是否为管理员
      */
     public boolean isAdmin() {

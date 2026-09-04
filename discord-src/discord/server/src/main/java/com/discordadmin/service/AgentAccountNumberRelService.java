@@ -183,7 +183,7 @@ public class AgentAccountNumberRelService {
 
             Agent agent = agentMap.get(rel.getAgentId());
             if (agent != null) {
-                map.put("agentName", agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername());
+                map.put("agentName", agent.getCleanDisplayName());
                 map.put("agentUsername", agent.getUsername());
             }
             return map;

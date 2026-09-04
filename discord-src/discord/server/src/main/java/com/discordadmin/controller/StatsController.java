@@ -419,7 +419,7 @@ public class StatsController {
             Object agentObj = row[0];
             if (agentObj instanceof com.discordadmin.entity.Agent agent) {
                 item.put("agentId", agent.getId());
-                item.put("agentName", agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername());
+                item.put("agentName", agent.getCleanDisplayName());
                 item.put("accountType", agent.getAccountType() != null ? agent.getAccountType() : 1);
                 item.put("roleLabel", agent.isAdmin() ? "管理员" : "普通账号");
                 item.put("conversationCount", row[1]);

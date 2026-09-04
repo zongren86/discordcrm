@@ -162,7 +162,7 @@ public class DiscordAccountService {
                     String agentName = null, agentUsername = null;
                     Long agentId = null;
                     if (matched != null) {
-                        agentName = matched.getDisplayName() != null ? matched.getDisplayName() : matched.getUsername();
+                        agentName = matched.getCleanDisplayName();
                         agentUsername = matched.getUsername();
                         agentId = matched.getId();
                     }
@@ -415,7 +415,7 @@ public class DiscordAccountService {
             if (agent == null) {
                 agent = a.getAgents().iterator().next();
             }
-            agentName = agent.getDisplayName() != null ? agent.getDisplayName() : agent.getUsername();
+            agentName = agent.getCleanDisplayName();
             agentUsername = agent.getUsername();
             agentId = agent.getId();
         }
@@ -445,7 +445,7 @@ public class DiscordAccountService {
                         matchedAgent = agentMap.values().iterator().next();
                     }
                     if (matchedAgent != null) {
-                        agentName = matchedAgent.getDisplayName() != null ? matchedAgent.getDisplayName() : matchedAgent.getUsername();
+                        agentName = matchedAgent.getCleanDisplayName();
                         agentUsername = matchedAgent.getUsername();
                         agentId = matchedAgent.getId();
                     }
