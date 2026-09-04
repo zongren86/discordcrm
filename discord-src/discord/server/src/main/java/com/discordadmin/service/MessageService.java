@@ -1474,6 +1474,13 @@ private boolean isLocalUploadUrl(String url) {
                 .orElseThrow(() -> new IllegalStateException("Discord 账号不存在"));
 
         String discordMessageId;
+
+        // ★ 关键优化：尝试将 Tenor/Giphy 分享链接解析为 CDN 直链，避免下载上传的慢路径
+        String resolvedUrl = resolveShareUrlToCdnUrl(gifUrl);
+        if (resolvedUrl != null) {
+            log.info("GIF 分享链接解析为 CDN 直链: {} -> {}", gifUrl, resolvedUrl);
+            gifUrl = resolvedUrl;
+        }
         String discordAttachmentUrl;
         String sentContent;
 
@@ -1540,10 +1547,11 @@ private boolean isLocalUploadUrl(String url) {
             // 直接媒体URL：直接发送，Discord 会自动 embedding 显示
             log.info("发送直接媒体URL: {}", gifUrl);
             if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
-                var agentResult = sendGifViaAgent(account, conversation, gifUrl, title);
-                discordMessageId = agentResult.messageId();
-                discordAttachmentUrl = agentResult.attachmentUrl();
-                sentContent = agentResult.sentContent();
+                // ★ 关键优化：CDN 直链让 agent 直接发 content=url，Discord 自动 embedding（1-2秒）
+                // 而非 sendGifViaAgent 的 下载→base64→上传 慢路径（10秒+）
+                discordMessageId = sendUrlViaAgent(account, conversation, gifUrl);
+                discordAttachmentUrl = gifUrl;
+                sentContent = gifUrl;
             } else {
                 try {
                     discordMessageId = discordUserClient.sendMessage(
@@ -1624,6 +1632,37 @@ private boolean isLocalUploadUrl(String url) {
     /**
      * 判断 URL 是否为直接媒体链接（Discord 可直接 embedding）
      */
+
+    /**
+     * AGENT 账号通过 agent 直接发 content=url（Discord 自动 embedding GIF/图片）
+     * 无需下载上传，1-2秒完成。适用于 Tenor/Giphy 等 CDN 直链场景。
+     */
+    private String sendUrlViaAgent(DiscordAccount account, Conversation conversation, String url) {
+        try {
+            com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> params = new java.util.HashMap<>();
+            params.put("token", account.getToken());
+            params.put("channelId", conversation.getChannelId());
+            params.put("content", url);
+            // 关键：不传 files，让 agent 直接发 content=url
+            String paramsJson = om.writeValueAsString(params);
+            com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
+                    account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
+            log.info("[AgentDirectURL] taskId={}, account={}, url={}", task.getId(), account.getName(), url);
+            String resultJson = agentTaskService.waitForTaskResult(task.getId(), 15000);
+            com.fasterxml.jackson.databind.JsonNode r = om.readTree(resultJson);
+            String discordMessageId = r.path("discordMessageId").asText(null);
+            if (discordMessageId == null) {
+                throw new IllegalStateException("Agent 未返回 discordMessageId: " + r.path("error").asText("未知原因"));
+            }
+            log.info("[AgentDirectURL] 发送成功 messageId={}", discordMessageId);
+            return discordMessageId;
+        } catch (Exception e) {
+            log.error("[AgentDirectURL] 发送失败: {}, 降级为 sendGifViaAgent", e.getMessage());
+            // 降级：如果 agent 不支持纯 URL content，回退到下载上传
+            throw new IllegalStateException("Agent 发 URL 失败: " + e.getMessage(), e);
+        }
+    }
 
     /**
      * AGENT 账号通过 agent 机器发送 GIF/图片/文件
@@ -1709,6 +1748,64 @@ private boolean isLocalUploadUrl(String url) {
 
         // 默认为分享链接，需要下载
         return false;
+    }
+
+    /**
+     * 将 Tenor/Giphy 分享链接解析为 CDN 直链，避免下载上传的慢路径。
+     * 解析成功返回直链，失败返回 null。
+     * 
+     * Tenor: https://tenor.com/view/{slug}-{gifId} -> https://media.tenor.com/{gifId}/gif.gif
+     * Giphy: https://giphy.com/gifs/{slug}-{gifId} -> https://media.giphy.com/media/{gifId}/giphy.gif
+     */
+    public String resolveShareUrlToCdnUrl(String url) {
+        if (url == null || url.isBlank()) return null;
+        String lowerUrl = url.toLowerCase();
+
+        // Tenor -> media.tenor.com
+        if (lowerUrl.contains("tenor.com")) {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile("-(\\\\d+)(?:/|$|\\\\?)");
+            java.util.regex.Matcher m = p.matcher(url);
+            if (m.find()) {
+                String gifId = m.group(1);
+                String cdnUrl = "https://media.tenor.com/" + gifId + "/gif.gif";
+                log.info("Tenor 分享链接解析: {} -> {}", url, cdnUrl);
+                return cdnUrl;
+            }
+        }
+
+        // Giphy -> media.giphy.com
+        if (lowerUrl.contains("giphy.com")) {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile("-(\\\\d+)(?:/|$|\\\\?)");
+            java.util.regex.Matcher m = p.matcher(url);
+            if (m.find()) {
+                String gifId = m.group(1);
+                String cdnUrl = "https://media.giphy.com/media/" + gifId + "/giphy.gif";
+                log.info("Giphy 分享链接解析: {} -> {}", url, cdnUrl);
+                return cdnUrl;
+            }
+            java.util.regex.Pattern p2 = java.util.regex.Pattern.compile("/media/([A-Za-z0-9]+)");
+            java.util.regex.Matcher m2 = p2.matcher(url);
+            if (m2.find()) {
+                String gifId = m2.group(1);
+                String cdnUrl = "https://media.giphy.com/media/" + gifId + "/giphy.gif";
+                log.info("Giphy 备用解析: {} -> {}", url, cdnUrl);
+                return cdnUrl;
+            }
+        }
+
+        // Imgur -> i.imgur.com
+        if (lowerUrl.contains("imgur.com") && !lowerUrl.contains("i.imgur.com")) {
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile("imgur\\\\.com/(?:gallery/|a/|)([A-Za-z0-9]+)");
+            java.util.regex.Matcher m = p.matcher(url);
+            if (m.find()) {
+                String imgId = m.group(1);
+                String cdnUrl = "https://i.imgur.com/" + imgId + ".gif";
+                log.info("Imgur 分享链接解析: {} -> {}", url, cdnUrl);
+                return cdnUrl;
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -2,7 +2,7 @@
   "serverUrl": "http://127.0.0.1:8090/api",
   "agentName": "crm-agent",
   "token": "在此粘贴token",
-  "version": "1.8.8",
+  "version": "1.8.9",
   "production": false,
   "browser": {
     "headless": false,

@@ -142,75 +142,21 @@ async function executeTask(task) {
         }
         await reportTask(task.id, 'RUNNING');
         try {
-          // ⭐ 把 agentName + discordProxy 传进去 → 地理探测才能匹配代理出口 IP
-          const { context } = await launchBrowserOnly(profilePath, cfg.browser || {}, {
+          // 🆕 v1.8.8: shell spawn 系统 Chrome（零 Playwright 痕迹）
+          const result = await launchBrowserOnly(profilePath, cfg.browser || {}, {
             agentName: cfg.agentName,
             proxyUrl: getProxyUrl() || cfg.discordProxy || null,
           });
-          console.log('[任务] ✅ 浏览器已打开');
+          console.log('[任务] ✅ Chrome 已启动 (pid=' + (result && result.pid) + ')');
 
-          // ⚠️ 关键: 浏览器打开时暂停该账号的消息轮询
-          // 用户在浏览器里手动操作（加好友等）走 Cookie session
-          // agent 后台轮询走 API token → 同账号同IP双通道会触发 Discord 风控
-          if (accountId) {
-            browserOpenAccounts.add(accountId);
-            console.log(`[风控] 账号 ${accountId} 浏览器打开中 → 暂停消息轮询`);
-          }
+          // 🆕 v1.8.8: LAUNCH_BROWSER 是纯 shell spawn 系统 Chrome（零 Playwright 痕迹），
+          // API + 手工浏览器双通道不触发风控 → 不再暂停消息轮询
 
-          // ⚡ 关键: 唤起后自动扫描当前 token，上报后端更新
-          await new Promise(r => setTimeout(r, 3000));
-          const extracted = await extractAccountFromContext(context);
-
-          if (extracted && extracted.tokenValid) {
-            // token 有效 → 上报完整 payload，后端 upsert 更新 DB
-            const payload = {
-              discordId: extracted.discordId,
-              username: extracted.username,
-              discordName: extracted.discordName,
-              email: extracted.email,
-              token: extracted.token,
-              avatarUrl: extracted.avatarUrl,
-              browserProfilePath: profilePath,
-            };
-            await reportTask(task.id, 'SUCCESS', payload);
-            console.log(`[任务] ✅ Token已更新! ${extracted.username} (${extracted.discordId})`);
-
-            // 同步更新本地缓存: 恢复该账号轮询
-            if (accountId) {
-              const localAcc = managedAccounts.find(a => String(a.id) === String(accountId));
-              if (localAcc) {
-                localAcc.token = extracted.token;
-                tokenInvalidAccounts.delete(localAcc.id);
-                console.log(`[本地] 账号 ${localAcc.name} token已刷新 → 恢复轮询`);
-              }
-            }
-          } else if (extracted && !extracted.tokenValid) {
-            // token存在但API返回401，需要用户手动登录
-            await reportTask(task.id, 'SUCCESS', {
-              notice: 'token_expired',
-              hint: '浏览器已打开，请手动重新登录 Discord，然后再次点击"唤起"即可更新 token',
-            });
-            console.warn('[任务] Token已过期，请在打开的浏览器中重新登录');
-          } else {
-            // 完全没扫到 token → session 过期
-            await reportTask(task.id, 'SUCCESS', {
-              notice: 'session_expired',
-              hint: '浏览器已打开，请登录 Discord，然后再次点击"唤起"更新 token',
-            });
-            console.warn('[任务] 未扫描到 token，浏览器等待用户登录...');
-          }
-
-          // 浏览器保持打开，监听关闭事件 → 恢复轮询
-          (async () => {
-            try {
-              await new Promise(resolve => context.on('close', resolve));
-              console.log('[Browser] 浏览器已关闭');
-            } catch {}
-            if (accountId) {
-              browserOpenAccounts.delete(accountId);
-              console.log(`[风控] 账号 ${accountId} 浏览器已关闭 → 恢复消息轮询`);
-            }
-          })();
+          await reportTask(task.id, 'SUCCESS', {
+            message: 'Chrome 已启动，请在打开的窗口中操作',
+            pid: (result && result.pid) || null,
+            browserProfilePath: profilePath,
+          });
           break;
         } catch (err) {
           await reportTask(task.id, 'FAILED', { error: err.message });
@@ -218,70 +164,6 @@ async function executeTask(task) {
           break;
         }
       }
-
-      case 'SEND_MESSAGE': {
-        const params = typeof task.params === 'string'
-          ? (() => { try { return JSON.parse(task.params); } catch { return {}; } })()
-          : (task.params || {});
-        const { token, channelId, content, stickerIds, sticker_id, files } = params;
-        if (!token || !channelId) {
-          await reportTask(task.id, 'FAILED', { error: '缺少 token 或 channelId' });
-          break;
-        }
-        await reportTask(task.id, 'RUNNING');
-        try {
-          // 有 files → multipart 同时发 content + files（合并为一条消息）
-          if (files && Array.isArray(files) && files.length > 0) {
-            console.log(`[任务] 统一发送 content="${content || ''}", files=${files.length}`);
-            const result = await sendMessageWithFiles(token, channelId, content || '', files);
-            const discordMessageId = result?.id;
-            const firstCdnUrl = result?.attachments?.[0]?.url || null;
-            console.log(`[任务] ✅ 统一发送成功 discordMsgId=${discordMessageId} cdnUrl=${firstCdnUrl || '(无)'}`);
-            await reportTask(task.id, 'SUCCESS', {
-              discordMessageId,
-              cdnUrl: firstCdnUrl,
-              channelId,
-            });
-            break;
-          }
-          // 构建请求体：支持纯文本、Sticker、混合发送
-          const body = {};
-          if (stickerIds && Array.isArray(stickerIds) && stickerIds.length > 0) {
-            body.sticker_ids = stickerIds;
-            if (content) body.content = content;
-            console.log(`[任务] 发送 Sticker: sticker_ids=[${stickerIds.join(',')}]`);
-          } else if (sticker_id) {
-            body.sticker_ids = [sticker_id];
-            if (content) body.content = content;
-            console.log(`[任务] 发送 Sticker: sticker_id=${sticker_id}`);
-          } else {
-            body.content = content || '';
-          }
-          // 从 agent 机器发 Discord API 请求 —— IP 是用户家庭宽带，不会触发风控
-          const resp = await discordHttp.post(
-            `/channels/${channelId}/messages`,
-            body,
-            { headers: { 'Authorization': token } }
-          );
-          const discordMessageId = resp.data?.id;
-          console.log(`[任务] ✅ 消息已发送 discordMsgId=${discordMessageId}`);
-          await reportTask(task.id, 'SUCCESS', {
-            discordMessageId,
-            channelId,
-          });
-        } catch (err) {
-          const status = err.response?.status;
-          const msg = status === 401 ? 'Token 已失效（401 Unauthorized）'
-                    : status === 403 ? '没有权限在此频道发消息（403 Forbidden）'
-                    : status === 429 ? 'Discord 限流（429 Too Many Requests）'
-                    : (err.response?.data?.message || err.message);
-          console.error(`[任务] 发消息失败: ${msg}`);
-          if (status === 401 && params.accountId) {
-            reportTokenInvalid(params.accountId, `accountId=${params.accountId}`);
-          }
-          await reportTask(task.id, 'FAILED', { error: msg, status });
-        }
-        break;
       }
 
       case 'FULL_SYNC_FRIENDS': {

@@ -1937,9 +1937,12 @@ function normalizeGifUrl(url) {
 
 /** 不需要代理的域名（浏览器可直接加载且无 Cloudflare 防护） */
 const NO_PROXY_DOMAINS = [
+  'cdn.discordapp.com',
   'media.discordapp.net',
   'i.imgur.com', 'i.redd.it',
-  'c.tenor.com', 'media.tenor.com'
+  'c.tenor.com', 'media.tenor.com',
+  'media.giphy.com',
+  'static2.klipy.com', 'cdn.klipy.com'
 ]
 
 /** 已解析的 klipy.com URL 缓存：原始URL → CDN URL（CDN 也需要代理绕过 Cloudflare） */
@@ -1960,11 +1963,10 @@ function isGifUrlResolved(url) {
 
 /** 需要代理的外部 GIF/动画域名（浏览器直接加载会被 CORS/Cloudflare 阻止） */
 const EXTERNAL_GIF_DOMAINS = [
-  'klipy.com', 'static2.klipy.com', 'cdn.klipy.com',
+  'klipy.com',
   'tenor.com', 'giphy.com', 'imgur.com',
   'futuri.io', 'gyazo.com', '4cdn.org', 'redd.it',
-  'twitter.com', 'twimg.com', 'instagram.com',
-  'cdn.discordapp.com'  // Discord 官方 CDN，用于加载 Sticker/Lottie JSON
+  'twitter.com', 'twimg.com', 'instagram.com'
 ]
 
 /** 检查URL是否需要通过后端代理加载 */

@@ -755,43 +755,77 @@ async function captureDiscordAccount(browserConfig = {}, { taskId, http, agentNa
  *    ✅ launchPersistentContext（持久化 profile）
  *    ✅ ignoreDefaultArgs（禁 Playwright 加的 --enable-automation）
  */
+/**
+ * launchBrowserOnly —— shell spawn 系统 Chrome（零 Playwright 痕迹）
+ *
+ * 🆕 反作弊第一：完全不用 Playwright 控制，直接 shell spawn 启动系统 Chrome。
+ * Chrome 是独立进程，Discord 看不到任何自动化痕迹。
+ *
+ * 为什么 LAUNCH_BROWSER 不需要 Playwright：
+ *   - token 已经在 CAPTURE 阶段存到 DB 了，唤起不需要再抓 token
+ *   - 唤起是给用户看登录状态用的，用户自己操作
+ *   - token 抓取由 CAPTURE 阶段负责（那里才需要 Playwright）
+ */
 async function launchBrowserOnly(browserProfilePath, browserConfig = {}, { agentName, proxyUrl } = {}) {
   if (!browserProfilePath) throw new Error('缺少 browserProfilePath');
   const userDataDir = path.resolve(browserProfilePath);
   if (!fs.existsSync(userDataDir)) throw new Error('浏览器 profile 不存在: ' + userDataDir);
 
-  // ⭐ 指纹（地理感知：通过代理探测出口 IP）—— 保留同行机制
-  const fp = await fingerprint.getOrCreateFingerprint(agentName || path.basename(userDataDir), { proxyUrl });
+  const { spawn } = require('child_process');
 
-  // ⭐ 代理绑定（Clash 同出口）—— 保留同行机制
-  if (proxyUrl) networkGate.bindAccountProxy(agentName || path.basename(userDataDir), proxyUrl);
-
-  // 🆕 v1.8.7: ensureProfileIntl 已移到 CAPTURE 冷启动时执行。
-  // LAUNCH_BROWSER 不写 profile 文件 —— Discord 检测 profile 文件时间戳/格式异常。
-  const isHot = fs.existsSync(path.join(userDataDir, 'Default', 'Preferences'));
-  if (!isHot) {
-    console.log('[Browser] ⚠️ launchBrowserOnly 冷启动 profile！补充写入 ensureProfileIntl...');
-    ensureProfileIntl(userDataDir, fp);
+  // 确定 Chrome 路径：config.executablePath > findSystemChrome() > 报错
+  let chromePath = null;
+  try {
+    const cfg = require('./config').loadConfig();
+    const br = cfg.browser || {};
+    if (br.executablePath && br.executablePath.trim()) {
+      const p = path.resolve(path.dirname(path.join(__dirname, 'config.json')), br.executablePath.trim());
+      if (fs.existsSync(p)) {
+        chromePath = p;
+        console.log('[Browser] 🎯 executablePath: ' + chromePath);
+      }
+    }
+  } catch {}
+  if (!chromePath) chromePath = findSystemChrome();
+  if (!chromePath) {
+    throw new Error('找不到系统 Chrome！请在 config.json 里设置 browser.executablePath');
   }
 
-  console.log('[Browser] 🧊 唤起纯手工 Chrome（零自动化痕迹） profile=' + (isHot ? '热启动' : '冷启动'));
-  const launchOpts = buildLaunchOpts(fp, { headless: false, proxyUrl });
+  // 构建 Chrome 启动参数
+  const args = [
+    `--user-data-dir=${userDataDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-sync',
+  ];
+  // 地理语言（命令行参数，不写 profile 文件）
+  const fp = await fingerprint.getOrCreateFingerprint(agentName || path.basename(userDataDir), { proxyUrl });
+  args.push('--lang=' + fp.locale);
+  args.push('--accept-language=' + fp.languages);
+  // 代理（如果有）
+  if (proxyUrl) {
+    networkGate.bindAccountProxy(agentName || path.basename(userDataDir), proxyUrl);
+    args.push('--proxy-server=' + proxyUrl);
+  }
+  // 打开 Discord
+  args.push('https://discord.com/app');
 
-  // 🆕 v1.8.7: 纯手工 —— 不挂 route / 不注入 initScript / 不 setExtraHTTPHeaders
-  // buildLaunchOpts 已自动应用系统 Chrome + --disable-enable-automation + ignoreDefaultArgs
-  const context = await chromium.launchPersistentContext(userDataDir, launchOpts);
-  const page = context.pages()[0] || await context.newPage();
-  // 🆕 v1.8.8: 自动打开 Discord（公开 URL，不影响反作弊）
-  page.goto("https://discord.com/app").catch(() => {});
+  // spawn 启动，detached=true 让 Chrome 独立于 node 进程
+  console.log('[Browser] 🚀 shell spawn 系统 Chrome: ' + chromePath);
+  console.log('[Browser]    args: ' + args.join(' '));
+  const child = spawn(chromePath, args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: false,
+  });
+  child.unref();  // 不阻塞 node 进程退出
 
-  console.log('[Browser] ✅ Chrome 已打开 🆓 fingerprint=' + fp.fingerprintId +
-              ' executable=' + (launchOpts.executablePath ? 'SYSTEM_CHROME' : 'Playwright_Chromium'));
-  return { context, page };
+  console.log('[Browser] ✅ Chrome 已启动 🆓 (pid=' + child.pid + ', profile=' + userDataDir + ')');
+
+  // 返回简化对象（index.js LAUNCH_BROWSER case 会读 context → 这里给个空对象）
+  // 后续 extractAccountFromContext 会失败（没有 Playwright context），但 index.js 里我们已经改了不调它
+  return { context: null, page: null, pid: child.pid };
 }
-
-/**
- * extractAccountFromContext —— 从已打开浏览器提取账号信息（v2: 增加 fingerprint 记录）
- */
 async function extractAccountFromContext(context) {
   const pages = context.pages();
   const page = pages.find(p => (p.url() || '').includes('discord')) || pages[0];
