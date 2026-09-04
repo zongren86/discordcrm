@@ -78,9 +78,6 @@
         <el-table-column label="关联用户账号" min-width="140">
           <template #default="{ row }">
             <div v-if="row.agentName" class="agent-cell">
-              <el-avatar :size="24" class="agent-avatar-mini" :style="{ background: 'linear-gradient(135deg, var(--color-primary), var(--color-pink))' }">
-                {{ (row.agentName || '?').charAt(0).toUpperCase() }}
-              </el-avatar>
               <span class="agent-name">{{ row.agentName }}</span>
             </div>
             <span v-else class="no-agent">-</span>
