@@ -349,11 +349,11 @@
             </div>
             <div class="stat-info">
               <div class="stat-values">
-                <span class="stat-current">{{ currentProgressTask.totalRespondedMembers || 0 }}</span>
+                <span class="stat-current">{{ currentProgressTask.membersUnique || 0 }}</span>
                 <span class="stat-sep">/</span>
-                <span class="stat-total">{{ currentProgressTask.maxRequests || 0 }}</span>
+                <span class="stat-total">{{ currentProgressTask.maxMembers || '-' }}</span>
               </div>
-              <div class="stat-label">已采集 / 总采集数</div>
+              <div class="stat-label">已采集 / 采集上限</div>
             </div>
           </div>
 
