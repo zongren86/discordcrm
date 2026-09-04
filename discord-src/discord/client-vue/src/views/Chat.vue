@@ -5794,8 +5794,14 @@ video.msg-gif-img {
   background: var(--color-bg-3);
   box-shadow: none !important;
   border-radius: 6px;
+  font-size: 12px;
 }
-.lang-select :deep(.el-select__selected-item) {
+.lang-select :deep(.el-select__selected-item),
+.lang-select :deep(.el-select__placeholder),
+.lang-select :deep(.el-select__selected-item span),
+.lang-select :deep(.el-select__suffix),
+.lang-select :deep(.el-select__arrow) {
+  font-size: 12px;
   color: var(--color-text);
 }
 .lang-select :deep(.el-option),
