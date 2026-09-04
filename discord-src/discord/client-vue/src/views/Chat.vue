@@ -443,8 +443,13 @@
                         </button>
                       </el-tooltip>
                     </div>
+                    <!-- 发送中的 pending 消息占位 -->
+                    <div v-if="msg.isPending" class="msg-gif-loading">
+                      <div class="loading-spinner"></div>
+                      <span class="pending-label">{{ msg.pendingTitle || '发送中...' }}</span>
+                    </div>
                     <!-- klipy.com页面URL解析中显示加载状态 -->
-                    <div v-if="isPageUrl(gifUrlOf(msg)) && msg.gifUrl && !isGifUrlResolved(msg.gifUrl)" class="msg-gif-loading">
+                    <div v-else-if="isPageUrl(gifUrlOf(msg)) && msg.gifUrl && !isGifUrlResolved(msg.gifUrl)" class="msg-gif-loading">
                       <div class="loading-spinner"></div>
                       <span>加载中...</span>
                     </div>
@@ -2871,15 +2876,40 @@ async function sendGifFromFavorite(favorite) {
   if (!favorite || !conversations.currentConversationId) return
   if (sendingGif.value) return
   sendingGif.value = true
-  
+
+  const convId = conversations.currentConversationId
+  const pendingId = 'pending-' + Date.now()
+
+  // 先插入占位消息（让用户立即看到发送中）
+  const pendingMsg = {
+    id: pendingId, direction: 'OUTBOUND',
+    content: favorite.gifUrl, gifUrl: favorite.gifUrl,
+    isPending: true, pendingTitle: favorite.title || 'GIF',
+    createdAt: new Date().toISOString()
+  }
+  conversations.appendMessage(convId, pendingMsg)
+
   try {
-    await sendGifMessageApi(conversations.currentConversationId, favorite.gifUrl, favorite.title)
+    const realMsg = await sendGifMessageApi(convId, favorite.gifUrl, favorite.title)
+    // 用真实数据替换占位
+    const msgs = [...(conversations.messagesMap[convId] || [])]
+    const idx = msgs.findIndex(m => m.id === pendingId)
+    if (idx >= 0) {
+      msgs.splice(idx, 1, { ...realMsg })
+      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+    }
     gifPickerVisible.value = false
-    // 等待消息加载到列表后再滚动到底部
     await nextTick()
     await nextTick()
     scrollToBottom({ force: true })
   } catch (e) {
+    // 失败：删除占位
+    const msgs = [...(conversations.messagesMap[convId] || [])]
+    const idx = msgs.findIndex(m => m.id === pendingId)
+    if (idx >= 0) {
+      msgs.splice(idx, 1)
+      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+    }
     console.error('发送GIF失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，文件可能过大，请选择较小的动图')
@@ -2899,16 +2929,41 @@ async function sendStickerFromFavorite(fav) {
   if (!fav || !fav.gifUrl) return
   if (sendingGif.value) return
   sendingGif.value = true
-  
+
+  const convId = conversations.currentConversationId
+  const pendingId = 'pending-' + Date.now()
+  const url = fav.gifUrl || fav.resolvedUrl || fav.favDisplayUrl || fav.convertedGifUrl
+
+  // 先插入占位消息
+  const pendingMsg = {
+    id: pendingId, direction: 'OUTBOUND',
+    content: url, gifUrl: url,
+    isPending: true, pendingTitle: fav.title || 'Sticker',
+    createdAt: new Date().toISOString()
+  }
+  conversations.appendMessage(convId, pendingMsg)
+
   try {
-    const url = fav.gifUrl || fav.resolvedUrl || fav.favDisplayUrl || fav.convertedGifUrl
-    await sendGifMessageApi(conversations.currentConversationId, url, fav.title || 'Sticker')
+    const realMsg = await sendGifMessageApi(convId, url, fav.title || 'Sticker')
+    // 用真实数据替换占位
+    const msgs = [...(conversations.messagesMap[convId] || [])]
+    const idx = msgs.findIndex(m => m.id === pendingId)
+    if (idx >= 0) {
+      msgs.splice(idx, 1, { ...realMsg })
+      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+    }
     gifPickerVisible.value = false
-    // 等待消息加载到列表后再滚动到底部
     await nextTick()
     await nextTick()
     scrollToBottom({ force: true })
   } catch (e) {
+    // 失败：删除占位
+    const msgs = [...(conversations.messagesMap[convId] || [])]
+    const idx = msgs.findIndex(m => m.id === pendingId)
+    if (idx >= 0) {
+      msgs.splice(idx, 1)
+      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+    }
     console.error('发送Sticker失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，请重试')
@@ -5484,6 +5539,11 @@ video.msg-gif-img {
   font-size: 14px;
 }
 
+.pending-label {
+  font-size: 12px;
+  color: var(--color-text-3);
+  margin-left: 6px;
+}
 .loading-spinner {
   width: 32px;
   height: 32px;
