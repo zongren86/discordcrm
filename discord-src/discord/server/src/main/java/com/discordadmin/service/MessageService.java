@@ -1500,7 +1500,7 @@ private boolean isLocalUploadUrl(String url) {
                             account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
                     log.info("[Agent路由] 发Sticker走 agent taskId={}, account={}, channel={}",
                             task.getId(), account.getName(), conversation.getChannelId());
-                    String resultJson = agentTaskService.waitForTaskResult(task.getId(), 15000);
+                    String resultJson = agentTaskService.waitForTaskResult(task.getId(), 90000);
                     com.fasterxml.jackson.databind.JsonNode r = om.readTree(resultJson);
                     discordMessageId = r.path("discordMessageId").asText(null);
                     if (discordMessageId == null) {
@@ -1664,7 +1664,7 @@ private boolean isLocalUploadUrl(String url) {
             log.info("[AgentGIF] taskId={}, account={}, url={}, size={}KB",
                     task.getId(), account.getName(), url, data.length / 1024);
 
-            String resultJson = agentTaskService.waitForTaskResult(task.getId(), 30000);
+            String resultJson = agentTaskService.waitForTaskResult(task.getId(), 90000);
             com.fasterxml.jackson.databind.JsonNode r = om.readTree(resultJson);
             String discordMessageId = r.path("discordMessageId").asText(null);
             String cdnUrl = r.path("cdnUrl").asText(null);

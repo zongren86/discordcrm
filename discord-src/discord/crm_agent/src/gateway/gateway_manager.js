@@ -78,8 +78,13 @@ class GatewayConnection {
 
   _fetchGatewayUrl() {
     return new Promise((resolve, reject) => {
-      const req = https.get('https://discord.com/api/v' + GATEWAY_VERSION + '/gateway/bot', {
-        headers: { Authorization: 'Bot ' + this.token },
+      // USER token (我们用的) → /gateway, 无前缀
+      // Bot token             → /gateway/bot, 加 "Bot " 前缀
+      // 401 或 r.url=undefined 都说明接口/类型不匹配
+      const gwPath = '/gateway';
+      const authHeader = this.token.startsWith('Bot ') ? this.token : this.token;
+      const req = https.get('https://discord.com/api/v' + GATEWAY_VERSION + gwPath, {
+        headers: { Authorization: authHeader },
         timeout: 5000,
       }, (res) => {
         let data = '';
@@ -87,8 +92,16 @@ class GatewayConnection {
         res.on('end', () => {
           try {
             const r = JSON.parse(data);
+            if (res.statusCode !== 200) {
+              reject(new Error('gateway API HTTP ' + res.statusCode + ': ' + (r.message || data.slice(0,100))));
+              return;
+            }
+            if (!r.url) {
+              reject(new Error('gateway response missing url (token type mismatch?): ' + JSON.stringify(r).slice(0,100)));
+              return;
+            }
             resolve(r.url);
-          } catch { reject(new Error('invalid gateway response')); }
+          } catch { reject(new Error('invalid gateway response: ' + data.slice(0,100))); }
         });
       });
       req.on('error', reject);

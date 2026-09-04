@@ -5659,7 +5659,11 @@ video.msg-gif-img {
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 12px;
 }
+.toolbar-right .el-button { font-size: 12px; }
+.toolbar-right .el-select { font-size: 12px; }
+.toolbar-right .el-select .el-input__inner { font-size: 12px; }
 
 .toolbar-btn {
   background: var(--color-bg-3);
