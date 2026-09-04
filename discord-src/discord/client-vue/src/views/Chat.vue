@@ -1797,11 +1797,10 @@ function isGifMsg(msg) {
 
 /** 判断是否为纯图片消息（只有图片附件，无实质文本内容） */
 function isImageOnlyMsg(msg) {
-  if (!msg) return false
+  if (!msg) { return false }
   const imgs = imageAttachmentsOf(msg)
-  if (imgs.length === 0) return false
+  if (imgs.length === 0) { return false }
   // 两个文本字段都要检查
-  const text = (msg.content?.trim() || '') + ' ' + (msg.translatedContent?.trim() || '')
   const placeholderRegex = /^\s*(\[图片消息\]|\[图片\]|\[GIF\]|\[语音消息\]|\[Sticker\]|\[附件消息\]|\[Attachment\])\s*$/
   // 两边都是空 或 都是占位符 → 纯图片
   const contentOnly = msg.content?.trim() || ''
