@@ -475,7 +475,7 @@ public class AgentServerController {
             }
         } catch (Exception ignored) {}
         // 3️⃣ 最后兜底：返回硬编码版本（和 build.sh 同步）
-        return "1.8.10";
+        return "1.9.2";
     }
 
     private String extractVersion(String json) {
