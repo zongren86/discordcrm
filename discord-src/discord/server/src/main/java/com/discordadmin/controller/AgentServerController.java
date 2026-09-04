@@ -471,9 +471,8 @@ public class AgentServerController {
                 } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {}
-<<<<<<< Updated upstream
         // 3️⃣ 最后兜底：返回硬编码版本（和 build.sh 同步）
-        return "1.8.7";
+        return "unknown";
     }
 
     private String extractVersion(String json) {
@@ -486,9 +485,6 @@ public class AgentServerController {
         int q2 = json.indexOf('"', q1 + 1);
         if (q2 <= q1) return null;
         return json.substring(q1 + 1, q2);
-=======
-        return "unknown";
->>>>>>> Stashed changes
     }
     /** 把 crm_agent 目录打包成 zip（排除 node_modules / data / .git 等） */
     private byte[] buildZip(Path sourceDir) throws IOException {
@@ -505,13 +501,14 @@ public class AgentServerController {
                         for (String skip : skipDirs) {
                             if (relStr.equals(skip) || relStr.startsWith(skip + "/")) return;
                         }
-<<<<<<< Updated upstream
                         // 排除文件（和手动 zip 打包保持一致）
                         String[] skipFiles = {
                             ".DS_Store",           // macOS 垃圾
                             "README.md",           // 有 README_INSTALL.txt
                             "agent.log",           // 运行时文件
                             "server.js",           // 旧启动脚本（如有）
+                            "package-lock.json",   // 锁文件
+                            "config.json",         // 用户配置（含 token）
                         };
                         for (String skip : skipFiles) {
                             if (relStr.equals(skip)) return;
@@ -520,26 +517,6 @@ public class AgentServerController {
                         if (relStr.startsWith(".")) return;
                         // 排除 .bak 备份文件（任意层级的 *.bak, *.bak2, *.v1.bak 等）
                         if (relStr.endsWith(".bak") || relStr.contains(".bak.") || relStr.contains(".bak2")) return;
-=======
-                        // 排除文件（精确名）
-                        String[] skipFiles = {".DS_Store", "package-lock.json"};
-                        // 排除后缀（通配）
-                        String[] skipSuffixes = {".bak", ".bak.1", ".orig", ".swp"};
-                        Path fnObj = p.getFileName();
-                        if (fnObj != null) {
-                            String fname = fnObj.toString();
-                            // 精确文件名
-                            for (String skip : skipFiles) {
-                                if (fname.equals(skip)) return;
-                            }
-                            // 后缀
-                            for (String suffix : skipSuffixes) {
-                                if (fname.endsWith(suffix)) return;
-                            }
-                            // 所有层级的隐藏文件都排除
-                            if (fname.startsWith(".")) return;
-                        }
->>>>>>> Stashed changes
                         // 空目录跳过
                         if (Files.isDirectory(p)) return;
 
