@@ -45,10 +45,10 @@ async function heartbeat() {
       nodeVersion: process.version,
       agentVersion: AGENT_VERSION,
       browserType: (cfg.browser && cfg.browser.type) || 'chromium',
-      // 🛡️ 反作弊: 上报系统状态
-      gatewayStatus: gatewayManager.getAllStatus(),
-      networkStatus: networkGate.getStatusSummary(),
-      schedulerStatus: scheduler.getStatus(),
+      // 🛡️ 反作弊: 上报系统状态（JSON.stringify 成字符串 — 后端接收 Map<String,String>）
+      gatewayStatus: JSON.stringify(gatewayManager.getAllStatus()),
+      networkStatus: JSON.stringify(networkGate.getStatusSummary()),
+      schedulerStatus: JSON.stringify(scheduler.getStatus()),
     });
     if (!heartbeatOk) {
       heartbeatOk = true;
