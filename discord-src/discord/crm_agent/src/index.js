@@ -34,7 +34,7 @@ console.log(`[配置] serverUrl=${cfg.serverUrl}  agentName=${cfg.agentName || '
 let heartbeatOk = false;
 let busy = false;
 let currentTaskId = null;
-const browserOpenAccounts = new Set();  // 浏览器唤起中 → 暂停该账号的 API 轮询（防双通道风控）
+const browserOpenAccounts = new Set();  // 浏览器唤起中的账号集合（仅状态标记，不再暂停轮询 — 同IP同通道不触发风控）
 
 async function heartbeat() {
   try {
@@ -185,12 +185,12 @@ async function executeTask(task) {
           });
           console.log('[任务] ✅ 浏览器已打开');
 
-          // ⚠️ 关键: 浏览器打开时暂停该账号的消息轮询
-          // 用户在浏览器里手动操作（加好友等）走 Cookie session
-          // agent 后台轮询走 API token → 同账号同IP双通道会触发 Discord 风控
+          // 💡 状态标记: 记录哪些账号的 Chrome 被 LAUNCH_BROWSER 唤起了
+          // 注意: 不再暂停消息轮询 — Discord 官方客户端也是 WebSocket + REST 同时用
+          // 真正触发风控的是多 IP 同时用、异常行为模式、自动化痕迹
           if (accountId) {
             browserOpenAccounts.add(accountId);
-            console.log(`[风控] 账号 ${accountId} 浏览器打开中 → 暂停消息轮询`);
+            console.log(`[状态] 账号 ${accountId} Chrome 已唤起（不暂停消息轮询）`);
           }
 
           // ⚡ 关键: 唤起后自动扫描当前 token，上报后端更新
@@ -244,7 +244,7 @@ async function executeTask(task) {
             } catch {}
             if (accountId) {
               browserOpenAccounts.delete(accountId);
-              console.log(`[风控] 账号 ${accountId} 浏览器已关闭 → 恢复消息轮询`);
+              console.log(`[状态] 账号 ${accountId} Chrome 已关闭`);
             }
           })();
           break;
@@ -790,7 +790,7 @@ async function pollMessages() {
   pollInProgress = true;
   try {
     // 过滤掉 token 失效账号（标记后 24h 自动冷却重试）
-    const validAccounts = managedAccounts.filter(acc => !tokenInvalidAccounts.has(acc.id) && !browserOpenAccounts.has(acc.id));
+    const validAccounts = managedAccounts.filter(acc => !tokenInvalidAccounts.has(acc.id));  // browserOpenAccounts 不再过滤 — 浏览器打开时继续轮询
     if (validAccounts.length === 0) return;
     // 并发 10（防风控又保证速度，Discord rate limit 50/channel，10账号×20channel=200<阈值）
     await pool(validAccounts, 10, pollOneAccount);
