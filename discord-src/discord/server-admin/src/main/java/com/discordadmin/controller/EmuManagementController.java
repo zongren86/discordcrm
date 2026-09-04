@@ -394,14 +394,17 @@ public class EmuManagementController {
     }
 
     /**
-     * 全部停止自动加好友
+     * 全部停止自动加好友 — 清空 nextAddAt + 停模拟器
      */
     @PostMapping("/autoadd/stopAll")
     public Map<String, Object> stopAllAutoAdd() {
+        // 1. 改 DB（autoRunning=false, nextAddAt=null, status=STOPPED）+ 通过 Agent 发 BATCH_STOP
+        instanceService.stopAllAutoAdd();
+        // 2. 停调度线程
         autoAddDispatcher.stopAllAutoAddTask();
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
-        result.put("message", "任务已停止");
+        result.put("message", "已停止所有自动加好友并关闭模拟器");
         return result;
     }
 

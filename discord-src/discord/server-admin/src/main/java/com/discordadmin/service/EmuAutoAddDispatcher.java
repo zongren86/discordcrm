@@ -434,16 +434,17 @@ public class EmuAutoAddDispatcher {
         successCount.set(0);
         failCount.set(0);
         
-        // 重置所有模拟器的 autoRunning 状态
+        // 重置所有模拟器的 autoRunning + 清空 nextAddAt
         try {
             List<EmuInstance> all = instanceRepository.findAll();
             for (EmuInstance emu : all) {
-                if (Boolean.TRUE.equals(emu.getAutoRunning())) {
+                if (Boolean.TRUE.equals(emu.getAutoRunning()) || emu.getNextAddAt() != null) {
                     emu.setAutoRunning(false);
+                    emu.setNextAddAt(null);
                     instanceRepository.save(emu);
                 }
             }
-            log.info("已重置所有模拟器的自动加好友标记");
+            log.info("已重置所有模拟器的自动加好友标记并清空下次添加时间");
         } catch (Exception e) {
             log.warn("重置模拟器状态失败", e);
         }
