@@ -10,6 +10,7 @@ import com.discordadmin.repository.EmuInstanceRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -32,7 +33,7 @@ public class CloudWebSocketService extends TextWebSocketHandler {
     private final AgentRepository agentEntityRepository;
     private final EmuInstanceRepository instanceRepository;
 
-    @Autowired
+    @Lazy @Autowired
     private com.discordadmin.discord.member.DiscordMemberService discordMemberService;
     @Autowired
     private com.discordadmin.repository.DiscordAccountRepository discordAccountRepository;

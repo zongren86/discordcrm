@@ -47,7 +47,7 @@ public class DiscordMemberService {
     private final FetchProgressRepository fetchProgressRepository;
     private final FriendRepository friendRepository;
 
-    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy @org.springframework.beans.factory.annotation.Autowired
     private com.discordadmin.service.CloudWebSocketService cloudWebSocketService;
     @org.springframework.beans.factory.annotation.Autowired
     private com.discordadmin.repository.DiscordAccountRepository discordAccountRepository;
