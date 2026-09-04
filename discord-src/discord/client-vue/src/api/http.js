@@ -13,6 +13,8 @@ const http = axios.create({
 // ============ 全局连接状态监控 ============
 let networkErrorCount = 0          // 累计网络错误次数
 let disconnectBannerShown = false  // 是否已弹断连提示
+let _isLoggingOut = false                    // 防止并发 401 重复 forceLogout
+let _last401At = 0                           // 最近一次 401 时间戳
 let longDisconnectLoggedOut = false  // 长时间断连已自动登出
 
 const NETWORK_ERROR_TYPES = ['Network Error', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'timeout', 'ERR_NETWORK', 'ERR_CONNECTION']
@@ -75,8 +77,17 @@ function startConnectionMonitor() {
 }
 
 function forceLogout(msg) {
+  // 🔒 锁: 3 秒内只执行一次, 其他 401 静默丢弃
+  const now = Date.now()
+  if (_isLoggingOut || (now - _last401At < 3000)) {
+    console.log('[forceLogout] 已在登出中, 跳过')
+    return
+  }
+  _isLoggingOut = true
+  _last401At = now
+
   longDisconnectLoggedOut = true
-  disconnectBannerShown = true  // 防止 401 时又弹一次 banner
+  disconnectBannerShown = true
   try {
     const auth = useAuthStore()
     auth.logout()
@@ -86,10 +97,13 @@ function forceLogout(msg) {
     localStorage.removeItem('crm_permissions')
     localStorage.removeItem('crm_menu_paths')
   }
-  ElMessage.error(msg)
+  // ✅ 只弹一次, 后续并发 401 静默
+  ElMessage.error(msg, { duration: 4000 })
   if (router.currentRoute.value.name !== 'Login') {
     router.replace('/login')
   }
+  // 3 秒后解锁 (防止手动刷新登录页后状态残留)
+  setTimeout(() => { _isLoggingOut = false }, 3000)
 }
 
 // 请求拦截器：附加 Bearer Token
@@ -122,7 +136,16 @@ http.interceptors.response.use(
     const msg = data?.message || data?.error || error.message || '请求失败'
 
     if (status === 401) {
+      // 如果 token 已被清 (正在登出中), 静默吞掉 — 不弹任何东西
+      if (!localStorage.getItem('crm_token') || _isLoggingOut) {
+        console.warn('[401] 已在登出中, 静默忽略 (msg=' + msg.slice(0,60) + ')')
+        return Promise.reject(error)  // reject 但不弹 ElMessage
+      }
       forceLogout('登录已过期，请重新登录')
+    } else if (_isLoggingOut) {
+      // 登出中, 静默吞掉所有后续错误 (防止刷新/重定向时 timer 继续发请求刷屏)
+      console.warn('[HTTP] 登出中, 静默忽略 error status=' + status + ' msg=' + msg.slice(0,40))
+      return Promise.reject(error)
     } else if (isNetworkError(error)) {
       // 后端不可达（重启中 / 已挂 / 网络断）
       networkErrorCount++
