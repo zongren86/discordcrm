@@ -687,16 +687,43 @@ async function pollOneAccount(acc, channelLimit) {
   }
 }
 
+let pollTickCount = 0;
+let pollTickLastPrint = 0;
+
 async function pollMessages() {
-  if (managedAccounts.length === 0) return;
+  if (managedAccounts.length === 0) {
+    // 每 30s 打一次空账号提示
+    const now = Date.now();
+    if (now - pollTickLastPrint > 30000) {
+      console.warn('[消息轮询] ⚠️ managedAccounts 为空，跳过本轮（后端还没分配账号？）');
+      pollTickLastPrint = now;
+    }
+    return;
+  }
   if (pollInProgress) return;  // 防重入：上一轮还没跑完就跳过本轮
   pollInProgress = true;
   try {
     // 过滤掉 token 失效账号（标记后 24h 自动冷却重试）
     const validAccounts = managedAccounts.filter(acc => !tokenInvalidAccounts.has(acc.id) && !browserOpenAccounts.has(acc.id));
-    if (validAccounts.length === 0) return;
+    if (validAccounts.length === 0) {
+      const now = Date.now();
+      if (now - pollTickLastPrint > 30000) {
+        console.warn(`[消息轮询] ⚠️ ${managedAccounts.length} 个账号全部跳过 (${tokenInvalidAccounts.size}个token失效, ${browserOpenAccounts.size}个浏览器唤起中)`);
+        pollTickLastPrint = now;
+      }
+      return;
+    }
+    // 每 30s 打一次 tick（避免刷屏）
+    pollTickCount++;
+    const now = Date.now();
+    if (now - pollTickLastPrint > 30000) {
+      console.log(`[消息轮询] ⏱️ tick #${pollTickCount}  处理 ${validAccounts.length}/${managedAccounts.length} 账号  (${tokenInvalidAccounts.size}个失效)`);
+      pollTickLastPrint = now;
+    }
     // 并发 10（防风控又保证速度，Discord rate limit 50/channel，10账号×20channel=200<阈值）
     await pool(validAccounts, 10, pollOneAccount);
+  } catch (poolErr) {
+    console.error('[消息轮询] ❌ pool 异常:', poolErr.message);
   } finally {
     pollInProgress = false;
   }
