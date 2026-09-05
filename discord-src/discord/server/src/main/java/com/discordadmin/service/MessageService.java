@@ -1676,12 +1676,13 @@ private boolean isLocalUploadUrl(String url) {
         // Discord Sticker CDN URL：提取stickerId，通过原生API发送，Discord会渲染为动画
         boolean isDiscordStickerUrl = gifUrl != null && 
             gifUrl.toLowerCase().contains("cdn.discordapp.com/stickers");
+        // ★ 在外层提前提取 stickerId（保存消息时需要，且仅当 isDiscordStickerUrl=true 时使用）
+        String stickerId = isDiscordStickerUrl ? extractStickerId(gifUrl) : null;
 
         boolean isLocalUpload = isLocalUploadUrl(gifUrl);
 
         if (isDiscordStickerUrl) {
-            // Sticker CDN URL：提取stickerId，使用原生sticker_ids API发送
-            String stickerId = extractStickerId(gifUrl);
+            // Sticker CDN URL：使用原生sticker_ids API发送
             log.info("发送Discord Sticker, id={}, url={}", stickerId, gifUrl);
             if ("AGENT".equals(account.getSource()) && account.getAgentServerId() != null) {
                 // ✅ 代理模式采集的账号 —— 从 agent 机器发
@@ -1772,6 +1773,23 @@ private boolean isLocalUploadUrl(String url) {
         }
 
         // 保存消息记录（先查重，避免唯一索引冲突）
+        // ★ 根据 URL 类型决定 messageType：Discord Sticker URL -> "sticker"，其余 -> "gif"
+        String finalMessageType = isDiscordStickerUrl ? "sticker" : "gif";
+        // ★ 构建 stickerItemsJson（Sticker 类型消息必须有此字段，前端才能正确渲染 Lottie 动画）
+        String finalStickerItemsJson = null;
+        if (isDiscordStickerUrl && stickerId != null) {
+            String lowerUrl = discordAttachmentUrl != null ? discordAttachmentUrl.toLowerCase() : gifUrl.toLowerCase();
+            int formatType = lowerUrl.endsWith(".json") || lowerUrl.contains(".json?") ? 3
+                    : (lowerUrl.endsWith(".gif") || lowerUrl.contains(".gif?") ? 4 : 1);
+            String assetUrl = lowerUrl.endsWith(".json") || lowerUrl.contains(".json?")
+                    ? "https://cdn.discordapp.com/stickers/" + stickerId + ".json"
+                    : "https://cdn.discordapp.com/stickers/" + stickerId;
+            try {
+                finalStickerItemsJson = "[{\"id\":\"" + stickerId + "\",\"name\":\"Sticker\",\"formatType\":" + formatType
+                        + ",\"assetUrl\":\"" + assetUrl + "\"}]";
+            } catch (Exception ignored) {}
+        }
+
         Message saved;
         if (discordMessageId != null) {
             // 检查是否已存在该消息（防止重复保存）
@@ -1784,9 +1802,10 @@ private boolean isLocalUploadUrl(String url) {
                 message.setConversation(conversation);
                 message.setDirection(Message.Direction.OUTBOUND);
                 message.setSenderName(account.getName());
-                message.setContent("");
-                message.setMessageType("gif");
+                message.setContent(isDiscordStickerUrl ? "[Sticker]" : "");
+                message.setMessageType(finalMessageType);
                 message.setGifUrl(discordAttachmentUrl);
+                message.setStickerItemsJson(finalStickerItemsJson);
                 Instant now = Instant.now();
                 message.setDiscordCreatedAt(now);
                 message.setCreatedAt(now);
@@ -1798,9 +1817,10 @@ private boolean isLocalUploadUrl(String url) {
             message.setConversation(conversation);
             message.setDirection(Message.Direction.OUTBOUND);
             message.setSenderName(account.getName());
-            message.setContent("");
-            message.setMessageType("gif");
+            message.setContent(isDiscordStickerUrl ? "[Sticker]" : "");
+            message.setMessageType(finalMessageType);
             message.setGifUrl(discordAttachmentUrl);
+            message.setStickerItemsJson(finalStickerItemsJson);
             Instant now = Instant.now();
             message.setDiscordCreatedAt(now);
             message.setCreatedAt(now);

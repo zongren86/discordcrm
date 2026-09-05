@@ -330,9 +330,20 @@ export const useConversationsStore = defineStore('conversations', {
     },
     // === WebSocket 推送调用 ===
     appendMessage(convId, msg) {
-      if (!msg || !msg.id) return
+      if (!msg) return
+      // ★ 允许无 id 的消息也能通过 discordMessageId 或 content 去重（某些 WS 推送可能暂时无 id）
       const existing = [...(this.messagesMap[convId] || [])]  // 创建副本以触发响应式
-      const idx = existing.findIndex(m => m.id === msg.id || (m.discordMessageId && msg.discordMessageId && m.discordMessageId === msg.discordMessageId))
+      const idx = existing.findIndex(m => {
+        // 优先用稳定主键去重
+        if (msg.id != null && m.id === msg.id) return true
+        if (msg.discordMessageId && m.discordMessageId && m.discordMessageId === msg.discordMessageId) return true
+        // fallback: 同方向 + 同时间戳 + 同内容/gifUrl 视为同一条
+        if (msg.direction && m.direction === msg.direction
+            && msg.discordCreatedAt && m.discordCreatedAt
+            && new Date(m.discordCreatedAt).getTime() === new Date(msg.discordCreatedAt).getTime()
+            && ((msg.content && m.content === msg.content) || (msg.gifUrl && m.gifUrl === msg.gifUrl))) return true
+        return false
+      })
       if (idx >= 0) {
         // 相同ID消息：UPDATE而非SKIP（用于翻译结果回填、ASR完成等场景）
         // 使用splice确保Vue检测到数组元素变化

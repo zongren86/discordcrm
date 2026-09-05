@@ -2939,13 +2939,18 @@ async function sendGifFromFavorite(favorite) {
 
   try {
     const realMsg = await sendGifMessageApi(convId, favorite.gifUrl, favorite.title)
-    // 用真实数据替换占位
-    const msgs = [...(conversations.messagesMap[convId] || [])]
-    const idx = msgs.findIndex(m => m.id === pendingId)
-    if (idx >= 0) {
-      msgs.splice(idx, 1, { ...realMsg })
+    // 先删除 pending 占位（无论是否存在），再用 appendMessage（内部有 discordMessageId 去重，防止 WebSocket 重复）
+    {
+      const msgs = [...(conversations.messagesMap[convId] || [])]
+      // 修复竞态: 只匹配确定的 pendingId
+    const pendingIdx = msgs.findIndex(m => m.id === pendingId)
+    if (pendingIdx >= 0) {
+      msgs.splice(pendingIdx, 1)
       conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
     }
+    }
+    await nextTick()
+    conversations.appendMessage(convId, realMsg)
     gifPickerVisible.value = false
     await nextTick()
     await nextTick()
@@ -2993,13 +2998,18 @@ async function sendStickerFromFavorite(fav) {
 
   try {
     const realMsg = await sendGifMessageApi(convId, url, fav.title || 'Sticker')
-    // 用真实数据替换占位
-    const msgs = [...(conversations.messagesMap[convId] || [])]
-    const idx = msgs.findIndex(m => m.id === pendingId)
-    if (idx >= 0) {
-      msgs.splice(idx, 1, { ...realMsg })
+    // 先删除 pending 占位（无论是否存在），再用 appendMessage（内部有 discordMessageId 去重，防止 WebSocket 重复）
+    {
+      const msgs = [...(conversations.messagesMap[convId] || [])]
+      // 修复竞态: 只匹配确定的 pendingId
+    const pendingIdx = msgs.findIndex(m => m.id === pendingId)
+    if (pendingIdx >= 0) {
+      msgs.splice(pendingIdx, 1)
       conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
     }
+    }
+    await nextTick()
+    conversations.appendMessage(convId, realMsg)
     gifPickerVisible.value = false
     await nextTick()
     await nextTick()
@@ -3165,6 +3175,8 @@ async function selectConversation(c) {
   }
   await nextTick()
   _keepScrolling()
+  // 切换好友后确保 Lottie Sticker 动画初始化（覆盖 watch 时序不可靠的场景）
+  nextTick(() => initPendingLottieAnimations())
 }
 
 async function loadUserProfile(c) {
