@@ -445,31 +445,43 @@ async function fetchDmChannels(token) {
  *    必须加 Content-Length header 确保 Discord 正确接收完整请求体
  */
 /**
- * ★ 手动构建 multipart/form-data —— 不依赖 form-data 包
- *    form-data v4 的 getBuffer()/pipe() 在某些环境（Windows + 代理）下会丢失字段
- *    手动构建最可控：每个 boundary 分隔符、每个字段名、每个文件名都精确控制
+ * 发送带附件的消息（multipart/form-data）
+ * Discord API v10 多附件格式（参考 @discordjs/rest web.js）：
+ *   - payload_json 字段包含 JSON body：{ content, attachments: [{ id, filename }] }
+ *   - 文件字段名: files[0], files[1], ... (不是多次 file)
+ *   - attachments[i].id = i.toString() 对应 files[N] 中的 N
+ *
+ * files: [{ filename, contentType, dataBase64 }]
  */
 async function sendMessageWithFiles(token, channelId, content, files) {
   const https = require('https');
   const { URL } = require('url');
   const crypto = require('crypto');
 
+  // 构建 payload_json（Discord REST 标准格式）
+  const attachments = files.map((f, i) => ({
+    id: String(i),
+    filename: f.filename || `file_${i}`,
+  }));
+  const payloadBody = {};
+  if (content) payloadBody.content = content;
+  payloadBody.attachments = attachments;
+  const payloadJson = JSON.stringify(payloadBody);
+
   // 生成 boundary（16字节随机hex）
   const boundary = '----DiscordBoundary' + crypto.randomBytes(8).toString('hex');
   const CRLF = '\r\n';
   const parts = [];
 
-  // 1. content 字段（文本部分）
-  if (content) {
-    const header = Buffer.from(
-      `--${boundary}${CRLF}` +
-      `Content-Disposition: form-data; name="content"${CRLF}${CRLF}`
-    );
-    const body = Buffer.from(content, 'utf8');
-    parts.push(header, body, Buffer.from(CRLF));
-  }
+  // 1. payload_json 字段（整个消息 body 的 JSON 字符串）
+  const payloadHeader = Buffer.from(
+    `--${boundary}${CRLF}` +
+    `Content-Disposition: form-data; name="payload_json"${CRLF}` +
+    `Content-Type: application/json${CRLF}${CRLF}`
+  );
+  parts.push(payloadHeader, Buffer.from(payloadJson, 'utf8'), Buffer.from(CRLF));
 
-  // 2. 每个文件字段
+  // 2. 每个文件字段 —— 关键字段名: files[0], files[1], ...
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     const fileBuf = Buffer.from(f.dataBase64, 'base64');
@@ -477,10 +489,10 @@ async function sendMessageWithFiles(token, channelId, content, files) {
     const contentType = f.contentType || 'application/octet-stream';
     const header = Buffer.from(
       `--${boundary}${CRLF}` +
-      `Content-Disposition: form-data; name="file"; filename="${filename}"${CRLF}` +
+      `Content-Disposition: form-data; name="files[${i}]"; filename="${filename}"${CRLF}` +
       `Content-Type: ${contentType}${CRLF}${CRLF}`
     );
-    console.log(`[sendMessageWithFiles] file[${i}] filename=${filename} size=${fileBuf.length} contentType=${contentType}`);
+    console.log(`[sendMessageWithFiles] files[${i}] filename=${filename} size=${fileBuf.length} contentType=${contentType}`);
     parts.push(header, fileBuf, Buffer.from(CRLF));
   }
 
@@ -491,9 +503,9 @@ async function sendMessageWithFiles(token, channelId, content, files) {
   // 合并所有 parts
   const bodyBuffer = Buffer.concat(parts);
 
-  console.log(`[sendMessageWithFiles] contentBytes=${content ? Buffer.byteLength(content) : 0}, files=${files.length}, totalBytes=${bodyBuffer.length}`);
+  console.log(`[sendMessageWithFiles] files=${files.length}, totalBytes=${bodyBuffer.length}, payloadJson=${payloadJson}`);
 
-  // 发送
+  // 发送 —— 必须走代理（agentOrProxy），否则被 GFW 拦截
   const targetUrl = new URL(`https://discord.com/api/v10/channels/${channelId}/messages`);
   const headers = {
     'Content-Type': `multipart/form-data; boundary=${boundary}`,
@@ -509,7 +521,7 @@ async function sendMessageWithFiles(token, channelId, content, files) {
       port: 443,
       path: targetUrl.pathname,
       headers,
-      timeout: 20000,
+      timeout: 60000,
       agent: agentOrProxy && agentOrProxy.request ? agentOrProxy : undefined,
     }, (res) => {
       const chunks = [];
@@ -519,12 +531,14 @@ async function sendMessageWithFiles(token, channelId, content, files) {
         try {
           const data = JSON.parse(bodyBuf.toString('utf8'));
           if (res.statusCode >= 200 && res.statusCode < 300) {
+            const attCount = Array.isArray(data.attachments) ? data.attachments.length : 0;
+            console.log(`[sendMessageWithFiles] ✅ Discord returned attachments=${attCount} (expected=${files.length})`);
             resolve(data);
           } else {
-            reject(new Error(`HTTP ${res.statusCode}: ${data.message || data.code || bodyBuf.toString().slice(0, 200)}`));
+            reject(new Error(`HTTP ${res.statusCode}: ${data.message || data.code || bodyBuf.toString().slice(0, 300)}`));
           }
         } catch (e) {
-          reject(new Error(`HTTP ${res.statusCode}: ${bodyBuf.toString().slice(0, 200)}`));
+          reject(new Error(`HTTP ${res.statusCode}: ${bodyBuf.toString().slice(0, 300)}`));
         }
       });
     });
