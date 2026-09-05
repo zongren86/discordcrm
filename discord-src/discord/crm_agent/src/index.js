@@ -419,7 +419,7 @@ async function tokenHeartbeat() {
 }
 
 const ACCOUNT_REFRESH_MS = 30000;
-const MSG_POLL_MS = 5000;   // 消息轮询 5s，分层采样 + 并发 5 防风控
+const MSG_POLL_MS = 2000;   // 消息轮询 2s，分层采样 + 并发 10 防风控
 
 // 已经执行过首次历史补拉的账号 ID 集合
 const backfilledAccounts = new Set();
@@ -721,7 +721,7 @@ async function pollMessages() {
       pollTickLastPrint = now;
     }
     // 并发 10（防风控又保证速度，Discord rate limit 50/channel，10账号×20channel=200<阈值）
-    await pool(validAccounts, 10, pollOneAccount);
+    await pool(validAccounts, 20, pollOneAccount);  // 并发 20，支撑 500 账号
   } catch (poolErr) {
     console.error('[消息轮询] ❌ pool 异常:', poolErr.message);
   } finally {
