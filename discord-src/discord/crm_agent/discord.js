@@ -439,13 +439,12 @@ async function fetchDmChannels(token) {
  * files: [{ filename, contentType, dataBase64 }]
  */
 async function sendMessageWithFiles(token, channelId, content, files) {
+  const https = require('https');
   const FormData = require('form-data');
   const fd = new FormData();
   if (content) fd.append('content', content);
 
-  // Discord REST API 多附件格式：
-  // - 用 'file' 字段名（不是 files[0]/files[1]），多次 append 自动成为多附件
-  // - 同时在 JSON body 的 attachments 数组里声明元数据（filename, description, id）
+  // Discord REST API 多附件格式：多次 append('file', ...) → 自动成为多附件
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     const buf = Buffer.from(f.dataBase64, 'base64');
@@ -455,22 +454,79 @@ async function sendMessageWithFiles(token, channelId, content, files) {
     });
   }
 
-  // 用 discordHttp（带代理的 axios 实例），不能用原生 axios，否则请求不走代理被 GFW 拦截
-  const resp = await discordHttp.post(
-    `/channels/${channelId}/messages`,
-    fd.getBuffer(),
-    {
+  // 加 debug: 确认 form-data 里确实有 N 个 file 字段
+  const debugBuf = fd.getBuffer();
+  const fileCountInBuf = (debugBuf.toString().match(/name="file"/g) || []).length;
+  console.log(`[sendMessageWithFiles] files数组=${files.length}, form-data里file字段数=${fileCountInBuf}, 预计Discord收到attachments=${files.length}`);
+  if (fileCountInBuf !== files.length) {
+    console.error(`[sendMessageWithFiles] ❌ 异常! form-data里file字段数(${fileCountInBuf}) != 预期(${files.length})`);
+  }
+
+  const url = `https://discord.com/api/v10/channels/${channelId}/messages`;
+
+  // 用 fd.submit() 原生发送（完全绕开 axios 的 FormData 处理）
+  // 支持代理: options.agent = agentOrProxy (HttpsProxyAgent / SocksProxyAgent)
+  const result = await new Promise((resolve, reject) => {
+    const options = {
+      method: 'POST',
       headers: {
         ...fd.getHeaders(),
         'Authorization': token,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
       timeout: 60000,
-      maxContentLength: 100 * 1024 * 1024, // 100MB
-      maxBodyLength: 100 * 1024 * 1024,
-      _skipTransform: true, // 跳过 convertBigIntsInJson，直接 JSON.parse
+    };
+    // 代理支持
+    if (agentOrProxy && agentOrProxy.request) {
+      options.agent = agentOrProxy;
     }
-  );
-  return resp.data;
+
+    fd.submit(url, options, (err, res) => {
+      if (err) return reject(err);
+      let body = '';
+      res.on('data', c => body += c);
+      res.on('end', () => {
+        if (res.statusCode >= 400) {
+          reject(new Error(`Discord API ${res.statusCode}: ${body.substring(0, 300)}`));
+        } else {
+          try { resolve(JSON.parse(body)); }
+          catch { reject(new Error('JSON parse error: ' + body.substring(0, 200))); }
+        }
+      });
+    });
+  });
+
+  // 兜底: 如果 Discord 返回的 attachments 数量不对，GET 回查一次
+  const discordMsgId = result?.id;
+  const attachCount = result?.attachments?.length || 0;
+  console.log(`[sendMessageWithFiles] Discord返回 attachments=${attachCount}, discordMsgId=${discordMsgId}`);
+
+  if (attachCount < files.length && discordMsgId) {
+    console.warn(`[sendMessageWithFiles] ⚠️ Discord返回attachments(${attachCount}) < 预期(${files.length}), GET回查...`);
+    try {
+      const msgResp = await new Promise((resolve, reject) => {
+        const opts = {
+          method: 'GET',
+          headers: { 'Authorization': token, 'User-Agent': options?.headers?.['User-Agent'] },
+          timeout: 15000,
+        };
+        if (agentOrProxy && agentOrProxy.request) opts.agent = agentOrProxy;
+        https.get(`https://discord.com/api/v10/channels/${channelId}/messages/${discordMsgId}`, opts, (res) => {
+          let body = '';
+          res.on('data', c => body += c);
+          res.on('end', () => { try { resolve(JSON.parse(body)); } catch { reject(new Error(body)); } });
+        }).on('error', reject);
+      });
+      if (msgResp?.attachments?.length > attachCount) {
+        console.log(`[sendMessageWithFiles] ✅ GET回查后得到 attachments=${msgResp.attachments.length}`);
+        result.attachments = msgResp.attachments;
+      }
+    } catch (e) {
+      console.warn(`[sendMessageWithFiles] GET回查失败: ${e.message}`);
+    }
+  }
+
+  return result;
 }
 
 // 暴露当前代理 URL（供 browser.js 启动 Chrome 时用）
