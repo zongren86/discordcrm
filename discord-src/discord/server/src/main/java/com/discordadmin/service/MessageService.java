@@ -850,13 +850,18 @@ public class MessageService {
                     if (containsChinese(effectiveContent)) {
                         message.setTranslatedContent(effectiveContent);
                     } else {
-                        message.setTranslatedContent(com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(
-                                translationServiceFactory.translate(effectiveContent, "zh-CN", conversation.getMerchantId()).orElse(effectiveContent)));
+                        String zhResult = translationServiceFactory.translate(effectiveContent, "zh-CN", conversation.getMerchantId())
+                                .map(com.discordadmin.translation.TranslationServiceFactory::decodeHtmlEntities)
+                                .orElse(effectiveContent);
+                        log.info("[sendAgentUnifiedMessage] OUTBOUND翻译: content='{}', zhResult='{}', same={}",
+                                effectiveContent, zhResult, zhResult.equals(effectiveContent));
+                        message.setTranslatedContent(zhResult);
                     }
                 } else {
                     message.setTranslatedContent(dbContent);
                 }
             } catch (Exception e) {
+                log.warn("[sendAgentUnifiedMessage] OUTBOUND翻译异常: {}", e.getMessage());
                 message.setTranslatedContent(dbContent);
             }
             Instant now = Instant.now();
