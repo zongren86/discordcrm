@@ -389,13 +389,13 @@ public class AgentServerController {
                         "# 或前端代理管理页面直接看状态")
         ));
         result.put("configTemplate",                 "{\n" +
-                "  \"serverUrl\": \"http://127.0.0.1:8090/api\",\n" +
+                "  \"serverUrl\": \"" + baseUrl + "/api\",\n" +
                 "  \"agentName\": \"crm-agent-01\",\n" +
                 "  \"token\": \"在此粘贴前端生成的token\",\n" +
                 "  \"heartbeatIntervalMs\": 5000,\n" +
                 "  \"pollIntervalMs\": 5000,\n" +
                 "  \"production\": false,\n" +
-                "  \"version\": \"1.8.10\",\n" +
+                "  \"version\": \"" + agentVer + "\",\n" +
                 "  \"browser\": {\n" +
                 "    \"headless\": false,\n" +
                 "    \"type\": \"auto\",\n" +
