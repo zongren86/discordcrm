@@ -512,6 +512,8 @@ public class AgentServerController {
                             "README.md",           // 有 README_INSTALL.txt
                             "agent.log",           // 运行时文件
                             "server.js",           // 旧启动脚本（如有）
+                            "index.js",            // 根目录残留，正确入口在 src/index.js
+                            "discord.js",          // 根目录残留，正确位置在 src/discord.js
                         };
                         for (String skip : skipFiles) {
                             if (relStr.equals(skip)) return;
