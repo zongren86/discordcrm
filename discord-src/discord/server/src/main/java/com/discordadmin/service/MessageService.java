@@ -672,7 +672,20 @@ public class MessageService {
             if (discordMessageId == null) {
                 throw new IllegalStateException("Agent 未返回 discordMessageId: " + r.path("error").asText("未知原因"));
             }
-            String cdnUrl = r.path("cdnUrl").asText(null);
+            // 解析所有附件URL：优先取 cdnUrls 数组，fallback 单个 cdnUrl
+            java.util.List<String> cdnUrls = new java.util.ArrayList<>();
+            com.fasterxml.jackson.databind.JsonNode cdnUrlsNode = r.path("cdnUrls");
+            if (cdnUrlsNode.isArray()) {
+                for (com.fasterxml.jackson.databind.JsonNode n : cdnUrlsNode) {
+                    String u = n.asText(null);
+                    if (u != null && !u.isBlank()) cdnUrls.add(u);
+                }
+            }
+            // fallback: 旧版 agent 返回单个 cdnUrl
+            if (cdnUrls.isEmpty()) {
+                String cdnUrl = r.path("cdnUrl").asText(null);
+                if (cdnUrl != null && !cdnUrl.isBlank()) cdnUrls.add(cdnUrl);
+            }
 
             // 保存消息
             String dbContent = (content != null && !content.isBlank()) ? content :
@@ -685,11 +698,13 @@ public class MessageService {
             message.setSentContent(translatedText != null ? translatedText : "");
             message.setMessageType(fileList.isEmpty() ? "text" : "image");
             message.setDiscordMessageId(discordMessageId);
-            if (cdnUrl != null && !cdnUrl.isBlank()) {
+            if (!cdnUrls.isEmpty()) {
                 java.util.List<java.util.Map<String, String>> attArr = new java.util.ArrayList<>();
-                java.util.Map<String, String> m = new java.util.HashMap<>();
-                m.put("url", cdnUrl);
-                attArr.add(m);
+                for (String url : cdnUrls) {
+                    java.util.Map<String, String> m = new java.util.HashMap<>();
+                    m.put("url", url);
+                    attArr.add(m);
+                }
                 message.setAttachmentsJson(om.writeValueAsString(attArr));
             }
             try {

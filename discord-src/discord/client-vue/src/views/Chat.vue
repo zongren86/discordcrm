@@ -535,8 +535,6 @@
                     </template>
                   </div>
 
-                  <div v-if="!msg.isDeleted && !isVoiceMsg(msg) && !isGifMsg(msg) && !isStickerMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
-
                   <!-- 图片附件渲染（gif消息已由GIF区域渲染，这里跳过避免重复） -->
                   <div v-if="!msg.isDeleted && !isGifMsg(msg) && !isStickerMsg(msg) && imageAttachmentsOf(msg).length > 0" class="msg-image-attachments">
                     <img v-for="(img, i) in imageAttachmentsOf(msg)" :key="i"
@@ -544,6 +542,8 @@
                          @click="openMediaPreview(resolveAttachmentUrl(img.url))"
                          @error="onImageError($event)" />
                   </div>
+
+                  <div v-if="!msg.isDeleted && !isVoiceMsg(msg) && !isGifMsg(msg) && !isStickerMsg(msg)" class="msg-content">{{ displayContentOf(msg) }}</div>
 
                   <div v-else-if="msg.isDeleted" class="msg-deleted-tip">[消息已删除]</div>
 
@@ -7080,8 +7080,8 @@ video.msg-gif-img {
 .msg-gif-btn { width: 24px; height: 24px; border-radius: 50%; background: rgba(0,0,0,0.5); border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; color: #fff; padding: 4px; transition: background 0.2s; }
 .msg-gif-btn:hover { background: rgba(0,0,0,0.7); }
 .msg-gif-btn.favorited { color: #ffd700; }
-.msg-image-attachments { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
-.msg-image-attachment { max-width: 200px; max-height: 200px; border-radius: 4px; cursor: pointer; }
+.msg-image-attachments { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+.msg-image-attachment { max-width: 320px; max-height: 320px; border-radius: 4px; cursor: pointer; }
 </style>
 
 <style>

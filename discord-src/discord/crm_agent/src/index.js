@@ -165,6 +165,73 @@ async function executeTask(task) {
         }
       }
       }
+      case 'SEND_MESSAGE': {
+        const params = typeof task.params === 'string'
+          ? (() => { try { return JSON.parse(task.params); } catch { return {}; } })()
+          : (task.params || {});
+        const { token, channelId, content, stickerIds, sticker_id, files, accountId } = params;
+        if (!token || !channelId) {
+          await reportTask(task.id, 'FAILED', { error: '缺少 token 或 channelId' });
+          break;
+        }
+        await reportTask(task.id, 'RUNNING');
+        try {
+          // 有 files → multipart 同时发 content + files（合并为一条消息）
+          if (files && Array.isArray(files) && files.length > 0) {
+            console.log(`[任务] 统一发送 content="${content || ''}", files=${files.length}`);
+            const result = await sendMessageWithFiles(token, channelId, content || '', files);
+            const discordMessageId = result?.id;
+            // 返回所有附件的 CDN URL 数组
+            const cdnUrls = (result?.attachments || []).map(a => a.url);
+            console.log(`[任务] ✅ 统一发送成功 discordMsgId=${discordMessageId} attachments=${cdnUrls.length}`);
+            await reportTask(task.id, 'SUCCESS', {
+              discordMessageId,
+              cdnUrls,
+              channelId,
+            });
+            break;
+          }
+          // 构建请求体：支持纯文本、Sticker、混合发送
+          const body = {};
+          if (stickerIds && Array.isArray(stickerIds) && stickerIds.length > 0) {
+            body.sticker_ids = stickerIds;
+            if (content) body.content = content;
+            console.log(`[任务] 发送 Sticker: sticker_ids=[${stickerIds.join(',')}]`);
+          } else if (sticker_id) {
+            body.sticker_ids = [sticker_id];
+            if (content) body.content = content;
+            console.log(`[任务] 发送 Sticker: sticker_id=${sticker_id}`);
+          } else {
+            body.content = content || '';
+          }
+          // 从 agent 机器发 Discord API 请求 —— IP 是用户家庭宽带，不会触发风控
+          const resp = await discordHttp.post(
+            `/channels/${channelId}/messages`,
+            body,
+            { headers: { 'Authorization': token } }
+          );
+          const discordMessageId = resp.data?.id;
+          console.log(`[任务] ✅ 消息已发送 discordMsgId=${discordMessageId}`);
+          await reportTask(task.id, 'SUCCESS', {
+            discordMessageId,
+            channelId,
+          });
+        } catch (err) {
+          const status = err.response?.status;
+          const msg = status === 401 ? 'Token 已失效（401 Unauthorized）'
+                    : status === 403 ? '没有权限在此频道发消息（403 Forbidden）'
+                    : status === 429 ? 'Discord 限流（429 Too Many Requests）'
+                    : (err.response?.data?.message || err.message);
+          console.error(`[任务] 发消息失败: ${msg}`);
+          if (status === 401 && accountId) {
+            reportTokenInvalid(accountId, `accountId=${accountId}`);
+          }
+          await reportTask(task.id, 'FAILED', { error: msg, status });
+        }
+        break;
+      }
+
+
 
       case 'FULL_SYNC_FRIENDS': {
         const params = typeof task.params === 'string'
