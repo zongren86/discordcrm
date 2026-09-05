@@ -589,17 +589,152 @@ public class MessageService {
             return sendAgentUnifiedMessage(conversation, account, content, targetLanguage, attachments, agentDisplayName);
         }
 
-        // 非 AGENT 账号：保持原有逻辑
-        Message result = null;
-        if (hasAttachments) {
-            Message attMsg = sendAttachments(conversationId, attachments, agentDisplayName);
-            if (attMsg != null) result = attMsg;
-        }
-        if (hasTextOrVoice) {
-            result = sendReply(conversationId, content, targetLanguage,
+        // 非 AGENT 账号：也统一合并为一条消息（content + 所有附件一次发）
+        if (!hasAttachments) {
+            return sendReply(conversationId, content, targetLanguage,
                     messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
         }
-        return result;
+
+        // ---- 下载所有附件 ----
+        java.util.List<java.util.Map<String, Object>> dlAtts = new java.util.ArrayList<>();
+        for (java.util.Map<String, String> att : attachments) {
+            String url = att.get("url");
+            if (url == null || url.isBlank()) continue;
+            if (url.startsWith("/")) url = "http://localhost:8090" + url;
+            String fileName = att.get("name") != null ? att.get("name") : "attachment";
+            String mimeType = att.get("contentType") != null ? att.get("contentType") : "application/octet-stream";
+            try {
+                HttpClient dlC = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(30)).build();
+                HttpRequest req = HttpRequest.newBuilder().uri(URI.create(url)).timeout(Duration.ofSeconds(60)).GET().build();
+                HttpResponse<byte[]> resp = dlC.send(req, HttpResponse.BodyHandlers.ofByteArray());
+                if (resp.statusCode() != 200) { log.warn("[非AGENT]下载附件失败HTTP={} url={}", resp.statusCode(), url); continue; }
+                java.util.Map<String, Object> m = new java.util.HashMap<>();
+                m.put("fileName", fileName); m.put("fileData", resp.body()); m.put("mimeType", mimeType);
+                dlAtts.add(m);
+            } catch (Exception e) { log.warn("[非AGENT]下载附件异常 url={} err={}", url, e.getMessage()); }
+        }
+        if (dlAtts.isEmpty()) {
+            return sendReply(conversationId, content, targetLanguage,
+                    messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
+        }
+
+        // ---- 翻译 content ----
+        String effContent = content != null ? content : "";
+        String translatedText = effContent;
+        if (effContent != null && !effContent.isBlank() && !isPureNumber(effContent)) {
+            String tl = normalizeLanguageCode(targetLanguage);
+            if (tl == null || tl.isBlank()) tl = containsChinese(effContent) ? "en" : "zh-CN";
+            Long mid = conversation.getMerchantId();
+            if (mid == null && conversation.getDiscordAccount() != null) mid = conversation.getDiscordAccount().getMerchantId();
+            translatedText = com.discordadmin.translation.TranslationServiceFactory.decodeHtmlEntities(
+                    translationServiceFactory.translate(effContent, tl, mid).orElse(effContent));
+        }
+
+        // ---- 构建 multipart/form-data 一次发送 content + 所有附件 ----
+        if (account.getAccountType() != DiscordAccount.AccountType.USER) {
+            log.warn("Bot 账号暂不支持多附件合并发送");
+            return sendAttachments(conversationId, attachments, agentDisplayName);
+        }
+        com.fasterxml.jackson.databind.JsonNode dResp;
+        try {
+            String boundary = "----DiscordAdminBoundary" + System.currentTimeMillis();
+            com.fasterxml.jackson.databind.ObjectMapper mm = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.LinkedHashMap<String, Object> payload = new java.util.LinkedHashMap<>();
+            payload.put("content", translatedText != null ? translatedText : "");
+            java.util.ArrayList<java.util.Map<String, Object>> attMeta = new java.util.ArrayList<>();
+            for (int i = 0; i < dlAtts.size(); i++) {
+                java.util.Map<String, Object> a = dlAtts.get(i);
+                java.util.LinkedHashMap<String, Object> meta = new java.util.LinkedHashMap<>();
+                meta.put("id", String.valueOf(i));
+                meta.put("filename", a.get("fileName"));
+                meta.put("content_type", a.get("mimeType"));
+                meta.put("size", ((byte[]) a.get("fileData")).length);
+                attMeta.add(meta);
+            }
+            payload.put("attachments", attMeta);
+            String payloadJson = mm.writeValueAsString(payload);
+
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            for (int i = 0; i < dlAtts.size(); i++) {
+                java.util.Map<String, Object> a = dlAtts.get(i);
+                byte[] data = (byte[]) a.get("fileData");
+                String fn = a.get("fileName").toString();
+                String mt = a.get("mimeType").toString();
+                StringBuilder hdr = new StringBuilder();
+                hdr.append("--").append(boundary).append("\r\n");
+                hdr.append("Content-Disposition: form-data; name=\"files[").append(i).append("]\"; filename=\"").append(fn).append("\"\r\n");
+                hdr.append("Content-Type: ").append(mt).append("\r\n\r\n");
+                baos.write(hdr.toString().getBytes("UTF-8"));
+                baos.write(data);
+            }
+            StringBuilder jsonPart = new StringBuilder();
+            jsonPart.append("\r\n--").append(boundary).append("\r\n");
+            jsonPart.append("Content-Disposition: form-data; name=\"payload_json\"\r\n");
+            jsonPart.append("Content-Type: application/json\r\n\r\n");
+            jsonPart.append(payloadJson).append("\r\n--").append(boundary).append("--\r\n");
+            baos.write(jsonPart.toString().getBytes("UTF-8"));
+
+            String BASE = "https://discord.com/api/v10";
+            String UA = "DiscordAdmin/1.9.7";
+            java.net.http.HttpClient http2 = java.net.http.HttpClient.newBuilder().build();
+            HttpRequest hReq = HttpRequest.newBuilder()
+                    .uri(URI.create(BASE + "/channels/" + conversation.getChannelId() + "/messages"))
+                    .timeout(Duration.ofSeconds(60))
+                    .header("Authorization", account.getToken())
+                    .header("User-Agent", UA)
+                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                    .header("Accept", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(baos.toByteArray()))
+                    .build();
+            java.net.http.HttpResponse<String> hResp = http2.send(hReq, java.net.http.HttpResponse.BodyHandlers.ofString());
+            dResp = com.fasterxml.jackson.databind.json.JsonMapper.builder().build().readTree(hResp.body());
+        } catch (Exception e) {
+            log.error("[非AGENT]多附件multipart发送失败: {}", e.getMessage());
+            return sendReply(conversationId, content, targetLanguage,
+                    messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
+        }
+
+        // ---- 保存 ONE DB message ----
+        String discordMsgId = dResp.path("id").asText(null);
+        java.util.ArrayList<java.util.Map<String, String>> savedAtts = new java.util.ArrayList<>();
+        if (dResp.path("attachments").isArray()) {
+            for (com.fasterxml.jackson.databind.JsonNode a : dResp.path("attachments")) {
+                java.util.Map<String, String> m2 = new java.util.HashMap<>();
+                m2.put("url", a.path("url").asText(null));
+                m2.put("name", a.path("filename").asText(null));
+                m2.put("contentType", a.path("content_type").asText(null));
+                if (m2.get("url") != null) savedAtts.add(m2);
+            }
+        }
+        Message msg = new Message();
+        msg.setConversation(conversation);
+        msg.setDirection(Message.Direction.OUTBOUND);
+        msg.setSenderName(account.getName());
+        msg.setContent(effContent);
+        msg.setSentContent(translatedText);
+        msg.setMessageType("image");
+        msg.setDiscordMessageId(discordMsgId);
+        try { msg.setAttachmentsJson(savedAtts.isEmpty() ? null : new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(savedAtts)); } catch (Exception _e) { msg.setAttachmentsJson(null); }
+        try {
+            if (!effContent.isBlank() && !isPureNumber(effContent)) {
+                if (containsChinese(effContent)) msg.setTranslatedContent(effContent);
+                else msg.setTranslatedContent(translationServiceFactory.translate(effContent, "zh-CN", conversation.getMerchantId())
+                        .orElse(effContent));
+            } else msg.setTranslatedContent(effContent);
+        } catch (Exception e) { msg.setTranslatedContent(effContent); }
+        Instant now = Instant.now();
+        msg.setDiscordCreatedAt(now); msg.setCreatedAt(now);
+        Optional<Message> ex2 = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMsgId);
+        if (ex2.isPresent()) {
+            Message ex = ex2.get();
+            ex.setContent(msg.getContent()); ex.setSentContent(msg.getSentContent()); ex.setAttachmentsJson(msg.getAttachmentsJson());
+            return messageRepository.save(ex);
+        }
+        conversation.setLastMessagePreview(msg.getTranslatedContent() != null && !msg.getTranslatedContent().isBlank() ?
+                msg.getTranslatedContent().substring(0, Math.min(200, msg.getTranslatedContent().length())) : effContent);
+        conversation.setLastMessageDirection("OUTBOUND");
+        conversationRepository.save(conversation);
+        return messageRepository.save(msg);
     }
 
     /** AGENT 账号统一发送 content + files + stickers 为一条消息 */
