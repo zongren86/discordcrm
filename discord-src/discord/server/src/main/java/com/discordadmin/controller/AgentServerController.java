@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.time.Instant;
 import java.time.Duration;
+import com.discordadmin.service.AuditLoggingHelper;
 
 @RestController
 @RequestMapping("/api/agent-servers")
@@ -75,6 +76,7 @@ public class AgentServerController {
     private String agentSourceDir;
     private final ObjectMapper objectMapper;
     private final FriendRepository friendRepository;
+    private final AuditLoggingHelper auditLoggingHelper;
 
     /** 节点列表（隐藏 token） */
     @GetMapping
@@ -944,6 +946,18 @@ public class AgentServerController {
             acc.setLastError(null);
         }
         discordAccountRepository.save(acc);
+
+        // ==== 全链路日志 ====
+        String eventType = valid ? "RECOVERED" : "EXPIRED_401_AGENT";
+        auditLoggingHelper.tokenEvent(acc.getId(), acc.getName(), eventType, "AGENT_SERVER",
+                server.getId(), server.getName(),
+                valid ? "200" : "401",
+                AuditLoggingHelper.detail("reason", reason, "changed", changed),
+                "AGENT:" + server.getName(), acc.getMerchantId());
+        auditLoggingHelper.log("token", valid ? "RECOVER" : "EXPIRED", "DiscordAccount",
+                String.valueOf(acc.getId()),
+                AuditLoggingHelper.detail("reason", reason, "agent", server.getName(), "changed", changed),
+                "AGENT:" + server.getName(), acc.getMerchantId(), valid ? "SUCCESS" : "FAIL");
 
         if (changed) {
             log.warn("[Token状态] agent={} accountId={} name={} valid={} reason={}",

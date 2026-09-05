@@ -6,6 +6,7 @@ import com.discordadmin.entity.*;
 import com.discordadmin.repository.*;
 import com.discordadmin.service.MessageService;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.discordadmin.service.AuditLoggingHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,6 +51,7 @@ public class UserMessagePoller {
     private final SimpMessagingTemplate messagingTemplate;
     private final Executor pollExecutor;
     private final TransactionTemplate transactionTemplate;
+    private final AuditLoggingHelper auditLoggingHelper;
 
     /** 已处理的消息ID缓存（防止并发轮询重复处理），key=convId:msgId */
     private final Map<String, Boolean> processedMsgIds = new ConcurrentHashMap<>();
@@ -93,7 +95,8 @@ public class UserMessagePoller {
                               MessageService messageService,
                               SimpMessagingTemplate messagingTemplate,
                               @Qualifier("pollExecutor") Executor pollExecutor,
-                              PlatformTransactionManager transactionManager) {
+                              PlatformTransactionManager transactionManager,
+                              AuditLoggingHelper auditLoggingHelper) {
         this.accountRepository = accountRepository;
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
@@ -103,6 +106,7 @@ public class UserMessagePoller {
         this.messagingTemplate = messagingTemplate;
         this.pollExecutor = pollExecutor;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.auditLoggingHelper = auditLoggingHelper;
     }
 
     /** Token过期账号ID缓存（10分钟内不再尝试） */
@@ -396,11 +400,19 @@ public class UserMessagePoller {
         } catch (DiscordUserClient.DiscordUserApiException e) {
             if (e.statusCode == 401) {
                 account.setLastError("Token 已过期，请用 Chrome 插件重新导入 Token 续期");
-                account.setTokenValid(false);  // 标记Token失效，持久化到数据库
+                account.setTokenValid(false);
                 accountRepository.save(account);
-                // 标记账号Token过期，10分钟内不再尝试
                 tokenExpiredAccountCooldown.put(account.getId(), System.currentTimeMillis() + 10 * 60 * 1000L);
                 log.warn("账号[{}](id={}) Token 已过期（同步DM频道失败），已标记为失效", account.getName(), account.getId());
+                auditLoggingHelper.tokenEvent(account.getId(), account.getName(),
+                        "EXPIRED_401_POLLER", "MESSAGE_POLLER",
+                        account.getAgentServerId(), null, "401",
+                        AuditLoggingHelper.detail("scene", "syncDmChannelsInTx"),
+                        "SYSTEM", account.getMerchantId());
+                auditLoggingHelper.log("token", "EXPIRED", "DiscordAccount",
+                        String.valueOf(account.getId()),
+                        AuditLoggingHelper.detail("reason", "poller_sync_dm_401"),
+                        "SYSTEM", account.getMerchantId(), "FAIL");
             }
             log.warn("同步DM频道 API 失败: account={} status={} err={}", account.getName(), e.statusCode, e.getMessage());
             return 0;
@@ -518,14 +530,22 @@ public class UserMessagePoller {
         } catch (DiscordUserClient.DiscordUserApiException e) {
             if (e.statusCode == 401) {
                 account.setLastError("Token 已过期，请用 Chrome 插件重新导入 Token 续期");
-                account.setTokenValid(false);  // 标记Token失效，持久化到数据库
+                account.setTokenValid(false);
                 transactionTemplate.execute(status -> {
                     accountRepository.save(account);
                     return null;
                 });
-                // 标记账号Token过期，10分钟内不再尝试（避免反复触发熔断）
                 tokenExpiredAccountCooldown.put(account.getId(), System.currentTimeMillis() + 10 * 60 * 1000L);
                 log.warn("账号[{}](id={}) Token 已过期，已标记为失效", account.getName(), account.getId());
+                auditLoggingHelper.tokenEvent(account.getId(), account.getName(),
+                        "EXPIRED_401_POLLER", "MESSAGE_POLLER",
+                        account.getAgentServerId(), null, "401",
+                        AuditLoggingHelper.detail("scene", "pollMessages", "channelId", channelId),
+                        "SYSTEM", account.getMerchantId());
+                auditLoggingHelper.log("token", "EXPIRED", "DiscordAccount",
+                        String.valueOf(account.getId()),
+                        AuditLoggingHelper.detail("reason", "poller_listMessages_401", "channelId", channelId),
+                        "SYSTEM", account.getMerchantId(), "FAIL");
             } else {
                 log.warn("拉取频道消息失败: status={}, channelId={}", e.statusCode, channelId);
             }

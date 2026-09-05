@@ -79,4 +79,19 @@ public class AsyncConfig implements AsyncConfigurer, SchedulingConfigurer {
         executor.initialize();
         return executor;
     }
+
+    /** 审计/Token事件日志线程池 —— 低并发，IO 密集，异步写入不阻塞主流程 */
+    @Bean(name = "auditLogExecutor")
+    public ThreadPoolTaskExecutor auditLogExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("audit-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(15);
+        executor.initialize();
+        return executor;
+    }
 }

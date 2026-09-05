@@ -47,6 +47,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import com.discordadmin.service.AuditLoggingHelper;
+import com.discordadmin.security.SecurityUtils;
 
 @Service
 public class MessageService {
@@ -80,6 +82,8 @@ public class MessageService {
     @Value("${app.base-url:http://localhost:8090}")
     private String baseUrl;
 
+    private final AuditLoggingHelper auditLoggingHelper;
+
 
     public MessageService(ConversationRepository conversationRepository,
                            MessageRepository messageRepository,
@@ -91,7 +95,8 @@ public class MessageService {
                            TranslationServiceFactory translationServiceFactory,
                            LanguageDetectionService languageDetectionService,
                            SpeechRecognitionService speechRecognitionService,
-                           TranslationCacheRepository translationCacheRepository) {
+                           TranslationCacheRepository translationCacheRepository,
+                                 AuditLoggingHelper auditLoggingHelper) {
         this.conversationRepository = conversationRepository;
         this.messageRepository = messageRepository;
         this.discordAccountRepository = discordAccountRepository;
@@ -103,7 +108,8 @@ public class MessageService {
         this.languageDetectionService = languageDetectionService;
         this.speechRecognitionService = speechRecognitionService;
         this.translationCacheRepository = translationCacheRepository;
-    }
+            this.auditLoggingHelper = auditLoggingHelper;
+}
 
     @Transactional(readOnly = true)
     public List<Message> listMessages(Long conversationId) {
@@ -424,8 +430,21 @@ public class MessageService {
                 discordMessageId = discordUserClient.sendMessage(account.getToken(), conversation.getChannelId(), textToSend);
             }
         } catch (Exception e) {
-            if (e.getMessage() != null && (e.getMessage().contains("401") || e.getMessage().contains("Unauthorized"))) {
+            boolean authFail = e.getMessage() != null && (e.getMessage().contains("401") || e.getMessage().contains("Unauthorized"));
+            if (authFail) {
                 log.error("账号 [{}] token 已失效，无法发送消息", account.getName());
+            } else {
+                log.error("账号 [{}] 发送消息失败: {}", account.getName(), e.getMessage());
+            }
+            auditLoggingHelper.log("message", "SEND_FAIL", "Conversation",
+                    String.valueOf(conversation.getId()),
+                    AuditLoggingHelper.detail("account", account.getName(),
+                            "accountId", account.getId(),
+                            "authFail", authFail,
+                            "error", e.getMessage() != null ? e.getMessage().substring(0, Math.min(e.getMessage().length(), 300)) : "null",
+                            "agentMode", "AGENT".equals(account.getSource())),
+                    (SecurityUtils.currentAgent() != null ? SecurityUtils.currentAgent().username() : "SYSTEM"), account.getMerchantId(), "FAIL");
+            if (authFail) {
                 throw new IllegalStateException("账号「" + account.getName() + "」的 Discord 授权已失效，请重新登录该账号", e);
             }
             throw new IllegalStateException("消息发送失败: " + e.getMessage(), e);
@@ -457,6 +476,15 @@ public class MessageService {
         message.setDiscordCreatedAt(now);
         message.setCreatedAt(now);
         if (discordMessageId != null) {
+            auditLoggingHelper.log("message", "SEND_OUT", "Conversation",
+                    String.valueOf(conversation.getId()),
+                    AuditLoggingHelper.detail("account", account.getName(),
+                            "accountId", account.getId(),
+                            "discordMessageId", discordMessageId,
+                            "contentLen", content != null ? content.length() : 0,
+                            "agentMode", "AGENT".equals(account.getSource()),
+                            "hasAudio", audioData != null && !audioData.isEmpty()),
+                    (SecurityUtils.currentAgent() != null ? SecurityUtils.currentAgent().username() : "SYSTEM"), account.getMerchantId());
             // Check for duplicate before saving to avoid unique constraint violation
             Optional<Message> existingMsg = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
             if (existingMsg.isPresent()) {
@@ -2520,3 +2548,4 @@ private boolean isLocalUploadUrl(String url) {
     }
 
 }
+

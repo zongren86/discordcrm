@@ -21,6 +21,7 @@ import com.discordadmin.repository.MessageRepository;
 import com.discordadmin.security.SecurityUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
+import com.discordadmin.service.AuditLoggingHelper;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -71,6 +72,7 @@ public class DiscordAccountService {
     private final AgentAccountNumberRelRepository relRepository;
     private final AgentTaskRepository agentTaskRepository;
     private final PlatformTransactionManager transactionManager;
+    private final AuditLoggingHelper auditLoggingHelper;
 
     @Autowired @Lazy
     private UserMessagePoller userMessagePoller;
@@ -88,7 +90,8 @@ public class DiscordAccountService {
                                  DiscordAccountNumberRepository accountNumberRepository,
                                  AgentAccountNumberRelRepository relRepository,
                                  AgentTaskRepository agentTaskRepository,
-                                 PlatformTransactionManager transactionManager) {
+                                 PlatformTransactionManager transactionManager,
+                                 AuditLoggingHelper auditLoggingHelper) {
         this.accountRepository = accountRepository;
         this.botManager = botManager;
         this.userClient = userClient;
@@ -103,6 +106,7 @@ public class DiscordAccountService {
         this.relRepository = relRepository;
         this.agentTaskRepository = agentTaskRepository;
         this.transactionManager = transactionManager;
+        this.auditLoggingHelper = auditLoggingHelper;
     }
 
     public List<AccountDto> listAccounts(String keyword, String status) {
@@ -617,6 +621,23 @@ public class DiscordAccountService {
             message = tokenValid ? "更新成功（ID已存在）" : "更新成功（ID已存在，" + validationMsg + "）";
         }
         log.info("账号{}成功: discordId={} id={} tokenValid={}", created ? "新增" : "更新", discordId, account.getId(), tokenValid);
+
+        // ==== 全链路日志 ====
+        auditLoggingHelper.tokenEvent(account.getId(), account.getName(),
+                created ? "CREATED" : "REFRESHED",
+                "AGENT_UPLOAD".equals(account.getSource()) ? "AGENT_UPLOAD" : "MANUAL",
+                account.getAgentServerId(), null,
+                tokenValid ? "200" : "INVALID_TOKEN_ON_UPLOAD",
+                AuditLoggingHelper.detail("created", created, "source", account.getSource(),
+                        "email", account.getEmail(), "discordId", discordId),
+                (SecurityUtils.currentAgent() != null ? SecurityUtils.currentAgent().username() : "SYSTEM"), account.getMerchantId());
+        auditLoggingHelper.log("account", created ? "CREATE" : "UPDATE", "DiscordAccount",
+                String.valueOf(account.getId()),
+                AuditLoggingHelper.detail("name", account.getName(), "email", account.getEmail(),
+                        "source", account.getSource(), "tokenValid", tokenValid, "created", created),
+                (SecurityUtils.currentAgent() != null ? SecurityUtils.currentAgent().username() : "SYSTEM"), account.getMerchantId(),
+                tokenValid ? "SUCCESS" : "FAIL");
+
         return new UpsertResponse(dto, created, message);
     }
 

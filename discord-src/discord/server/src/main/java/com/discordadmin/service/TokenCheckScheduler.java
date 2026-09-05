@@ -4,6 +4,7 @@ import com.discordadmin.discord.DiscordUserClient;
 import com.discordadmin.entity.DiscordAccount;
 import com.discordadmin.repository.DiscordAccountRepository;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.discordadmin.service.AuditLoggingHelper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -33,12 +34,15 @@ public class TokenCheckScheduler {
 
     private final DiscordAccountRepository accountRepository;
     private final DiscordUserClient userClient;
+    private final AuditLoggingHelper auditLoggingHelper;
 
     public TokenCheckScheduler(DiscordAccountRepository accountRepository,
-                               DiscordUserClient userClient) {
+                               DiscordUserClient userClient,
+                                 AuditLoggingHelper auditLoggingHelper) {
         this.accountRepository = accountRepository;
         this.userClient = userClient;
-    }
+            this.auditLoggingHelper = auditLoggingHelper;
+}
 
     /**
      * 每 10 分钟执行一次 Token 有效性体检。
@@ -80,6 +84,15 @@ public class TokenCheckScheduler {
                                 stats[1]++;
                                 log.warn("[Token体检] 账号[id={}, name={}] 已失效(401)，已标记为 token_valid=0",
                                         a.getId(), a.getName());
+                                auditLoggingHelper.tokenEvent(a.getId(), a.getName(),
+                                        "EXPIRED_401_SCHEDULER", "TOKEN_CHECK_SCHEDULER",
+                                        a.getAgentServerId(), null, "401",
+                                        AuditLoggingHelper.detail("scheduler", "TokenCheckScheduler.healthCheck"),
+                                        "SYSTEM", a.getMerchantId());
+                                auditLoggingHelper.log("token", "EXPIRED", "DiscordAccount",
+                                        String.valueOf(a.getId()),
+                                        AuditLoggingHelper.detail("reason", "scheduler_401", "account", a.getName()),
+                                        "SYSTEM", a.getMerchantId(), "FAIL");
                             } else {
                                 // 429/5xx/403 等：不碰 token_valid，只记日志
                                 stats[2]++;
