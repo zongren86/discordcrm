@@ -227,8 +227,15 @@ public class ConversationService {
         }
 
         // 使用翻译工厂（支持 AI 翻译 + 降级免费翻译）
-        translationServiceFactory.translate(inbound.content(), "zh-CN", merchantId)
-                .ifPresent(message::setTranslatedContent);
+        // 修复：翻译结果等于原文时不保存，让前端知道翻译没生效
+        String originalContent = inbound.content();
+        java.util.Optional<String> opt = translationServiceFactory.translate(originalContent, "zh-CN", merchantId);
+        if (opt.isPresent()) {
+            String t = opt.get();
+            if (t != null && !t.equalsIgnoreCase(originalContent == null ? "" : originalContent.trim())) {
+                message.setTranslatedContent(t);
+            }
+        }
         message = messageRepository.save(message);
 
         messagingTemplate.convertAndSend("/topic/conversations/" + conversation.getId(), MessageDto.from(message));
