@@ -595,6 +595,7 @@ public class MessageService {
                     messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
         }
 
+        log.info("[非AGENT合并] 进入合并发送, attachments={}, contentLen={}", attachments.size(), content != null ? content.length() : 0);
         // ---- 下载所有附件 ----
         java.util.List<java.util.Map<String, Object>> dlAtts = new java.util.ArrayList<>();
         for (java.util.Map<String, String> att : attachments) {
@@ -613,6 +614,7 @@ public class MessageService {
                 dlAtts.add(m);
             } catch (Exception e) { log.warn("[非AGENT]下载附件异常 url={} err={}", url, e.getMessage()); }
         }
+        log.info("[非AGENT合并] 下载完成 dlAtts={}", dlAtts.size());
         if (dlAtts.isEmpty()) {
             return sendReply(conversationId, content, targetLanguage,
                     messageType, audioData, audioMimeType, audioDuration, audioFileName, agentDisplayName);
@@ -695,6 +697,7 @@ public class MessageService {
         }
 
         // ---- 保存 ONE DB message ----
+        log.info("[非AGENT合并] Discord返回 discordMsgId={}, discordAtts={}", dResp.path("id").asText(null), dResp.path("attachments").isArray() ? dResp.path("attachments").size() : 0);
         String discordMsgId = dResp.path("id").asText(null);
         java.util.ArrayList<java.util.Map<String, String>> savedAtts = new java.util.ArrayList<>();
         if (dResp.path("attachments").isArray()) {
