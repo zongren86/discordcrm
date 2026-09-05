@@ -557,7 +557,7 @@
                   <!-- 普通文本消息的"外层原文折叠"：对语音消息隐藏，避免和卡片内「查看原文/译文」切换重复 -->
                   <div v-if="hasOriginal(msg) && !isVoiceMsg(msg)" class="msg-original-wrap">
                     <el-button size="small" link type="info" @click="toggleOriginal(msg.id)">
-                      {{ originalExpandedSet[msg.id] ? '收起原文' : `查看原文 (${(originalContentOf(msg) || '').length})` }}
+                      {{ originalExpandedSet[msg.id] ? '收起原文' : '查看原文' }}
                       <el-icon class="arrow-icon" :class="{ flip: originalExpandedSet[msg.id] }"><ArrowDown /></el-icon>
                     </el-button>
                     <div v-show="originalExpandedSet[msg.id]" class="original-text">译文：{{ originalContentOf(msg) }}</div>
@@ -2738,27 +2738,28 @@ function editMsg(msg) {
 }
 
 function copyMsg(msg) {
-  const text = msg.content || ''
+  const text = displayContentOf(msg) || msg.content || ''
   if (!text) { ElMessage.info('消息内容为空'); return }
-  // 优先 Clipboard API（HTTPS/localhost 安全上下文）
-  if (navigator.clipboard && window.isSecureContext) {
+  // 同时尝试 Clipboard API 和 execCommand，确保 HTTP 环境也能工作
+  if (navigator.clipboard) {
     navigator.clipboard.writeText(text).then(() => {
       ElMessage.success('已复制')
     }).catch(() => fallbackCopy(text))
   } else {
-    // HTTP/非安全上下文 fallback
     fallbackCopy(text)
   }
 }
 function fallbackCopy(text) {
   const ta = document.createElement('textarea')
   ta.value = text
-  ta.style.position = 'fixed'
+  ta.setAttribute('readonly', '')
+  ta.style.position = 'absolute'
   ta.style.left = '-9999px'
-  ta.style.top = '0'
+  ta.style.top = '-9999px'
+  ta.style.opacity = '0'
   document.body.appendChild(ta)
-  ta.focus()
   ta.select()
+  ta.setSelectionRange(0, ta.value.length)
   let ok = false
   try { ok = document.execCommand('copy') } catch (e) {}
   document.body.removeChild(ta)
