@@ -164,7 +164,6 @@ async function executeTask(task) {
           break;
         }
       }
-      }
       case 'SEND_MESSAGE': {
         const params = typeof task.params === 'string'
           ? (() => { try { return JSON.parse(task.params); } catch { return {}; } })()
