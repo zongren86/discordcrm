@@ -27,6 +27,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -1805,25 +1806,37 @@ private boolean isLocalUploadUrl(String url) {
 
         Message saved;
         if (discordMessageId != null) {
-            // 检查是否已存在该消息（防止重复保存）
-            Optional<Message> existing = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
-            if (existing.isPresent()) {
-                log.warn("消息已存在，跳过保存: conversationId={}, discordMessageId={}", conversationId, discordMessageId);
-                saved = existing.get();
-            } else {
-                Message message = new Message();
-                message.setConversation(conversation);
-                message.setDirection(Message.Direction.OUTBOUND);
-                message.setSenderName(account.getName());
-                message.setContent(isDiscordStickerUrl ? "[Sticker]" : "");
-                message.setMessageType(finalMessageType);
-                message.setGifUrl(discordAttachmentUrl);
-                message.setStickerItemsJson(finalStickerItemsJson);
-                Instant now = Instant.now();
-                message.setDiscordCreatedAt(now);
-                message.setCreatedAt(now);
-                message.setDiscordMessageId(discordMessageId);
-                saved = messageRepository.save(message);
+            try {
+                // 先快速查重（99% 的情况在这里就命中了）
+                Optional<Message> existing = messageRepository.findByConversationAndDiscordMessageId(conversation, discordMessageId);
+                if (existing.isPresent()) {
+                    log.info("消息已存在（查重命中）: conversationId={}, discordMessageId={}", conversationId, discordMessageId);
+                    saved = existing.get();
+                } else {
+                    Message message = new Message();
+                    message.setConversation(conversation);
+                    message.setDirection(Message.Direction.OUTBOUND);
+                    message.setSenderName(account.getName());
+                    message.setContent(isDiscordStickerUrl ? "[Sticker]" : "");
+                    message.setMessageType(finalMessageType);
+                    message.setGifUrl(discordAttachmentUrl);
+                    message.setStickerItemsJson(finalStickerItemsJson);
+                    Instant now = Instant.now();
+                    message.setDiscordCreatedAt(now);
+                    message.setCreatedAt(now);
+                    message.setDiscordMessageId(discordMessageId);
+                    saved = messageRepository.save(message);
+                }
+            } catch (DataIntegrityViolationException e) {
+                // 竞态保护：check-then-save 窗口期内另一个 save 路径同时插入了同一条
+                final String dmid = discordMessageId;
+                log.warn("捕获唯一键冲突，重新查询已存在的消息: conversationId={}, discordMessageId={}", conversationId, dmid);
+                Optional<Message> existing = messageRepository.findByConversationAndDiscordMessageId(conversation, dmid);
+                if (existing.isPresent()) {
+                    saved = existing.get();
+                } else {
+                    throw new IllegalStateException("唯一键冲突但查询不到已存在消息: " + dmid, e);
+                }
             }
         } else {
             Message message = new Message();
@@ -2740,7 +2753,13 @@ private boolean isLocalUploadUrl(String url) {
         msg.setGifUrl(gifUrl);
         msg.setAttachmentsJson(attachmentsJson);
         msg.setStickerItemsJson(stickerItemsJson);
-        messageRepository.save(msg);
+        try {
+            messageRepository.save(msg);
+        } catch (DataIntegrityViolationException e) {
+            // 竞态保护：REST API 的 sendGifMessage 可能同时 save 了同一条
+            log.warn("saveAgentOutboundMessage 捕获唯一键冲突，消息已存在: discordMsgId={}", discordMsgId);
+            // 静默忽略，不抛异常（REST API 那边已经存成功了）
+        }
     }
 
 }

@@ -778,7 +778,7 @@
               :type="recordedAudioData ? 'success' : 'default'"
               circle
               size="large"
-              :disabled="sending"
+              :disabled="sending || sendingGif"
               @click="startRecording"
               title="开始录音（发送语音）">
               <el-icon><Microphone /></el-icon>
@@ -861,12 +861,12 @@
 
             <el-input ref="chatInputRef" v-if="!recordedAudioData && !isRecording" v-model="inputText" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }"
               :placeholder="isEditing ? '编辑消息内容...' : inputPlaceholder"
-              :disabled="sending"
+              :disabled="sending || sendingGif"
               resize="none" class="msg-input" />
             <el-button v-if="!isEditing && !recordedAudioData && !isRecording" type="primary" class="send-btn"
-              :disabled="!inputText.trim() && !replyToMsg && pendingAttachments.length === 0" :loading="sending"
+              :disabled="(!inputText.trim() && !replyToMsg && pendingAttachments.length === 0) || sendingGif" :loading="sending || sendingGif"
               @click="send">
-              {{ sending ? '发送中' : '发送' }}
+              {{ sending || sendingGif ? '发送中' : '发送' }}
               <el-icon style="margin-left:4px;"><Promotion /></el-icon>
             </el-button>
             <el-button v-else-if="isEditing" type="primary" class="send-btn"
@@ -1165,11 +1165,13 @@ async function initLottieAnimation(msgId, idx, sticker) {
     return
   }
   
-  // 避免重复初始化
+  // 避免重复初始化：先销毁旧实例，再清空 DOM 内容（防止 SVG 叠加导致 sticker 重叠）
   if (lottieInstances.has(containerId)) {
-    lottieInstances.get(containerId).destroy()
+    try { lottieInstances.get(containerId).destroy() } catch (e) {}
     lottieInstances.delete(containerId)
   }
+  // 强制清空 container，确保旧 SVG/动画节点不会残留（修复"后续消息导致 stickers 重叠"）
+  container.innerHTML = ''
   
   try {
     const url = stickerLottieUrl(sticker)
@@ -1224,24 +1226,27 @@ async function initLottieAnimation(msgId, idx, sticker) {
   }
 }
 
-/** 扫描消息列表，初始化所有待加载的 Lottie 动画 */
 /** 销毁所有 Lottie 实例（切换会话/组件卸载时调用） */
 function destroyAllLottieAnimations() {
+  // 先取消所有待执行的 init 定时器（防止旧会话的 init 在新会话加载完后突然跑起来）
+  cancelPendingLottieInits()
   lottieInstances.forEach((inst, id) => {
     try { inst.destroy() } catch (e) {}
   })
   lottieInstances.clear()
-  console.log('[Lottie] All instances destroyed')
+  console.log('[Lottie] All instances destroyed + pending inits cancelled')
 }
 
-/** 扫描消息列表，初始化所有待加载的 Lottie 动画。带多次重试确保 DOM 就绪。 */
-function initPendingLottieAnimations(retryCount = 0) {
+// Lottie 初始化防抖定时器（防止 watcher/selectConversation/send 等多处同时触发导致重复初始化）
+let _lottieInitTimer = null
+
+/** 真正执行 Lottie 扫描初始化（防抖到期后调用，或重试链中调用） */
+function _doLottieInit(retryCount) {
   const msgs = conversations.currentMessages
   if (!msgs || msgs.length === 0) return
 
-  // 指数退避重试: 0=100ms, 1=200ms, 2=400ms, 3=800ms, 4=1600ms, 最多5次
   const MAX_RETRY = 5
-  const delay = retryCount === 0 ? 100 : Math.min(100 * Math.pow(2, retryCount), 1600)
+  const delay = retryCount <= 1 ? 100 : Math.min(100 * Math.pow(2, retryCount - 1), 1600)
 
   setTimeout(() => {
     let lottieCount = 0
@@ -1252,7 +1257,16 @@ function initPendingLottieAnimations(retryCount = 0) {
       items.forEach((sticker, idx) => {
         if (!isLottieSticker(sticker)) return
         const containerId = `lottie-sticker-${msg.id}-${idx}`
-        if (lottieInstances.has(containerId)) return
+        // 检查实例是否真的还活着（绑定的 DOM 还在当前页面上）
+        if (lottieInstances.has(containerId)) {
+          const existing = lottieInstances.get(containerId)
+          if (existing && existing.container && document.body.contains(existing.container)) {
+            return  // 还活着，跳过
+          }
+          // DOM 已销毁 → 清理残留 entry（selectConversation/splice 替换后会发生）
+          try { existing.destroy() } catch (e) {}
+          lottieInstances.delete(containerId)
+        }
         const container = document.getElementById(containerId)
         if (!container) {
           missingContainer = true
@@ -1262,11 +1276,26 @@ function initPendingLottieAnimations(retryCount = 0) {
         lottieCount++
       })
     })
-    console.log(`[Lottie] Init attempt ${retryCount + 1}: lottieCount=${lottieCount}, missingContainer=${missingContainer}`)
+    console.log(`[Lottie] Init attempt ${retryCount}: lottieCount=${lottieCount}, missingContainer=${missingContainer}`)
     if (missingContainer && retryCount + 1 < MAX_RETRY) {
-      initPendingLottieAnimations(retryCount + 1)
+      _doLottieInit(retryCount + 1)
     }
   }, delay)
+}
+
+/** 扫描消息列表，初始化所有待加载的 Lottie 动画。先防抖合并，再真正扫描。 */
+function initPendingLottieAnimations() {
+  // 防抖：取消之前的待执行 timer，合并为一次
+  if (_lottieInitTimer) { clearTimeout(_lottieInitTimer); _lottieInitTimer = null }
+  _lottieInitTimer = setTimeout(() => {
+    _lottieInitTimer = null
+    _doLottieInit(1)  // 防抖到期后从 retryCount=1 开始真正扫描（不是 0，避免再进防抖）
+  }, 80)
+}
+
+/** 取消所有待执行的 Lottie init（用于切换会话时立即重置状态） */
+function cancelPendingLottieInits() {
+  if (_lottieInitTimer) { clearTimeout(_lottieInitTimer); _lottieInitTimer = null }
 }
 
 // 翻译预览相关状态
@@ -2938,24 +2967,28 @@ async function sendGifFromFavorite(favorite) {
   }
   conversations.appendMessage(convId, pendingMsg)
 
+  gifPickerVisible.value = false
   try {
     const realMsg = await sendGifMessageApi(convId, favorite.gifUrl, favorite.title)
+    // 先删除 pending 占位（无论是否存在），再用 appendMessage（内部有 discordMessageId 去重，防止 WebSocket 重复）
     // 先删除 pending 占位（无论是否存在），再用 appendMessage（内部有 discordMessageId 去重，防止 WebSocket 重复）
     {
       const msgs = [...(conversations.messagesMap[convId] || [])]
       // 修复竞态: 只匹配确定的 pendingId
-    const pendingIdx = msgs.findIndex(m => m.id === pendingId)
-    if (pendingIdx >= 0) {
-      msgs.splice(pendingIdx, 1)
-      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
-    }
+      const pendingIdx = msgs.findIndex(m => m.id === pendingId)
+      if (pendingIdx >= 0) {
+        msgs.splice(pendingIdx, 1)
+        conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+      }
     }
     await nextTick()
     conversations.appendMessage(convId, realMsg)
-    gifPickerVisible.value = false
     await nextTick()
     await nextTick()
     scrollToBottom({ force: true })
+    // GIF 也可能走 Lottie，确保渲染
+    await nextTick()
+    initPendingLottieAnimations()
   } catch (e) {
     // 失败：删除占位
     const msgs = [...(conversations.messagesMap[convId] || [])]
@@ -2964,6 +2997,7 @@ async function sendGifFromFavorite(favorite) {
       msgs.splice(idx, 1)
       conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
     }
+    gifPickerVisible.value = false
     console.error('发送GIF失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，文件可能过大，请选择较小的动图')
@@ -2996,25 +3030,29 @@ async function sendStickerFromFavorite(fav) {
     createdAt: new Date().toISOString()
   }
   conversations.appendMessage(convId, pendingMsg)
+  gifPickerVisible.value = false
 
   try {
     const realMsg = await sendGifMessageApi(convId, url, fav.title || 'Sticker')
     // 先删除 pending 占位（无论是否存在），再用 appendMessage（内部有 discordMessageId 去重，防止 WebSocket 重复）
+    // 先删除 pending 占位（无论是否存在），再用 appendMessage（内部有 discordMessageId 去重，防止 WebSocket 重复）
     {
       const msgs = [...(conversations.messagesMap[convId] || [])]
       // 修复竞态: 只匹配确定的 pendingId
-    const pendingIdx = msgs.findIndex(m => m.id === pendingId)
-    if (pendingIdx >= 0) {
-      msgs.splice(pendingIdx, 1)
-      conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
-    }
+      const pendingIdx = msgs.findIndex(m => m.id === pendingId)
+      if (pendingIdx >= 0) {
+        msgs.splice(pendingIdx, 1)
+        conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
+      }
     }
     await nextTick()
     conversations.appendMessage(convId, realMsg)
-    gifPickerVisible.value = false
     await nextTick()
     await nextTick()
     scrollToBottom({ force: true })
+    // 贴纸消息需要 Lottie 初始化
+    await nextTick()
+    initPendingLottieAnimations()
   } catch (e) {
     // 失败：删除占位
     const msgs = [...(conversations.messagesMap[convId] || [])]
@@ -3023,6 +3061,7 @@ async function sendStickerFromFavorite(fav) {
       msgs.splice(idx, 1)
       conversations.messagesMap = { ...conversations.messagesMap, [convId]: msgs }
     }
+    gifPickerVisible.value = false
     console.error('发送Sticker失败:', e)
     if (e.code === 'ECONNABORTED' || e.message?.includes('timeout')) {
       ElMessage.error('发送超时，请重试')
@@ -3137,6 +3176,8 @@ function detectFriendLanguage(messages) {
 }
 
 async function selectConversation(c) {
+  // 切会话前先销毁旧会话的所有 Lottie 实例（防止残留 entry 导致新会话贴纸消失）
+  destroyAllLottieAnimations()
   conversations.selectConversation(c.id)
   conversations.markAsRead(c.id)
   replyToMsg.value = null
