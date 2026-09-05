@@ -1224,31 +1224,48 @@ async function initLottieAnimation(msgId, idx, sticker) {
 }
 
 /** 扫描消息列表，初始化所有待加载的 Lottie 动画 */
-function initPendingLottieAnimations() {
+/** 销毁所有 Lottie 实例（切换会话/组件卸载时调用） */
+function destroyAllLottieAnimations() {
+  lottieInstances.forEach((inst, id) => {
+    try { inst.destroy() } catch (e) {}
+  })
+  lottieInstances.clear()
+  console.log('[Lottie] All instances destroyed')
+}
+
+/** 扫描消息列表，初始化所有待加载的 Lottie 动画。带多次重试确保 DOM 就绪。 */
+function initPendingLottieAnimations(retryCount = 0) {
   const msgs = conversations.currentMessages
   if (!msgs || msgs.length === 0) return
-  
-  // 使用 setTimeout 延迟执行，确保 DOM 完全渲染
+
+  // 指数退避重试: 0=100ms, 1=200ms, 2=400ms, 3=800ms, 4=1600ms, 最多5次
+  const MAX_RETRY = 5
+  const delay = retryCount === 0 ? 100 : Math.min(100 * Math.pow(2, retryCount), 1600)
+
   setTimeout(() => {
     let lottieCount = 0
+    let missingContainer = false
     msgs.forEach(msg => {
       if (!isStickerMsg(msg)) return
       const items = stickerItemsOf(msg)
-      console.log('[Lottie] Found sticker message', msg.id, 'items:', items.length, 'isLottie:', items.map(i => isLottieSticker(i)))
       items.forEach((sticker, idx) => {
-        if (isLottieSticker(sticker)) {
-          const containerId = `lottie-sticker-${msg.id}-${idx}`
-          const container = document.getElementById(containerId)
-          console.log('[Lottie] Checking container', containerId, 'exists:', !!container, 'hasInstance:', lottieInstances.has(containerId))
-          if (container && !lottieInstances.has(containerId)) {
-            initLottieAnimation(msg.id, idx, sticker)
-            lottieCount++
-          }
+        if (!isLottieSticker(sticker)) return
+        const containerId = `lottie-sticker-${msg.id}-${idx}`
+        if (lottieInstances.has(containerId)) return
+        const container = document.getElementById(containerId)
+        if (!container) {
+          missingContainer = true
+          return
         }
+        initLottieAnimation(msg.id, idx, sticker)
+        lottieCount++
       })
     })
-    console.log('[Lottie] Init complete, lottieCount:', lottieCount)
-  }, 200)
+    console.log(`[Lottie] Init attempt ${retryCount + 1}: lottieCount=${lottieCount}, missingContainer=${missingContainer}`)
+    if (missingContainer && retryCount + 1 < MAX_RETRY) {
+      initPendingLottieAnimations(retryCount + 1)
+    }
+  }, delay)
 }
 
 // 翻译预览相关状态
@@ -2770,14 +2787,12 @@ function onGifError(e) {
 
 // ============ GIF 收藏功能 ============
 
-/** 加载当前账号的 GIF 收藏列表 */
+/** 加载当前登录用户的 GIF/贴纸收藏列表（跨所有 Discord 账号共享） */
 async function loadGifFavorites() {
-  const accountId = effectiveAccountId.value
-  if (!accountId) return
   try {
     const [gifRes, stickerRes] = await Promise.all([
-      listGifFavorites(accountId, 'gif'),
-      listGifFavorites(accountId, 'sticker')
+      listGifFavorites(null, 'gif'),
+      listGifFavorites(null, 'sticker')
     ])
     stickerFavorites.value = stickerRes || []
     gifFavorites.value = gifRes || []
@@ -3538,6 +3553,8 @@ watch(() => conversations.currentMessages.length, (cnt) => {
 })
 
 watch(() => conversations.currentConversationId, async (newId, oldId) => {
+  // 切换会话前销毁所有旧 Lottie 实例
+  destroyAllLottieAnimations()
   await nextTick()
   bindTextareaKeydown()
   replyToMsg.value = null

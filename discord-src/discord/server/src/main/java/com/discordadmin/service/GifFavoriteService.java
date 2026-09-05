@@ -28,14 +28,26 @@ public class GifFavoriteService {
         this.discordAccountRepository = discordAccountRepository;
     }
 
-    @Transactional(readOnly = true)
-    public List<GifFavorite> getFavoritesByAccount(Long accountId) {
-        return gifFavoriteRepository.findByDiscordAccountIdOrderByCreatedAtDesc(accountId);
-    }
+    // ====== 查询 ======
 
     /**
-     * 按当前登录用户查询（userId 维度，新逻辑）
+     * 按当前登录用户查收藏：
+     * - 平台管理员（merchantId=null）→ 看全部
+     * - 普通用户 → userId 匹配 OR merchantId 匹配（兜底历史无 userId 的收藏）
      */
+    @Transactional(readOnly = true)
+    public List<GifFavorite> getFavoritesForUser(Long userId, Long merchantId) {
+        if (merchantId == null) {
+            // 平台管理员 → 全部收藏
+            return gifFavoriteRepository.findAllByOrderByCreatedAtDesc();
+        }
+        if (userId == null) {
+            return gifFavoriteRepository.findByMerchantIdOrderByCreatedAtDesc(merchantId);
+        }
+        // 普通用户 → userId OR merchantId 都匹配
+        return gifFavoriteRepository.findByUserIdOrMerchantId(userId, merchantId);
+    }
+
     @Transactional(readOnly = true)
     public List<GifFavorite> getFavoritesByUserId(Long userId) {
         return gifFavoriteRepository.findByUserIdOrderByCreatedAtDesc(userId);
@@ -45,6 +57,14 @@ public class GifFavoriteService {
     public List<GifFavorite> getFavoritesByMerchant(Long merchantId) {
         return gifFavoriteRepository.findByMerchantIdOrderByCreatedAtDesc(merchantId);
     }
+
+    @Deprecated
+    @Transactional(readOnly = true)
+    public List<GifFavorite> getFavoritesByAccount(Long accountId) {
+        return gifFavoriteRepository.findByDiscordAccountIdOrderByCreatedAtDesc(accountId);
+    }
+
+    // ====== 收藏 ======
 
     @Transactional
     public GifFavorite addFavorite(Long accountId, String gifUrl, String title, Long userId) {
@@ -56,53 +76,70 @@ public class GifFavoriteService {
         return addFavorite(accountId, gifUrl, title, type, null, userId);
     }
 
+    /**
+     * 添加收藏 —— 按 userId 去重（跨账号共享）。
+     * discord_account_id 仅作来源记录，账号不存在/已删除都不影响收藏保存。
+     */
     @Transactional
-    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type, String convertedGifUrl, Long userId) {
+    public GifFavorite addFavorite(Long accountId, String gifUrl, String title, String type,
+                                     String convertedGifUrl, Long userId) {
         String normalizedUrl = normalizeGifUrl(gifUrl);
         String urlHash = hashUrl(normalizedUrl);
-        
-        // 优先按 userId 查重（新逻辑），兜底按 accountId 查重（旧数据）
-        Optional<GifFavorite> existing = gifFavoriteRepository
-                .findByAccountOrUser(accountId, userId, urlHash);
+
+        // 按 userId 查重（新逻辑：同一用户跨账号不重复收藏同一个）
+        Optional<GifFavorite> existing = userId != null
+                ? gifFavoriteRepository.findByUserIdAndGifUrlHash(userId, urlHash)
+                : Optional.empty();
         if (existing.isPresent()) {
             GifFavorite fav = existing.get();
-            // 如果已有 convertedGifUrl 且新的也有，更新它
             if (convertedGifUrl != null && !convertedGifUrl.equals(fav.getConvertedGifUrl())) {
                 fav.setConvertedGifUrl(convertedGifUrl);
                 gifFavoriteRepository.save(fav);
-                log.info("更新 convertedGifUrl: id={}", fav.getId());
             }
-            log.info("已收藏: accountId={}, url={}", accountId, normalizedUrl);
+            log.info("已收藏: userId={}, url={}", userId, normalizedUrl);
             return fav;
         }
-        
-        DiscordAccount account = discordAccountRepository.findById(accountId)
-                .orElseThrow(() -> new IllegalArgumentException("账号不存在: " + accountId));
-        
-        String sourceDomain = extractDomain(normalizedUrl);
-        
+
+        // 账号可能已删除 —— Optional 获取
+        Long resolvedAccountId = null;
+        Long merchantId = null;
+        if (accountId != null) {
+            Optional<DiscordAccount> accOpt = discordAccountRepository.findById(accountId);
+            if (accOpt.isPresent()) {
+                DiscordAccount acc = accOpt.get();
+                resolvedAccountId = acc.getId();
+                merchantId = acc.getMerchantId();
+            } else {
+                log.info("收藏时账号已不存在 accountId={}，discord_account_id=null 继续保存", accountId);
+            }
+        }
+        if (merchantId == null && userId != null) {
+            try { merchantId = gifFavoriteRepository.findMerchantIdByUserId(userId).orElse(null); }
+            catch (Exception ignored) {}
+        }
+
         GifFavorite favorite = new GifFavorite();
-        favorite.setDiscordAccount(account);
-        favorite.setMerchantId(account.getMerchantId());
         favorite.setUserId(userId);
+        favorite.setDiscordAccountId(resolvedAccountId);
+        favorite.setMerchantId(merchantId);
         favorite.setGifUrl(normalizedUrl);
         favorite.setGifUrlHash(urlHash);
         favorite.setTitle(title);
-        favorite.setSourceDomain(sourceDomain);
+        favorite.setSourceDomain(extractDomain(normalizedUrl));
         favorite.setType(type != null ? type : "gif");
         favorite.setConvertedGifUrl(convertedGifUrl);
-        
+
         GifFavorite saved = gifFavoriteRepository.save(favorite);
-        log.info("收藏成功: id={}, accountId={}, url={}, type={}, hasConvertedGif={}", 
-                saved.getId(), accountId, normalizedUrl, type, convertedGifUrl != null);
-        
+        log.info("收藏成功: id={}, userId={}, accountId={}, type={}",
+                saved.getId(), userId, resolvedAccountId, type);
         return saved;
     }
 
+    // ====== 取消收藏 ======
+
     @Transactional
     public void removeFavorite(Long id, Long accountId, Long userId) {
-        gifFavoriteRepository.deleteByIdAndDiscordAccountId(id, accountId);
-        log.info("GIF 收藏已删除: id={}, accountId={}", id, accountId);
+        removeFavoriteByUserId(id, userId);
     }
 
     @Transactional
@@ -115,22 +152,28 @@ public class GifFavoriteService {
         log.info("GIF 收藏已删除: id={}, userId={}", id, userId);
     }
 
-    @Transactional(readOnly = true)
-    public boolean isFavorited(Long accountId, String gifUrl) { return isFavorited(accountId, null, gifUrl); }
+    // ====== 检查是否已收藏 ======
+
+    public boolean isFavorited(Long accountId, String gifUrl) {
+        return isFavorited(accountId, null, gifUrl);
+    }
 
     public boolean isFavorited(Long accountId, Long userId, String gifUrl) {
         String normalizedUrl = normalizeGifUrl(gifUrl);
         String urlHash = hashUrl(normalizedUrl);
-        return gifFavoriteRepository.findByAccountOrUser(accountId, userId, urlHash).isPresent();
+        if (userId != null) {
+            return gifFavoriteRepository.findByUserIdAndGifUrlHash(userId, urlHash).isPresent();
+        }
+        return gifFavoriteRepository.findByDiscordAccountIdAndGifUrlHash(accountId, urlHash).isPresent();
     }
+
+    // ====== URL 工具 ======
 
     public String normalizeGifUrl(String url) {
         if (url == null || url.isEmpty()) return url;
-        
         if (url.contains("tenor.com/view/") && !url.matches(".*\\.(gif|mp4|webm|webp)(\\?|#|$).*")) {
             return url + ".gif";
         }
-        
         return url;
     }
 
@@ -138,13 +181,13 @@ public class GifFavoriteService {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hash = digest.digest(url.getBytes(StandardCharsets.UTF_8));
-            StringBuilder hexString = new StringBuilder();
+            StringBuilder hex = new StringBuilder();
             for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) hexString.append('0');
-                hexString.append(hex);
+                String h = Integer.toHexString(0xff & b);
+                if (h.length() == 1) hex.append('0');
+                hex.append(h);
             }
-            return hexString.toString();
+            return hex.toString();
         } catch (Exception e) {
             log.error("计算 URL 哈希失败: {}", e.getMessage());
             return url;
@@ -156,8 +199,7 @@ public class GifFavoriteService {
             int start = url.indexOf("://");
             if (start == -1) return "";
             int end = url.indexOf("/", start + 3);
-            if (end == -1) return url.substring(start + 3);
-            return url.substring(start + 3, end);
+            return end == -1 ? url.substring(start + 3) : url.substring(start + 3, end);
         } catch (Exception e) {
             return "";
         }

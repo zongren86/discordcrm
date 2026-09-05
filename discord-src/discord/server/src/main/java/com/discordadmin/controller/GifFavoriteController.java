@@ -47,10 +47,11 @@ public class GifFavoriteController {
     public ResponseEntity<List<Map<String, Object>>> listFavorites(
             @RequestParam(value = "type", required = false) String type) {
         Long userId = SecurityUtils.currentUserId();
-        if (userId == null) {
+        Long merchantId = SecurityUtils.currentMerchantId();
+        if (userId == null && merchantId == null) {
             return ResponseEntity.ok(List.of());
         }
-        List<GifFavorite> favorites = gifFavoriteService.getFavoritesByUserId(userId);
+        List<GifFavorite> favorites = gifFavoriteService.getFavoritesForUser(userId, merchantId);
         if (type != null && !type.isEmpty()) {
             final String filterType = type;
             favorites = favorites.stream()

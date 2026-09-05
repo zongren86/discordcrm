@@ -6,10 +6,16 @@ import lombok.Setter;
 
 import java.time.Instant;
 
+/**
+ * GIF/Sticker 收藏（按 user_id 维度，跨所有 Discord 账号共享）。
+ * discord_account_id 仅作"来源账号"记录（nullable），不参与外键约束。
+ * 即使原账号删除，收藏记录仍然保留可用。
+ */
 @Entity
-@Table(name = "gif_favorites",
-        uniqueConstraints = @UniqueConstraint(name = "uk_account_gif_url",
-                columnNames = {"discord_account_id", "gif_url_hash"}))
+@Table(name = "gif_favorites", indexes = {
+        @Index(name = "idx_gf_user_type", columnList = "user_id, type"),
+        @Index(name = "idx_gf_type_merchant", columnList = "merchant_id, type")
+})
 @Getter
 @Setter
 public class GifFavorite {
@@ -24,12 +30,8 @@ public class GifFavorite {
     @Column(name = "user_id")
     private Long userId;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "discord_account_id", nullable = false)
-    @com.fasterxml.jackson.annotation.JsonIgnore
-    private DiscordAccount discordAccount;
-
-    @Column(name = "discord_account_id", insertable = false, updatable = false)
+    /** 来源账号 ID（nullable，账号删除后仍保留收藏） */
+    @Column(name = "discord_account_id")
     private Long discordAccountId;
 
     @Column(name = "gif_url", nullable = false, length = 2048)
