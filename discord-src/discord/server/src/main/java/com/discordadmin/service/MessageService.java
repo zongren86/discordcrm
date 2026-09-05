@@ -676,7 +676,7 @@ public class MessageService {
 
             // 保存消息
             String dbContent = (content != null && !content.isBlank()) ? content :
-                    (fileList.isEmpty() ? "" : "[图片消息]");
+                    (fileList.isEmpty() ? "" : "");
             Message message = new Message();
             message.setConversation(conversation);
             message.setDirection(Message.Direction.OUTBOUND);
@@ -844,10 +844,18 @@ public class MessageService {
             if (merchantId == null && message.getConversation() != null) {
                 merchantId = message.getConversation().getMerchantId();
             }
-            translationServiceFactory.translate(message.getContent(), targetLanguage, merchantId)
-                    .ifPresent(message::setTranslatedContent);
+            String rawContent = message.getContent();
+            translationServiceFactory.translate(rawContent, targetLanguage, merchantId)
+                    .ifPresent(translation -> {
+                        // 翻译结果等于原文（AI对短常用语可能返回原文）→ 标记为无翻译
+                        if (translation != null && translation.trim().equalsIgnoreCase(rawContent != null ? rawContent.trim() : "")) {
+                            message.setTranslatedContent(null);
+                        } else {
+                            message.setTranslatedContent(translation);
+                        }
+                    });
             if (message.getTranslatedContent() == null) {
-                message.setTranslatedContent(message.getContent());
+                message.setTranslatedContent(rawContent);
             }
         }
     }

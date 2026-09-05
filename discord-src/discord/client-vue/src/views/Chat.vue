@@ -1789,7 +1789,7 @@ function isImageOnlyMsg(msg) {
   const imgs = imageAttachmentsOf(msg)
   if (imgs.length === 0) return false
   const text = msg.content?.trim() || ''
-  const isPlaceholderText = text === '[图片]' || text === '[GIF]' || text === '[语音消息]' || text === '[Sticker]'
+  const isPlaceholderText = text === '[图片]' || text === '[图片消息]' || text === '[GIF]' || text === '[语音消息]' || text === '[Sticker]' || text === '[视频消息]' || text === '[文件]'
   return !text || isPlaceholderText
 }
 
@@ -2410,12 +2410,12 @@ function voiceSrc(msg) {
 
 function hasOriginal(msg) {
   if (!msg?.translatedContent) return false
+  // 归一化比较：trim + 忽略多余空格，避免 AI 返回 "got it " vs "got it" 这种假差异
+  const norm = (s) => (s || '').trim().replace(/\s+/g, ' ')
   if (msg.direction === 'OUTBOUND') {
-    // OUTBOUND: translatedContent=中文, sentContent=实际发出的(目标语言)，两者不同才显示切换
-    return !!(msg.sentContent && msg.translatedContent !== msg.sentContent)
+    return !!(msg.sentContent && norm(msg.translatedContent) !== norm(msg.sentContent))
   } else {
-    // INBOUND: translatedContent=中文译文, content=好友原文
-    return !!(msg.content && msg.translatedContent !== msg.content)
+    return !!(msg.content && norm(msg.translatedContent) !== norm(msg.content))
   }
 }
 
@@ -2439,7 +2439,7 @@ function canTranslateInbound(msg) {
   if (isGifMsg(msg)) return false
   // Sticker/Lottie 消息本身没有文本，不需要翻译按钮
   if (isStickerMsg(msg)) return false
-  if (msg.translatedContent && msg.translatedContent !== msg.content) return false
+  const _norm = (s) => (s || '').trim().replace(/\s+/g, ' '); if (msg.translatedContent && _norm(msg.translatedContent) !== _norm(msg.content)) return false
   if (msg.userTranslated) return false
   return !containsChinese(msg.content || '')
 }
