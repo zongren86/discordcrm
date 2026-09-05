@@ -96,7 +96,7 @@ public class AgentTaskService {
                 log.warn("[waitFor] taskId={} CANCELLED", taskId);
                 throw new IllegalStateException("任务已取消");
             }
-            Thread.sleep(500);
+            Thread.sleep(200);
         }
         // 超时了，把 task 标记为 CANCELLED（避免 agent 后续 poll 到又执行）
         entityManager.clear();
