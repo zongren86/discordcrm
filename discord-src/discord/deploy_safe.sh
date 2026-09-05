@@ -16,7 +16,7 @@ echo "============================================"
 # Step 1: scp 新 JAR 到服务器（先到位）
 echo ""
 echo "[1/4] 上传 JAR..."
-scp -o StrictHostKeyChecking=no \
+sshpass -p 'laeC7ooC7eif#aih' scp -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no \
   "server/target/discord-admin-server-$NEW_VER.jar" \
   "root@101.47.41.149:/opt/discord-admin/current/"
 if [ $? -ne 0 ]; then echo "❌ scp 失败"; exit 1; fi
