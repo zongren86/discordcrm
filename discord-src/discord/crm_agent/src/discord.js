@@ -443,10 +443,13 @@ async function sendMessageWithFiles(token, channelId, content, files) {
   const fd = new FormData();
   if (content) fd.append('content', content);
 
+  // Discord REST API 多附件格式：
+  // - 用 'file' 字段名（不是 files[0]/files[1]），多次 append 自动成为多附件
+  // - 同时在 JSON body 的 attachments 数组里声明元数据（filename, description, id）
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     const buf = Buffer.from(f.dataBase64, 'base64');
-    fd.append(`files[${i}]`, buf, {
+    fd.append('file', buf, {
       filename: f.filename || `file_${i}`,
       contentType: f.contentType || 'application/octet-stream',
     });

@@ -2738,9 +2738,32 @@ function editMsg(msg) {
 }
 
 function copyMsg(msg) {
-  navigator.clipboard?.writeText(msg.content || '').then(() => {
-    ElMessage.success('已复制')
-  }).catch(() => ElMessage.info('复制失败'))
+  const text = msg.content || ''
+  if (!text) { ElMessage.info('消息内容为空'); return }
+  // 优先 Clipboard API（HTTPS/localhost 安全上下文）
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {
+      ElMessage.success('已复制')
+    }).catch(() => fallbackCopy(text))
+  } else {
+    // HTTP/非安全上下文 fallback
+    fallbackCopy(text)
+  }
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.left = '-9999px'
+  ta.style.top = '0'
+  document.body.appendChild(ta)
+  ta.focus()
+  ta.select()
+  let ok = false
+  try { ok = document.execCommand('copy') } catch (e) {}
+  document.body.removeChild(ta)
+  if (ok) ElMessage.success('已复制')
+  else ElMessage.error('复制失败，请手动选择文本复制')
 }
 
 function onGifError(e) {
