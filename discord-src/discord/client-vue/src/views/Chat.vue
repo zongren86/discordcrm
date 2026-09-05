@@ -728,8 +728,9 @@
           <div v-if="pendingAttachments.length" class="attachment-preview-list">
             <div v-for="(att, i) in pendingAttachments" :key="i" class="attachment-preview-item">
               <img v-if="isImage(att.name)" :src="att.url" class="attachment-thumb" />
-              <el-icon v-else><Document /></el-icon>
-              <el-icon class="close-icon" @click="pendingAttachments.splice(i, 1)"><Close /></el-icon>
+              <el-icon v-else class="attachment-doc-icon"><Document /></el-icon>
+              <el-icon class="att-close-icon" @click="pendingAttachments.splice(i, 1)"><Close /></el-icon>
+              <span v-if="att.name" class="attachment-filename">{{ att.name }}</span>
             </div>
           </div>
 
@@ -6045,17 +6046,47 @@ video.msg-gif-img {
 }
 
 .attachment-preview-item {
+  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 4px;
+  padding: 10px 8px 6px;
   background: var(--color-bg-3);
   border-radius: 8px;
   font-size: 12px;
   color: var(--color-text-2);
+  min-width: 60px;
 }
-.attachment-preview-item .close-icon {
+.attachment-preview-item .att-close-icon {
+  position: absolute;
+  top: 2px;
+  right: 4px;
   cursor: pointer;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+.attachment-preview-item .att-close-icon:hover {
+  background: rgba(245,108,108,0.9);
+}
+.attachment-doc-icon {
+  font-size: 24px;
+  color: var(--color-text-2);
+}
+.attachment-filename {
+  max-width: 56px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--color-text-3);
 }
 
 .attachment-thumb {
