@@ -746,7 +746,12 @@ public class MessageService {
                                             java.util.List<java.util.Map<String, String>> attachments,
                                             String agentDisplayName) {
         java.util.List<java.util.Map<String, String>> fileList = new java.util.ArrayList<>();
+        log.info("[Agent发送] attachments入参=" + (attachments != null ? attachments.size() : 0) + ", contentLen=" + (content != null ? content.length() : 0));
         if (attachments != null && !attachments.isEmpty()) {
+            for (int idx = 0; idx < attachments.size(); idx++) {
+                java.util.Map<String, String> att = attachments.get(idx);
+                log.info("[Agent发送] attachment[" + idx + "] url=" + att.get("url") + ", name=" + att.get("name"));
+            }
             for (java.util.Map<String, String> att : attachments) {
                 String url = att.get("url");
                 String fileName = att.get("name");
@@ -763,8 +768,10 @@ public class MessageService {
                         java.util.Map<String, String> fm = new java.util.HashMap<>();
                         fm.put("filename", fileName != null ? fileName : "attachment");
                         fm.put("contentType", contentType != null ? contentType : "application/octet-stream");
-                        fm.put("dataBase64", java.util.Base64.getEncoder().encodeToString(response.body()));
+                        String b64 = java.util.Base64.getEncoder().encodeToString(response.body());
+                        fm.put("dataBase64", b64);
                         fileList.add(fm);
+                        log.info("[Agent发送] 文件[" + (fileList.size()-1) + "] 下载成功 bytes=" + response.body().length + ", filename=" + fm.get("filename"));
                     }
                 } catch (Exception e) {
                     log.error("[Agent附件] 下载文件失败 {}: {}", url, e.getMessage());
@@ -798,6 +805,7 @@ public class MessageService {
             if (!fileList.isEmpty()) params.put("files", fileList);
 
             String paramsJson = om.writeValueAsString(params);
+            log.info("[Agent发送] files数=" + fileList.size() + ", paramsJSON=" + paramsJson.substring(0, Math.min(500, paramsJson.length())) + (paramsJson.length() > 500 ? "...(truncated)" : ""));
             com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
                     account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
             log.info("[Agent统一发送] taskId={}, account={}, contentLen={}, files={}",
@@ -1860,6 +1868,7 @@ private boolean isLocalUploadUrl(String url) {
             params.put("content", url);
             // 关键：不传 files，让 agent 直接发 content=url
             String paramsJson = om.writeValueAsString(params);
+            log.info("[Agent发送] files数=" + 0 + ", paramsJSON=" + paramsJson.substring(0, Math.min(500, paramsJson.length())) + (paramsJson.length() > 500 ? "...(truncated)" : ""));
             com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
                     account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
             log.info("[AgentDirectURL] taskId={}, account={}, url={}", task.getId(), account.getName(), url);
@@ -1912,6 +1921,7 @@ private boolean isLocalUploadUrl(String url) {
             params.put("files", files);
 
             String paramsJson = om.writeValueAsString(params);
+            log.info("[Agent发送] files数=" + files.size() + ", paramsJSON=" + paramsJson.substring(0, Math.min(500, paramsJson.length())) + (paramsJson.length() > 500 ? "...(truncated)" : ""));
             com.discordadmin.entity.AgentTask task = agentTaskService.createTask(
                     account.getAgentServerId(), "SEND_MESSAGE", paramsJson);
             log.info("[AgentGIF] taskId={}, account={}, url={}, size={}KB",

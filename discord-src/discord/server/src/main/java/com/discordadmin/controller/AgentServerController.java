@@ -514,6 +514,7 @@ public class AgentServerController {
                             "server.js",           // 旧启动脚本（如有）
                             "index.js",            // 根目录残留，正确入口在 src/index.js
                             "discord.js",          // 根目录残留，正确位置在 src/discord.js
+                            "config.json",         // 打包时不带 config.json，用户从弹窗 configTemplate 复制即可
                         };
                         for (String skip : skipFiles) {
                             if (relStr.equals(skip)) return;

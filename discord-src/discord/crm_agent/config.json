@@ -2,7 +2,7 @@
   "serverUrl": "http://127.0.0.1:8090/api",
   "agentName": "crm-agent",
   "token": "\u5728\u6b64\u7c98\u8d34token",
-  "version": "1.10.6",
+  "version": "1.10.7",
   "production": false,
   "browser": {
     "headless": false,

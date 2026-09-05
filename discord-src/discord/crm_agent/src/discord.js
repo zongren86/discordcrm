@@ -444,118 +444,95 @@ async function fetchDmChannels(token) {
  *    axios 的 transformRequest / getBuffer 路径会损坏 multipart 结构
  *    必须加 Content-Length header 确保 Discord 正确接收完整请求体
  */
+/**
+ * ★ 手动构建 multipart/form-data —— 不依赖 form-data 包
+ *    form-data v4 的 getBuffer()/pipe() 在某些环境（Windows + 代理）下会丢失字段
+ *    手动构建最可控：每个 boundary 分隔符、每个字段名、每个文件名都精确控制
+ */
 async function sendMessageWithFiles(token, channelId, content, files) {
-  const FormData = require('form-data');
   const https = require('https');
   const { URL } = require('url');
+  const crypto = require('crypto');
 
-  const fd = new FormData();
-  if (content) fd.append('content', content);
+  // 生成 boundary（16字节随机hex）
+  const boundary = '----DiscordBoundary' + crypto.randomBytes(8).toString('hex');
+  const CRLF = '\r\n';
+  const parts = [];
 
-  // 多次 append('file', ...) —— Discord REST API 多附件标准格式
+  // 1. content 字段（文本部分）
+  if (content) {
+    const header = Buffer.from(
+      `--${boundary}${CRLF}` +
+      `Content-Disposition: form-data; name="content"${CRLF}${CRLF}`
+    );
+    const body = Buffer.from(content, 'utf8');
+    parts.push(header, body, Buffer.from(CRLF));
+  }
+
+  // 2. 每个文件字段
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
-    const buf = Buffer.from(f.dataBase64, 'base64');
-    fd.append('file', buf, {
-      filename: f.filename || `file_${i}`,
-      contentType: f.contentType || 'application/octet-stream',
-    });
+    const fileBuf = Buffer.from(f.dataBase64, 'base64');
+    const filename = (f.filename || `file_${i}`).replace(/"/g, '\\"');
+    const contentType = f.contentType || 'application/octet-stream';
+    const header = Buffer.from(
+      `--${boundary}${CRLF}` +
+      `Content-Disposition: form-data; name="file"; filename="${filename}"${CRLF}` +
+      `Content-Type: ${contentType}${CRLF}${CRLF}`
+    );
+    console.log(`[sendMessageWithFiles] file[${i}] filename=${filename} size=${fileBuf.length} contentType=${contentType}`);
+    parts.push(header, fileBuf, Buffer.from(CRLF));
   }
 
-  // ★ 关键: 先拿完整 buffer，避免 pipe 在某些环境丢失后续字段
-  const bodyBuffer = fd.getBuffer();
+  // 3. 结束 boundary
+  const endBuf = Buffer.from(`--${boundary}--${CRLF}`);
+  parts.push(endBuf);
 
-  // Debug: 确认 form-data 里确实有 N 个 file 字段
-  const fileCountInBuf = (bodyBuffer.toString().match(/name="file"/g) || []).length;
-  console.log(`[sendMessageWithFiles] files数组=${files.length}, form-data里file字段数=${fileCountInBuf}, 预计Discord收到attachments=${files.length}`);
-  if (fileCountInBuf !== files.length) {
-    console.error(`[sendMessageWithFiles] ❌ 异常! form-data里file字段数(${fileCountInBuf}) != 预期(${files.length})`);
-  }
+  // 合并所有 parts
+  const bodyBuffer = Buffer.concat(parts);
 
-  // 解析目标 URL
+  console.log(`[sendMessageWithFiles] contentBytes=${content ? Buffer.byteLength(content) : 0}, files=${files.length}, totalBytes=${bodyBuffer.length}`);
+
+  // 发送
   const targetUrl = new URL(`https://discord.com/api/v10/channels/${channelId}/messages`);
   const headers = {
-    ...fd.getHeaders(),    // 提供正确的 Content-Type: multipart/form-data; boundary=...
+    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+    'Content-Length': bodyBuffer.length,
     'Authorization': token,
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Content-Length': bodyBuffer.length,  // ★ 必须加，Discord 依赖这个确定请求体长度
   };
 
-  // 发起原生 HTTPS 请求（通过 agent 自动支持代理）
-  const result = await new Promise((resolve, reject) => {
-    const reqOptions = {
+  return new Promise((resolve, reject) => {
+    const req = https.request({
       method: 'POST',
       hostname: targetUrl.hostname,
-      port: targetUrl.port || 443,
-      path: targetUrl.pathname + targetUrl.search,
+      port: 443,
+      path: targetUrl.pathname,
       headers,
-      timeout: 60000,
-    };
-    if (agentOrProxy && agentOrProxy.request) {
-      reqOptions.agent = agentOrProxy;
-    }
-
-    const req = https.request(reqOptions, (res) => {
+      timeout: 20000,
+      agent: agentOrProxy && agentOrProxy.request ? agentOrProxy : undefined,
+    }, (res) => {
       const chunks = [];
-      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('data', (c) => chunks.push(c));
       res.on('end', () => {
-        const body = Buffer.concat(chunks).toString('utf8');
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try {
-            resolve(JSON.parse(body));
-          } catch {
-            reject(new Error(`[sendMessageWithFiles] JSON 解析失败: ${body.slice(0, 200)}`));
+        const bodyBuf = Buffer.concat(chunks);
+        try {
+          const data = JSON.parse(bodyBuf.toString('utf8'));
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(data);
+          } else {
+            reject(new Error(`HTTP ${res.statusCode}: ${data.message || data.code || bodyBuf.toString().slice(0, 200)}`));
           }
-        } else {
-          reject(new Error(`[sendMessageWithFiles] Discord HTTP ${res.statusCode}: ${body.slice(0, 500)}`));
+        } catch (e) {
+          reject(new Error(`HTTP ${res.statusCode}: ${bodyBuf.toString().slice(0, 200)}`));
         }
       });
     });
     req.on('error', reject);
-    req.on('timeout', () => { req.destroy(new Error('timeout')); });
-
-    // ★ 不用 pipe，直接一次性写入完整 buffer 确保所有字段都发送
+    req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')); });
     req.write(bodyBuffer);
     req.end();
   });
-
-  const discordMsgId = result?.id;
-  const attachCount = result?.attachments?.length || 0;
-  console.log(`[sendMessageWithFiles] Discord返回 attachments=${attachCount}, discordMsgId=${discordMsgId}`);
-
-  // 兜底: 如果 Discord 返回的 attachments 数量不对，GET 回查一次（用原生 https 避免 axios 走代理的问题）
-  if (attachCount < files.length && discordMsgId) {
-    console.warn(`[sendMessageWithFiles] ⚠️ Discord返回attachments(${attachCount}) < 预期(${files.length}), GET回查...`);
-    try {
-      const getPath = `/api/v10/channels/${channelId}/messages/${discordMsgId}`;
-      const getHeaders = { 'Authorization': token, 'User-Agent': 'Mozilla/5.0' };
-      const freshData = await new Promise((resolve2, reject2) => {
-        const go = https.request({
-          method: 'GET', hostname: 'discord.com', port: 443,
-          path: getPath, headers: getHeaders, timeout: 15000,
-          agent: agentOrProxy && agentOrProxy.request ? agentOrProxy : undefined,
-        }, (res) => {
-          const chunks = [];
-          res.on('data', c => chunks.push(c));
-          res.on('end', () => {
-            const body = Buffer.concat(chunks).toString('utf8');
-            try { resolve2(JSON.parse(body)); } catch { reject2(new Error(body.slice(0,200))); }
-          });
-        });
-        go.on('error', reject2);
-        go.on('timeout', () => { go.destroy(); reject2(new Error('timeout')); });
-        go.end();
-      });
-      if (freshData?.attachments?.length > attachCount) {
-        console.log(`[sendMessageWithFiles] ✅ GET回查后得到 attachments=${freshData.attachments.length}`);
-        result.attachments = freshData.attachments;
-      }
-    } catch (e) {
-      console.warn(`[sendMessageWithFiles] GET回查失败: ${e.message}`);
-    }
-  }
-
-  return result;
 }
 
 
