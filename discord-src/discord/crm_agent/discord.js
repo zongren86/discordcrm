@@ -432,18 +432,26 @@ async function fetchDmChannels(token) {
 }
 
 /**
+/**
  * 发送带附件的消息（multipart/form-data）
  * Discord API: POST /channels/{channelId}/messages
- * body: content + 多个 files (file[0], file[1], ...)
+ * body: content + 多次 file 字段
  *
  * files: [{ filename, contentType, dataBase64 }]
+ *
+ * ★ 使用 fd.pipe() + Node.js 原生 https，绕过 axios 对 multipart 的处理缺陷
+ *    axios 的 transformRequest / getBuffer 路径会损坏 multipart 结构，
+ *    导致 Discord 收到的附件数量少于实际发送的。
  */
 async function sendMessageWithFiles(token, channelId, content, files) {
   const FormData = require('form-data');
+  const https = require('https');
+  const { URL } = require('url');
+
   const fd = new FormData();
   if (content) fd.append('content', content);
 
-  // Discord REST API 多附件格式：多次 append('file', ...) → 自动成为多附件
+  // 多次 append('file', ...) —— Discord REST API 多附件标准格式
   for (let i = 0; i < files.length; i++) {
     const f = files[i];
     const buf = Buffer.from(f.dataBase64, 'base64');
@@ -461,61 +469,76 @@ async function sendMessageWithFiles(token, channelId, content, files) {
     console.error(`[sendMessageWithFiles] ❌ 异常! form-data里file字段数(${fileCountInBuf}) != 预期(${files.length})`);
   }
 
-  // 关键修复: axios 默认 headers 有 Content-Type: application/json，会覆盖 multipart 的 boundary
-  // 临时删掉默认 Content-Type，用 fd.getHeaders() 提供正确的 multipart/form-data header
-  const savedPostCT = discordHttp.defaults.headers.post?.['Content-Type'];
-  try {
-    if (discordHttp.defaults.headers.post) {
-      delete discordHttp.defaults.headers.post['Content-Type'];
+  // 解析目标 URL
+  const targetUrl = new URL(`https://discord.com/api/v10/channels/${channelId}/messages`);
+  const headers = {
+    ...fd.getHeaders(),    // 提供正确的 Content-Type: multipart/form-data; boundary=...
+    'Authorization': token,
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+  };
+
+  // 发起原生 HTTPS 请求（通过 agent 自动支持代理）
+  const result = await new Promise((resolve, reject) => {
+    const reqOptions = {
+      method: 'POST',
+      hostname: targetUrl.hostname,
+      port: targetUrl.port || 443,
+      path: targetUrl.pathname + targetUrl.search,
+      headers,
+      timeout: 60000,
+    };
+    if (agentOrProxy && agentOrProxy.request) {
+      reqOptions.agent = agentOrProxy;
     }
 
-    const resp = await discordHttp.post(
-      `/channels/${channelId}/messages`,
-      fd.getBuffer(),
-      {
-        headers: {
-          ...fd.getHeaders(),
-          'Authorization': token,
-        },
-        timeout: 60000,
-        maxContentLength: 100 * 1024 * 1024,
-        maxBodyLength: 100 * 1024 * 1024,
-        _skipTransform: true,
-      }
-    );
-
-    const result = resp.data;
-    const discordMsgId = result?.id;
-    const attachCount = result?.attachments?.length || 0;
-    console.log(`[sendMessageWithFiles] Discord返回 attachments=${attachCount}, discordMsgId=${discordMsgId}`);
-
-    // 兜底: 如果 Discord 返回的 attachments 数量不对，GET 回查一次
-    if (attachCount < files.length && discordMsgId) {
-      console.warn(`[sendMessageWithFiles] ⚠️ Discord返回attachments(${attachCount}) < 预期(${files.length}), GET回查...`);
-      try {
-        const getResp = await discordHttp.get(`/channels/${channelId}/messages/${discordMsgId}`, {
-          headers: { 'Authorization': token },
-          timeout: 15000,
-        });
-        const freshData = getResp.data || getResp;
-        if (freshData?.attachments?.length > attachCount) {
-          console.log(`[sendMessageWithFiles] ✅ GET回查后得到 attachments=${freshData.attachments.length}`);
-          result.attachments = freshData.attachments;
+    const req = https.request(reqOptions, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            reject(new Error(`[sendMessageWithFiles] JSON 解析失败: ${body.slice(0, 200)}`));
+          }
+        } else {
+          reject(new Error(`[sendMessageWithFiles] Discord HTTP ${res.statusCode}: ${body.slice(0, 500)}`));
         }
-      } catch (e) {
-        console.warn(`[sendMessageWithFiles] GET回查失败: ${e.message}`);
-      }
-    }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(new Error('timeout')); });
 
-    return result;
-  } finally {
-    // 恢复默认 Content-Type
-    if (savedPostCT) {
-      if (!discordHttp.defaults.headers.post) discordHttp.defaults.headers.post = {};
-      discordHttp.defaults.headers.post['Content-Type'] = savedPostCT;
+    // ★ 关键：用 pipe 把 FormData 流式写入请求体
+    fd.pipe(req);
+  });
+
+  const discordMsgId = result?.id;
+  const attachCount = result?.attachments?.length || 0;
+  console.log(`[sendMessageWithFiles] Discord返回 attachments=${attachCount}, discordMsgId=${discordMsgId}`);
+
+  // 兜底: 如果 Discord 返回的 attachments 数量不对，GET 回查一次
+  if (attachCount < files.length && discordMsgId) {
+    console.warn(`[sendMessageWithFiles] ⚠️ Discord返回attachments(${attachCount}) < 预期(${files.length}), GET回查...`);
+    try {
+      const getResp = await discordHttp.get(`/channels/${channelId}/messages/${discordMsgId}`, {
+        headers: { 'Authorization': token },
+        timeout: 15000,
+      });
+      const freshData = getResp.data || getResp;
+      if (freshData?.attachments?.length > attachCount) {
+        console.log(`[sendMessageWithFiles] ✅ GET回查后得到 attachments=${freshData.attachments.length}`);
+        result.attachments = freshData.attachments;
+      }
+    } catch (e) {
+      console.warn(`[sendMessageWithFiles] GET回查失败: ${e.message}`);
     }
   }
+
+  return result;
 }
+
 
 // 暴露当前代理 URL（供 browser.js 启动 Chrome 时用）
 function getProxyUrl() {
