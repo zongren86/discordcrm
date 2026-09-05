@@ -2368,7 +2368,11 @@ function isImageAttachment(att) {
   const ct = (att.contentType || '').toLowerCase()
   if (ct.startsWith('image/')) return true
   const name = (att.filename || att.name || '').toLowerCase()
-  return /\.(jpg|jpeg|png|gif|webp|bmp)$/.test(name)
+  if (/\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|#|$)/i.test(name)) return true
+  // URL 兜底：filename 可能没有扩展名（Discord 附件 URL 自带）
+  const url = (att.url || '').toLowerCase()
+  if (/\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|#|$)/i.test(url)) return true
+  return false
 }
 
 /** 获取消息的图片附件列表 */
@@ -2636,9 +2640,10 @@ function parseReactions(msg) {
   return []
 }
 
-function isImage(filename) {
-  if (!filename) return false
-  return /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(filename)
+function isImage(filename, url) {
+  if (filename && /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|#|$)/i.test(filename)) return true
+  if (url && /\.(jpg|jpeg|png|gif|webp|bmp|svg)(\?|#|$)/i.test(url)) return true
+  return false
 }
 
 function isGifAttachment(att) {
@@ -2648,7 +2653,7 @@ function isGifAttachment(att) {
 }
 
 function nonGifAttachments(msg) {
-  return parseAttachments(msg).filter(a => !isGifAttachment(a) && !isStickerAttachment(a) && !isImage(a.filename || a.name))
+  return parseAttachments(msg).filter(a => !isGifAttachment(a) && !isStickerAttachment(a) && !isImage(a.filename || a.name, a.url))
 }
 
 function toggleAttachment() {
